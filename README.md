@@ -10,36 +10,33 @@ O que você ganha:
 - **Feature com plano conferível.** SPEC → PLAN com tarefas testáveis → execução em etapas, com revisão de código e de segurança no fim.
 - **Bug pela causa raiz.** Primeiro um teste que reproduz, depois a correção.
 
-## Primeiro uso
+## Começar
 
 Requisitos mínimos: Claude Code 2.1.295 ou mais novo, `git`, `bash` e `jq` (no Windows, o Git for Windows traz `git` e `bash`). Detalhes em [Requisitos e plataformas](#requisitos-e-plataformas).
 
-No Claude Code, uma vez por máquina:
+O fluxo inteiro é: **instalar o plugin → `/kit:init` → `/kit:spec` → `/kit:plan` → `/kit:execute`**.
 
-```text
-/plugin marketplace add r-matias/claude-kit
-/plugin install kit@claude-kit
-/kit:setup
-```
+1. Instale o plugin, uma vez por máquina, no Claude Code:
 
-Pelo terminal, os dois primeiros passos também funcionam assim: `claude plugin marketplace add r-matias/claude-kit` e `claude plugin install kit@claude-kit`. O `/kit:setup` roda dentro do Claude Code; se ele não aparecer logo depois do install, reinicie a sessão.
+   ```text
+   /plugin marketplace add r-matias/claude-kit
+   /plugin install kit@claude-kit
+   ```
 
-O `/kit:setup`:
+   Pelo terminal: `claude plugin marketplace add r-matias/claude-kit` e `claude plugin install kit@claude-kit`. Se o `/kit:init` não aparecer logo depois, reinicie a sessão.
+2. Abra o Claude Code na raiz do repositório e rode `/kit:init`. É o único comando de configuração que você precisa conhecer.
+3. Para cada feature: `/kit:spec` → `/clear` → `/kit:plan` → `/kit:execute` (ver [Fluxo do dia a dia](#fluxo-do-dia-a-dia)).
 
-- confere as dependências; se faltar alguma, mostra o comando de instalação do seu sistema (`winget`, `brew`, `apt` ou `claude update`) e para. Instale, reabra o Claude Code e rode `/kit:setup` de novo;
-- detecta Windows nativo, WSL2, macOS ou Linux e ajusta o sandbox (no Windows nativo não há sandbox, e ele avisa);
-- pergunta se o kit fica ligado em **todos os projetos** ou **só nos projetos que o habilitam** (nesse caso, `claude plugin list` mostra o kit como `disabled` no escopo `user`, e cada projeto o liga pelo próprio `.claude/settings.json`);
-- mostra o diff do seu `~/.claude/settings.json` e só grava depois que você confirmar. Nada que já existe é removido.
+## O que o `/kit:init` faz
 
-Prefere configurar à mão? Mescle [`plugins/kit/templates/user-settings.json`](plugins/kit/templates/user-settings.json) no seu `~/.claude/settings.json` e, no Windows nativo, troque `sandbox.failIfUnavailable` para `false`.
+Em ordem, sem você chamar mais nada:
 
-## Ligar num projeto
+1. **Prepara a máquina**, se faltar algo: confere Claude Code, `git`, `bash` e `jq`, as regras de usuário do kit no `~/.claude/settings.json` e o marketplace. Faltando, roda os passos do `/kit:setup` (mostra o diff e só grava com sua confirmação). Se faltar dependência, mostra o comando de instalação do seu sistema e para.
+2. **Configura o projeto** (o adaptador), descrito abaixo.
+3. **Mapeia o código**, se o projeto tiver mais de 300 arquivos de código ou mais de um repositório: roda o `/kit:map` ao final, sem perguntar (só pergunta se passar de 30 agents).
+4. **Rodado de novo** num projeto já configurado, entra em modo reparo: valida o `kit.json`, os comandos e o settings, propõe só o que falta e roda `/kit:map --update` se o mapa estiver desatualizado.
 
-Abra o Claude Code na raiz do repositório e rode:
-
-```text
-/kit:init
-```
+Na configuração do projeto:
 
 - **Repositório sem configuração do Claude Code:** o init detecta o stack (manifestos, Makefile, CI) e propõe três arquivos:
   - `.claude/kit.json` com os comandos reais do projeto;
@@ -47,12 +44,18 @@ Abra o Claude Code na raiz do repositório e rode:
   - um `CLAUDE.md` curto.
 
   Ele mostra tudo e só grava após confirmação.
-- **Repositório que já tem `.claude/`, `CLAUDE.md` ou `.mcp.json` (modo adotar):** o init soma em vez de substituir.
-  - Faz o inventário de hooks, skills, agents e rules existentes e aponta sobreposições com o kit.
-  - Mescla os JSON chave a chave e nunca apaga nada sozinho. Uma peça existente só sai depois de provar que o kit faz o mesmo e de você confirmar, um commit por peça.
-  - O relatório fica em `docs/claude-adoption.md`.
+- **Repositório que já tem `.claude/`, `CLAUDE.md` ou `.mcp.json` (modo adotar):** o init faz o inventário de hooks, skills, agents e rules, aponta sobreposições com o kit e grava o relatório em `docs/claude-adoption.md`. A sua configuração fica como está (veja abaixo).
 
-Depois, revise e commite `.claude/` e `CLAUDE.md`. Quem clonar o repositório recebe a indicação do marketplace e do plugin pelo settings versionado; só precisa fazer o [Primeiro uso](#primeiro-uso) na própria máquina.
+### O kit só soma, nunca altera sua configuração
+
+Em nenhum comando (init, setup, map, reparo) o kit edita, mescla, desativa ou apaga um arquivo de Claude Code que já existe: `CLAUDE.md`, `.claude/settings.json`, `.claude/settings.local.json`, `.mcp.json`, `.claude/skills/`, `.claude/agents/`, `.claude/commands/`, `.claude/rules/` e hooks, nem o `~/.claude/settings.json`. Ele só cria arquivos novos dele.
+
+- `CLAUDE.md` e `.claude/settings.json` que não existem podem ser criados (com sua confirmação).
+- Se existem, o que o kit acrescentaria vai para `.claude/kit-settings.suggested.json` (ou `~/.claude/kit-settings.suggested.json`, no setup) e para o relatório final, com o diff. Você aplica se quiser.
+- Uma skill, agent ou hook seu que faz o mesmo que o kit só aparece no relatório, com a sugestão de qual desativar e como (ex.: `Skill(kit:fix)` em `permissions.deny`).
+- Os arquivos do próprio kit podem ser regravados: `.claude/kit.json`, `.claude/kit-settings.suggested.json`, `docs/claude-adoption.md` e os do mapa (`.claude/rules/map-*.md`, `.claude/rules/kit-codemap.md`, `docs/codemap.md`, com o cabeçalho `kit:map`).
+
+Depois, revise e commite os arquivos criados (`.claude/kit.json`, `docs/claude-adoption.md`, `docs/codemap.md` e as rules do mapa). Quem clonar o repositório recebe a indicação do marketplace e do plugin pelo settings versionado; na própria máquina, basta rodar o `/kit:init`, que prepara o que faltar.
 
 Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:init` na pasta-mãe: ele configura cada repositório e as regras que cruzam repositórios.
 
@@ -90,8 +93,7 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 
 | Comando | Quando usar | O que gera | Como dispara |
 | --- | --- | --- | --- |
-| `/kit:setup` | Uma vez por máquina, ou quando o início da sessão avisar que falta dependência | `~/.claude/settings.json` mesclado | Só manual |
-| `/kit:init` | Uma vez por repositório | `.claude/kit.json`, `.claude/settings.json`, `CLAUDE.md` (e `docs/claude-adoption.md` no modo adotar) | Só manual |
+| `/kit:init` | Uma vez por repositório; de novo para reparar | Máquina pronta, `.claude/kit.json`, `.claude/settings.json`, `CLAUDE.md` (e `docs/claude-adoption.md` no modo adotar, `docs/codemap.md` em projeto grande) | Só manual |
 | `/kit:spec` | Começo de uma feature sem especificação | `docs/specs/<slug>/SPEC.md` | Manual ou sozinho, quando você descreve uma feature nova |
 | `/kit:plan` | SPEC pronta | `PLAN.md` ao lado da SPEC | Manual ou sozinho, quando há uma SPEC para planejar |
 | `/kit:execute` | Plano pronto | Código e testes; caixas do `PLAN.md` marcadas com evidência | Só manual |
@@ -99,7 +101,45 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 | `/kit:fix` | Bug com sintoma claro ou teste falhando | Teste que reproduz + correção | Manual ou sozinho, quando você relata um bug |
 | `/kit:hunt` | Falha intermitente, lentidão, causa desconhecida | Hipóteses com evidência, sem editar código | Manual ou sozinho, quando você relata uma falha vaga |
 
+| `/kit:setup` | Avançado: máquina nova sem projeto, ou reparo da máquina | `~/.claude/settings.json` (se não existir) ou `~/.claude/kit-settings.suggested.json` | Só manual |
+| `/kit:map` | Avançado: mapear de novo, uma área ou só o que mudou | `.claude/rules/map-*.md`, `docs/codemap.md` | Só manual |
+
 "Sozinho" quer dizer que o Claude pode escolher o comando ao reconhecer o pedido, sem você digitar a barra.
+
+## Avançado
+
+O `/kit:init` já chama os dois comandos abaixo quando precisa. Use-os sozinhos para preparar uma máquina sem abrir um projeto, reparar a máquina ou atualizar o mapa.
+
+### `/kit:setup`
+
+Prepara a máquina, uma vez por máquina:
+
+- confere as dependências; se faltar alguma, mostra o comando de instalação do seu sistema (`winget`, `brew`, `apt` ou `claude update`) e para. Instale, reabra o Claude Code e rode de novo;
+- detecta Windows nativo, WSL2, macOS ou Linux e ajusta o sandbox (no Windows nativo não há sandbox, e ele avisa);
+- pergunta se o kit fica ligado em **todos os projetos** ou **só nos projetos que o habilitam** (nesse caso, `claude plugin list` mostra o kit como `disabled` no escopo `user`, e cada projeto o liga pelo próprio `.claude/settings.json`);
+- sem `~/.claude/settings.json`, mostra o arquivo e só cria depois que você confirmar. Se ele já existe, não é alterado: o setup grava `~/.claude/kit-settings.suggested.json` só com o que somaria e mostra o diff.
+
+Prefere configurar à mão? Mescle [`plugins/kit/templates/user-settings.json`](plugins/kit/templates/user-settings.json) no seu `~/.claude/settings.json` e, no Windows nativo, troque `sandbox.failIfUnavailable` para `false`.
+
+### `/kit:map`
+
+Dá ao Claude o contexto de arquitetura de um projeto grande ou com vários repositórios sem inchar o `CLAUDE.md`. Um script divide o código em unidades (pacotes, workspaces, pastas de topo; ~150 arquivos ou ~20 mil linhas cada), um subagent somente leitura mapeia cada unidade em paralelo, dois outros cruzam integrações e fluxos ponta a ponta, e um verificador separado confere as afirmações abrindo cada `arquivo:linha`; o que ele reprova sai do mapa.
+
+```text
+/kit:map                 # tudo: todos os repositórios de "repos", ou só o atual
+/kit:map src/billing     # só uma área
+/kit:map --update        # só as unidades que mudaram desde o último mapa
+```
+
+O resultado fica no git:
+
+- `.claude/rules/map-<unidade>.md`: carregada só quando o Claude mexe naquela área (frontmatter `paths:`), até 40 linhas;
+- `docs/codemap.md`: visão geral, tabela de unidades, integrações, fluxos e divergências de contrato, até 150 linhas;
+- `.claude/rules/kit-codemap.md`, sem `paths:` (carrega em toda sessão), com 2 a 3 linhas apontando para o codemap. O `CLAUDE.md` não é tocado.
+
+Texto seu entre `<!-- manual -->` e `<!-- /manual -->` sobrevive ao remapeamento. O kit só regrava arquivos com o cabeçalho `kit:map`; rules que você escreveu nunca são tocadas. Os investigadores de `/kit:plan`, `/kit:fix` e `/kit:hunt` leem o codemap antes de explorar e confiam no código quando divergem. Quando o codemap fica mais de 50 commits atrás (`map.stale_after_commits`), o início da sessão sugere `/kit:map --update`.
+
+**Custo.** Cada unidade é um subagent, mais dois transversais e um verificador a cada 8 unidades, em ondas de até 8 em paralelo. Ordem de grandeza: ~50 mil tokens por agent; um projeto de 3 mil arquivos dá ~20 unidades, ~25 agents. Antes de lançar, o `/kit:map` mostra o plano; acima de 30 agents (`map.max_agents`) ele pergunta. Para gastar menos, mapeie uma área ou aumente `map.unit_max_files`/`map.unit_max_loc`. O `--update` só paga as unidades que mudaram.
 
 ## O que o kit faz sozinho
 
@@ -114,7 +154,7 @@ Sem você chamar nada, em todo projeto com o kit ligado:
 - **Formatação.** Cada arquivo editado passa pelo formatter do projeto, se o `kit.json` declarar um.
 - **Gate de fim de turno.** Se o Claude mexeu em código, os comandos de verificação do projeto (build, testes relacionados) rodam antes de ele encerrar. Falhou: ele recebe o erro e continua corrigindo. O gate também confere regras do projeto, como "mudou a tela, atualize o manual" e "todo texto existe nas 3 línguas".
 - **Avisos.** Regras de acoplamento leves ("se mudou a API, confira o site") viram um lembrete para o Claude na hora da edição, sem bloquear nada.
-- **Contexto da sessão.** No início de cada sessão o Claude recebe a branch, os arquivos alterados e as tarefas pendentes do plano ativo. Antes de uma compactação, o kit salva esse estado e o devolve depois. Se faltar `jq` ou `git`, ou se o Claude Code estiver desatualizado, o aviso aparece aqui, com o comando para corrigir.
+- **Contexto da sessão.** No início de cada sessão o Claude recebe a branch, os arquivos alterados e as tarefas pendentes do plano ativo. Antes de uma compactação, o kit salva esse estado e o devolve depois. Se faltar `jq` ou `git`, ou se o Claude Code estiver desatualizado, o aviso aparece aqui, com o comando para corrigir. O mesmo vale para um `docs/codemap.md` muito atrás do código: o aviso sugere `/kit:map --update`.
 
 ## O kit bloqueou, e agora?
 
@@ -187,6 +227,7 @@ O `/kit:init` gera este arquivo. Todas as chaves são opcionais; chave ausente �
 | `plan_dirs` | Pastas extras onde o projeto guarda planos | `[".claude/plans"]` |
 | `inject_plan_on_prompt` | Repete a linha do plano ativo a cada mensagem (custa contexto) | `false` |
 | `repos` | Na pasta-mãe de vários repositórios, quais filhos considerar | `["app", "web"]` |
+| `map` | Limites do `/kit:map`: `stale_after_commits` (50), `unit_max_files` (150), `unit_max_loc` (20000), `max_agents` (30), `primary` (repositório do codemap) | `{ "stale_after_commits": 100 }` |
 
 Exemplo completo em [`plugins/kit/templates/kit.example.json`](plugins/kit/templates/kit.example.json); todas as regras (globs, monorepo, vários repositórios, `kit-skip`) em [docs/reference.md](docs/reference.md).
 

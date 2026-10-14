@@ -40,7 +40,8 @@ Detalhe completo de configuração e comportamento. Para instalar e usar, comece
       "message": "Textos precisam existir nas 3 línguas." }
   ],
   "plan_dirs": [".claude/plans"],
-  "inject_plan_on_prompt": false
+  "inject_plan_on_prompt": false,
+  "map": { "stale_after_commits": 50, "unit_max_files": 150, "unit_max_loc": 20000, "max_agents": 30 }
 }
 ```
 
@@ -88,6 +89,32 @@ A descoberta tem cache por sessão em `$TMPDIR`, invalidado quando o `kit.json` 
 - **`session-context`**: branch e alterados de cada repositório, até 15 linhas por repositório.
 - Repositório único: comportamento idêntico ao da v0.1.0.
 
+### `map`
+
+Limites do `/kit:map`, todos opcionais, lidos do `kit.json` da pasta da sessão:
+
+| Chave | Padrão | Efeito |
+| --- | --- | --- |
+| `stale_after_commits` | 50 | Acima disso, o `session-context` avisa que o `docs/codemap.md` está atrasado e sugere `/kit:map --update` |
+| `unit_max_files` | 150 | Unidade com mais arquivos é subdividida |
+| `unit_max_loc` | 20000 | Unidade com mais linhas é subdividida |
+| `max_agents` | 30 | Acima disso, o `/kit:map` pergunta antes de lançar, com o custo estimado |
+| `primary` | o repositório da pasta, ou o primeiro de `repos` | Repositório onde fica o `docs/codemap.md` |
+
+## Init, setup e map
+
+O `/kit:init` é a porta de entrada. Ele roda `scripts/setup.sh status` (as checagens do `/kit:setup`, as regras de usuário do template presentes no `~/.claude/settings.json` e o marketplace `claude-kit` registrado) e, se faltar algo, executa os passos do próprio `/kit:setup`, lendo a skill dele: a lógica fica num lugar só. O setup cria o settings de usuário só se ele não existir; senão grava `~/.claude/kit-settings.suggested.json`, e a falta de regras passa a ser só aviso. Valor existente diferente do template conta como escolha do usuário, não como falta. Depois configura o projeto (novo, adotar ou reparo) e, com mais de 300 arquivos de código (contados pelo `map-partition.sh`) ou mais de um repositório, segue o fluxo do `/kit:map` sem perguntar. Com `.claude/kit.json` já presente, entra em modo reparo: valida `kit.json`, comandos, settings e `.gitignore`, corrige o que é do kit, sugere o resto e roda o `/kit:map --update` quando `map-partition.sh --status` aponta atraso.
+
+### `/kit:map`
+
+1. **Partição** (`scripts/map-partition.sh`, sem LLM): `git ls-files` de cada repositório da sessão, filtrado por `source_globs` e sem `node_modules/`, `vendor/`, `dist/`, `build/`, `target/`, gerados, lockfiles, binários, `protected_paths`, `.env*`, `secrets/`, `keys/` e o próprio `.claude/`. Unidade inicial é o pacote (pasta com manifesto) ou a pasta de topo; acima do limite, subdivide pelas subpastas (pasta só com arquivos diretos vira fatias); vizinhas pequenas com a mesma pasta-mãe são agrupadas até o limite. Saída JSON com `repo`, `unit`, `paths[]` (a maior pasta que só tem arquivos daquela unidade, ou o arquivo), `file_count`, `loc` e `manifests`. `--path` limita a uma área; `--since [<repo>=]<commit>` marca `changed` nas unidades com arquivo alterado (commits e working tree); `--status` diz se o codemap está ausente, em dia ou atrasado.
+2. **Mapeadores**: um `kit:mapper` por unidade, em ondas de até 8 na mesma mensagem. O agent só tem Read, Grep e Glob e devolve um schema fixo de até 60 linhas (responsabilidade, entradas, interfaces, dependências, convenções, armadilhas, testes, confiança), cada afirmação com `arquivo:linha`.
+3. **Transversais**: `kit:mapper` no modo integração (contratos entre unidades e repositórios, com divergências e evidência dos dois lados) e no modo fluxos (3 a 5 fluxos ponta a ponta).
+4. **Verificação**: `kit:map-verifier`, que não produziu o mapa, abre ~5 afirmações por unidade e todas as transversais. Reprovada sai; unidade com mais de 30% de reprovação é remapeada uma vez.
+5. **Escrita**, sem pedir aprovação (fica no git): `.claude/rules/map-<unidade>.md` (frontmatter `paths:`, até 40 linhas) no repositório da unidade, `docs/codemap.md` (até 150 linhas) no repositório principal e `.claude/rules/kit-codemap.md` sem `paths:` (carrega sempre, aponta para o codemap) em cada repositório; o `CLAUDE.md` não é tocado. Todo arquivo gerado leva `<!-- kit:map v1 · <data> · <commit> -->`; blocos entre `<!-- manual -->` e `<!-- /manual -->` são preservados; rule sem esse cabeçalho nunca é sobrescrita (o kit grava `map-<unidade>.kit.md` e avisa).
+
+O total de agents é unidades + 2 transversais + um verificador a cada 8 unidades. O `--update` lê o commit do cabeçalho, passa ao script com `--since` e remapeia só as unidades alteradas, novas ou com `paths` diferentes; refaz os transversais só se interfaces ou dependências mudaram. Os investigadores de `/kit:plan`, `/kit:fix` e `/kit:hunt` leem o `docs/codemap.md` antes de explorar e confiam no código quando divergem.
+
 ## Plan e execute
 
 O `/kit:plan` não pede revisão do plano. Lacuna técnica (nome de campo, parâmetro, flag, pasta, biblioteca já prevista) ele decide pelo padrão mais simples coerente com os docs, registra em "Decisões" do PLAN.md com data, origem e motivo e atualiza o doc de referência quando houver. Ele só pergunta em decisão de produto (o que o usuário vê, regra de negócio), escopo fora da SPEC ou decisão cara de reverter (schema público, contrato de API, dependência nova). Antes de entregar, o `kit:plan-reviewer` confere o plano contra a SPEC e a skill corrige o que ele apontar; você recebe um resumo de até 5 linhas.
@@ -104,7 +131,7 @@ O `/kit:execute` segue a mesma regra para decisões que surgem na execução e t
 | `format.sh` | PostToolUse `Edit\|Write` | Roda o formatter do primeiro glob de `format` que casa. Falha: exit 2 com as últimas 30 linhas. |
 | `advise.sh` | PostToolUse `Edit\|Write` | Regras `coupled_changes` com `level: "warn"` cujo `when` casa com o arquivo editado viram `additionalContext` (JSON, porque stdout puro de PostToolUse não chega ao Claude). Uma vez por arquivo por sessão. Nunca bloqueia. |
 | `verify-gate.sh` | Stop | Em cada repositório da sessão, se algum arquivo alterado (diff contra HEAD + não rastreados) casa `source_globs`, roda `verify_on_stop` em ordem até a primeira falha (últimas 60 linhas). Depois avalia `key_parity` e `coupled_changes` com `level: "block"`. Todas as falhas saem numa única mensagem com exit 2. Respeita `stop_hook_active`. Comandos já verificados com sucesso no mesmo estado não rodam de novo (marca em `.git/kit-verify-*`). |
-| `session-context.sh` | SessionStart (`startup\|resume\|compact\|fork`) | Injeta branch e `git status --short` de cada repositório, os planos ativos e as tarefas pendentes do mais recente. Na origem `compact`, inclui o snapshot do `pre-compact` se ele tiver menos de 2 horas. Sem `jq`, sem `git` ou com Claude Code abaixo de 2.1.295, avisa com o comando de correção e "rode /kit:setup". |
+| `session-context.sh` | SessionStart (`startup\|resume\|compact\|fork`) | Injeta branch e `git status --short` de cada repositório, os planos ativos e as tarefas pendentes do mais recente. Na origem `compact`, inclui o snapshot do `pre-compact` se ele tiver menos de 2 horas. Sem `jq`, sem `git` ou com Claude Code abaixo de 2.1.295, avisa com o comando de correção e "rode /kit:setup". Com `docs/codemap.md` gerado pelo `/kit:map` (na raiz ou num repositório) mais de `map.stale_after_commits` commits atrás do commit do cabeçalho, sugere `/kit:map --update`; commit fora do histórico sugere `/kit:map`. |
 | `session-context.sh --plan-only` | UserPromptSubmit | Só a linha de planos ativos, e só se `inject_plan_on_prompt` for `true`; caso contrário não imprime nada. |
 | `pre-compact.sh` | PreCompact | Grava `<raiz>/.claude/state/kit-snapshot.md` com data, branch, modificados e staged (até 20 cada) de cada repositório e os planos ativos. Sempre exit 0: nunca bloqueia a compactação. Adicione `.claude/state/` ao `.gitignore` (o `/kit:init` propõe). |
 
@@ -116,21 +143,20 @@ Os hooks usam a forma shell com `"shell": "bash"` explícito (`"command": "bash 
 
 ## Modo adotar
 
-Quando o repositório já tem configuração do Claude Code, o `/kit:init` entra somando: nada existente é apagado ou sobrescrito sozinho, e uma peça só é removida depois que o equivalente do kit provar que faz o mesmo e você confirmar. Detalhes em `plugins/kit/skills/init/adopt.md`.
+Quando o repositório já tem configuração do Claude Code, o `/kit:init` não altera nada dela: só cria arquivos do kit e deixa sugestões. Detalhes em `plugins/kit/skills/init/adopt.md`.
 
 1. **Inventário** com `scripts/inventory.sh`: hooks de todos os settings (projeto, local, usuário), skills, commands, agents, rules, CLAUDE.md e MCP.
-2. **Classificação** de cada peça: manter no projeto, substituir pelo kit, virar declaração no `kit.json` (`coupled_changes`/`key_parity`), promover ao kit ou somar. Sobreposições (dois hooks bloqueando o mesmo, duas skills de review) ganham uma peça dona.
-3. **Prova de equivalência** antes de remover: o mesmo cenário passa pelo hook original e pelo do kit (ou pelo `verify-gate` num worktree descartável) e precisa dar o mesmo bloqueio.
-4. **Adições** com merge chave a chave via `scripts/merge-json.sh` (arrays por união, valor existente vence, conflitos reportados) e conferência com `merge-json.sh --check` (só adições).
-5. **Remoção** só com confirmação explícita na conversa, um commit por peça. Respostas pré-aprovadas no argumento (`/kit:init <respostas>`) valem para adições, nunca para remoções.
-6. **Relatório** em `docs/claude-adoption.md`: peça, destino, prova e status.
+2. **Classificação** de cada peça numa sugestão: manter no projeto, desativar a do projeto, desativar a do kit, declarar no `kit.json` (`coupled_changes`, `key_parity`, `protected_paths`), promover ao kit ou somar. Sobreposições (dois hooks bloqueando o mesmo, duas skills de review) ganham uma dona sugerida.
+3. **Prova de equivalência** para sugerir desativar um hook do projeto: o mesmo cenário passa pelo hook original e pelo do kit (ou pelo `verify-gate` num worktree descartável) e precisa dar o mesmo bloqueio. Sem prova, a sugestão vira "manter".
+4. **Arquivos do kit**: `.claude/kit.json` com as declarações e, se o projeto já tem `.claude/settings.json`, `.claude/kit-settings.suggested.json` com o que o kit somaria (`merge-json.sh --additions`), incluindo os `permissions.deny` das sobreposições.
+5. **Relatório** em `docs/claude-adoption.md`: peça, sugestão e prova, sobreposições com a peça a desativar e como, e o diff das sugestões de configuração.
 
-O inventário também detecta, com uma recomendação para cada item:
-- **Sobreposição de skills e agents** com os do kit. Se a skill do projeto tem `disable-model-invocation: true` e a do kit não, o Claude escolhe sozinho a do kit (ex.: `kit:fix` para "corrige esse bug"). Recomendação: a peça do projeto é a dona, e entram `Skill(kit:<nome>)` ou `Agent(kit:<nome>)` em `permissions.deny` do projeto.
+O inventário também detecta, com uma sugestão para cada item:
+- **Sobreposição de skills e agents** com os do kit. Se a skill do projeto tem `disable-model-invocation: true` e a do kit não, o Claude escolhe sozinho a do kit (ex.: `kit:fix` para "corrige esse bug"). Sugestão: a peça do projeto é a dona, e entram `Skill(kit:<nome>)` ou `Agent(kit:<nome>)` em `permissions.deny`, que o usuário aplica.
 - **Aviso possivelmente mudo**: hook PreToolUse, PostToolUse ou Stop que imprime texto no stdout sem JSON `additionalContext`; com exit 0 esse texto não chega ao Claude.
 - **Falha aberta**: hook PreToolUse com `jq ... || exit 0`, que libera tudo sem jq.
 - **Outros riscos**, só listados: skill com efeito colateral sem `disable-model-invocation`, `settings.local.json` versionado, regra com a sintaxe antiga `:*` e ausência de deny de leitura para segredos.
 
-Listas de bloqueio do projeto viram `protected_paths` em forma de objeto, com a mesma mensagem que o hook original mostrava.
+Listas de bloqueio do projeto viram `protected_paths` em forma de objeto no `kit.json`, com a mesma mensagem que o hook original mostrava; o hook continua registrado.
 
-Regras de escrita do init, inclusive em repo novo: mesclar JSON chave a chave, nunca sobrescrever settings, hooks, skills, agents ou CLAUDE.md existentes, mostrar o diff e só gravar após confirmação.
+Regras de escrita do kit, em todo comando: nunca editar, mesclar, desativar ou apagar arquivo de Claude Code existente (`CLAUDE.md`, settings, `.mcp.json`, skills, agents, commands, rules, hooks). `CLAUDE.md` e `.claude/settings.json` ausentes podem ser criados após confirmação; existentes recebem só sugestão (`.claude/kit-settings.suggested.json` e relatório). Arquivos do kit podem ser regravados.

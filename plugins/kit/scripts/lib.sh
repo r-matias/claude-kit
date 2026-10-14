@@ -339,3 +339,33 @@ kit_dependency_notes() {
   fi
   return 0
 }
+
+# Aviso de codemap desatualizado: procura docs/codemap.md com cabecalho "kit:map" na raiz e em cada
+# repositorio e conta os commits desde o commit gravado. Limite em map.stale_after_commits do
+# kit.json da raiz (padrao 50). Uso: kit_codemap_note <raiz> [repositorio...]
+kit_codemap_note() {
+  local root="$1" d f top commit n limit=50 v
+  shift
+  if [ -f "$root/.claude/kit.json" ]; then
+    v="$(jq -r '(.map // {}).stale_after_commits // empty' "$root/.claude/kit.json" 2>/dev/null | tr -d '\r')"
+    case "$v" in '' | *[!0-9]*) ;; *) limit="$v" ;; esac
+  fi
+  for d in "$root" "$@"; do
+    f="$d/docs/codemap.md"
+    [ -f "$f" ] || continue
+    commit="$(head -n 5 "$f" | tr -d '\r' | grep -oE 'kit:map v[0-9]+ · [^ ]+ · [0-9a-f]{7,40}' | head -n 1 | awk '{ print $NF }')"
+    [ -n "$commit" ] || continue
+    top="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null | tr -d '\r')"
+    [ -n "$top" ] || continue
+    if ! git -C "$d" cat-file -e "$commit^{commit}" 2>/dev/null; then
+      echo "kit: o commit do $(kit_rel_to "$root" "$f") ($commit) não está no histórico; rode /kit:map para remapear"
+      return 0
+    fi
+    n="$(git -C "$d" rev-list --count "$commit..HEAD" 2>/dev/null | tr -d '\r')"
+    if [ -n "$n" ] && [ "$n" -gt "$limit" ]; then
+      echo "kit: $(kit_rel_to "$root" "$f") está $n commits atrás (limite $limit); rode /kit:map --update"
+    fi
+    return 0
+  done
+  return 0
+}

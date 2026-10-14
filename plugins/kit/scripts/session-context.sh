@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SessionStart: injeta branch, arquivos alterados de cada repositorio, planos ativos e, apos
-# compactacao, o snapshot salvo pelo pre-compact.sh.
+# compactacao, o snapshot salvo pelo pre-compact.sh. Avisa se o docs/codemap.md do /kit:map esta desatualizado.
 # UserPromptSubmit (--plan-only): so a linha de planos ativos, se inject_plan_on_prompt for true.
 # Sem jq, git ou com Claude Code abaixo da versao minima, avisa no inicio da sessao com o comando de correcao.
 set -u
@@ -48,6 +48,8 @@ fi
 
 echo "## Contexto do kit"
 [ -n "$NOTES" ] && printf '%s\n' "$NOTES"
+MAPNOTE="$(kit_codemap_note "$ROOT" "${REPOS[@]}")"
+[ -n "$MAPNOTE" ] && printf '%s\n' "$MAPNOTE"
 if [ "${#REPOS[@]}" -eq 1 ]; then
   BRANCH="$(git -C "${REPOS[0]}" branch --show-current 2>/dev/null | tr -d '\r')"
   echo "Branch: ${BRANCH:-(detached)}"

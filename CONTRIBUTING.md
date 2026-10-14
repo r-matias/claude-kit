@@ -9,17 +9,19 @@ claude-kit/
 ├── .claude-plugin/marketplace.json     # este repo é o marketplace
 ├── plugins/kit/
 │   ├── .claude-plugin/plugin.json
-│   ├── skills/{setup,init,spec,plan,execute,epic,fix,hunt}/SKILL.md
+│   ├── skills/{setup,init,map,spec,plan,execute,epic,fix,hunt}/SKILL.md
 │   ├── skills/init/{adopt.md,stacks.md}  # modo adotar e referência de stacks
 │   ├── skills/plan/template.md          # formato do PLAN.md
-│   ├── agents/{investigator,code-reviewer,plan-reviewer,security-reviewer,test-writer}.md
+│   ├── skills/map/output.md             # formato das rules e do codemap gerados
+│   ├── agents/{investigator,code-reviewer,plan-reviewer,security-reviewer,test-writer,mapper,map-verifier}.md
 │   ├── hooks/hooks.json
 │   ├── scripts/{lib.sh,guard-bash.sh,guard-files.sh,format.sh,advise.sh,verify-gate.sh,session-context.sh,pre-compact.sh}
 │   ├── scripts/{inventory.sh,merge-json.sh}   # apoio do /kit:init, não são hooks
-│   ├── scripts/setup.sh                 # apoio do /kit:setup: dependências, plataforma e settings do usuário
+│   ├── scripts/setup.sh                 # apoio do /kit:setup e do /kit:init: dependências, plataforma e settings do usuário
+│   ├── scripts/map-partition.sh         # apoio do /kit:map e do /kit:init: unidades de mapeamento e estado do codemap
 │   ├── scripts/wave-base.sh             # apoio do /kit:execute: base do diff de cada wave
 │   ├── templates/{kit.example.json,project-settings.json,CLAUDE.project.md}
-│   └── templates/user-settings.json     # camada 1, mesclada em ~/.claude pelo /kit:setup
+│   └── templates/user-settings.json     # camada 1: vira ~/.claude/settings.json (ou a sugestão ao lado) pelo /kit:setup
 ├── README.md                           # para quem usa o kit
 ├── CONTRIBUTING.md                     # para quem mantém o kit
 ├── docs/design.md                      # princípios, camadas e decisões
@@ -46,7 +48,7 @@ bash tests/run-tests.sh "rm -rf"   # filtra por nome do caso
 KIT_TEST_DEBUG=1 bash tests/run-tests.sh "<caso>"   # mostra input, stdout e stderr
 ```
 
-Cada caso monta um workspace novo a partir de `tests/sample/` (repo git com `kit.json` de comandos `true`/`false`), grava os arquivos de base (`files`), faz commit, aplica as mudanças do turno (`change`, `edit`, `touch` para envelhecer arquivos), passa o JSON do hook pelo script e confere decisão, motivo (`reason`), exit code, stdout e stderr (conteúdo e ordem), JSON de saída (`json_check`), execução repetida (`repeat_empty`) e arquivos depois do hook (`after`). Com `workspace.repos`, o caso roda numa pasta-mãe sem git com repositórios filhos. Cada caso tem `session_id` e `TMPDIR` próprios. Fixtures podem declarar `defaults` mesclados em cada caso. Também testa `merge-json.sh`, `inventory.sh`, `wave-base.sh` (diff da wave com arquivo alterado e novo, sem ignorado, index e commits intactos) e `setup.sh` (settings inexistente e existente com chaves preservadas, proposta que remove valor recusada com restauração, Windows nativo e WSL2 simulados por um `uname` falso, `jq` ausente com o comando de cada plataforma, Claude Code antigo), o aviso do `session-context` sem `jq` e sem `git`, a ordem de seções e campos do template do PLAN.md e que só tarefas, checkpoints e passos da wave final têm caixa, confere que todo hook do `hooks.json` está em forma shell e, no Windows, roda cada um pelo `bash.exe` do Git com um PATH sem nenhum `bash` (o caso que quebrava a forma exec), checa que nenhum script referencia comando de stack, que todos os JSON são válidos e roda `claude plugin validate` no plugin e no marketplace.
+Cada caso monta um workspace novo a partir de `tests/sample/` (repo git com `kit.json` de comandos `true`/`false`), grava os arquivos de base (`files`), faz commit, aplica as mudanças do turno (`change`, `edit`, `touch` para envelhecer arquivos), passa o JSON do hook pelo script e confere decisão, motivo (`reason`), exit code, stdout e stderr (conteúdo e ordem), JSON de saída (`json_check`), execução repetida (`repeat_empty`) e arquivos depois do hook (`after`). Com `workspace.repos`, o caso roda numa pasta-mãe sem git com repositórios filhos. Cada caso tem `session_id` e `TMPDIR` próprios. Fixtures podem declarar `defaults` mesclados em cada caso. Também testa `merge-json.sh` (inclusive `--additions`), `inventory.sh`, `map-partition.sh` (repo pequeno, monorepo com workspaces, vários repositórios, unidade gigante subdividida e pasta fatiada, caminhos protegidos e segredos ignorados, `--since`, `--path` e `--status`), `wave-base.sh` (diff da wave com arquivo alterado e novo, sem ignorado, index e commits intactos) e `setup.sh` (`status` pronto e com regra faltando, settings inexistente criado, settings existente intacto com sugestão só do que somaria e apply recusado, Windows nativo e WSL2 simulados por um `uname` falso, `jq` ausente com o comando de cada plataforma, Claude Code antigo), o aviso do `session-context` sem `jq` e sem `git` e com codemap atrasado (`__HEAD0__` nos arquivos da fixture vira o hash do commit inicial e `commits: N` cria commits depois dele), a ordem de seções e campos do template do PLAN.md e que só tarefas, checkpoints e passos da wave final têm caixa, confere que todo hook do `hooks.json` está em forma shell e, no Windows, roda cada um pelo `bash.exe` do Git com um PATH sem nenhum `bash` (o caso que quebrava a forma exec), checa que nenhum script referencia comando de stack, que todos os JSON são válidos e roda `claude plugin validate` no plugin e no marketplace.
 
 ```bash
 bash tests/run-adopt-test.sh [--keep]   # aceite ao vivo do modo adotar
@@ -56,7 +58,7 @@ bash tests/run-plan-live-test.sh [--keep]   # /kit:plan decide lacuna técnica e
 bash tests/run-execute-live-test.sh [--keep]   # /kit:execute: paralelo disjunto, serialização, checkpoint com revisão
 ```
 
-Copia `tests/adopt/repo/` (que tem hooks, skills, agent, rule, CLAUDE.md e MCP próprios) para uma pasta temporária, roda `/kit:init` com respostas pré-aprovadas via `claude -p --plugin-dir` e confere: nenhum arquivo removido, nenhum commit criado, JSON existentes só com adições (`merge-json.sh --check`), demais arquivos sem linhas removidas, `docs/claude-adoption.md` cobrindo todas as peças e recomendando `Skill(kit:fix)` em deny (com o motivo), aviso mudo e falha aberta marcados, `kit.json` com `key_parity`, `coupled_changes` e a lista de bloqueio convertida em `protected_paths` com mensagem, plugin habilitado e hook original ainda registrado. Leva alguns minutos e consome uma sessão do Claude Code. Roda com `--setting-sources project,local` para não disparar hooks pessoais do `~/.claude`.
+Copia `tests/adopt/repo/` (que tem hooks, skills, agent, rule, CLAUDE.md, settings e MCP próprios) para uma pasta temporária, roda `/kit:init` com respostas pré-aprovadas via `claude -p --plugin-dir` e confere: o hash SHA-256 de todo arquivo de configuração do Claude Code que já existia (`CLAUDE.md`, `.mcp.json`, `.claude/settings*.json`, skills, agents, rules e hooks) é o mesmo depois do init; nenhum arquivo removido; nenhum commit; `.claude/kit-settings.suggested.json` com o plugin habilitado e `Skill(kit:fix)` em deny; `docs/claude-adoption.md` cobrindo todas as peças e sugerindo `Skill(kit:fix)` em deny (com o motivo), aviso mudo e falha aberta marcados; `kit.json` com `key_parity`, `coupled_changes` e a lista de bloqueio convertida em `protected_paths` com mensagem. Leva alguns minutos e consome uma sessão do Claude Code. Roda com `--setting-sources project,local` para não disparar hooks pessoais do `~/.claude`.
 
 O `run-guards-live-test.sh` exige Claude Code ≥ 2.1.295. Ele apaga o script de um guarda numa cópia do plugin e confere no disco que o comando (Bash) ou a escrita (Write) que criaria um arquivo-sonda não aconteceu. O controle, com o script presente, cria a sonda. A contraprova, com o script ausente e sem `onFailure`, também cria, o que mostra que o bloqueio vem do campo.
 

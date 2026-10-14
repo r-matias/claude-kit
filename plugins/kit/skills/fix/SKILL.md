@@ -17,7 +17,7 @@ allowed-tools: Bash(git status *) Bash(git log *)
 
 ## Passos
 1. Entenda o problema: $ARGUMENTS. Se for número de issue, use `gh issue view <n>`.
-2. Delegue a localização ao subagent `kit:investigator`; peça arquivos, linhas e hipótese com evidência.
+2. Delegue a localização ao subagent `kit:investigator` (ele lê o `docs/codemap.md`, se existir, e confia no código quando divergir); peça arquivos, linhas e hipótese com evidência.
 3. Escreva o teste mínimo que reproduz (ou delegue ao `kit:test-writer`). Rode `test_related` e mostre a falha.
 4. Corrija no menor ponto possível. Rode `test_related` e depois `test`.
 5. Peça ao subagent `kit:code-reviewer` para revisar o diff contra o bug descrito. Corrija só BLOCKER/MAJOR.

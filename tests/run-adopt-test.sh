@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Teste de aceite ao vivo do modo adotar: roda /kit:init via `claude -p` num repo com .claude/ proprio
-# e confere que so houve adicoes, que docs/claude-adoption.md foi gerado e que nada foi removido.
+# Teste de aceite ao vivo do modo adotar: roda /kit:init via `claude -p` num repo com CLAUDE.md, settings,
+# skill, agent, rule e hooks proprios e confere por hash que nenhum desses arquivos mudou, que as
+# sugestoes foram para .claude/kit-settings.suggested.json e que docs/claude-adoption.md foi gerado.
 # Custa uma sessao do Claude Code (alguns minutos). Uso: tests/run-adopt-test.sh [--keep]
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 PLUGIN="$REPO/plugins/kit"
-MERGE="$PLUGIN/scripts/merge-json.sh"
 KEEP=0
 [ "${1:-}" = "--keep" ] && KEEP=1
 
@@ -32,17 +32,22 @@ gitq add -A
 gitq add -f .claude/settings.local.json
 gitq commit -m init
 git -C "$P" ls-files | tr -d '\r' >"$W/tracked-before"
+# Hash de todo arquivo rastreado: config do Claude Code e codigo do projeto.
+(cd "$P" && tr '\n' '\0' <"$W/tracked-before" | xargs -0 sha256sum) | tr -d '\r' >"$W/hash-before"
+grep -E ' [ *](CLAUDE\.md|\.mcp\.json|\.claude/.*)$' "$W/hash-before" >"$W/hash-config"
 
 PROMPT='/kit:init Respostas pré-aprovadas (execução não interativa; não há como perguntar):
 - Classificação das peças: aceite os destinos que você propuser.
-- Gravação: sim, grave todas as adições propostas (.claude/kit.json, merge do .claude/settings.json, seções novas do CLAUDE.md e docs/claude-adoption.md).
+- Máquina: pule a preparação da máquina; não grave nada em ~/.claude, só liste o que faltar no resumo.
+- Gravação: sim, grave os arquivos do kit propostos (.claude/kit.json, .claude/kit-settings.suggested.json e docs/claude-adoption.md).
+- Mapa: não rode o /kit:map.
 - Marketplace do kit: r-matias/claude-kit.
 - i18n: sim; strings/pt.json, en.json e es.json precisam ter as mesmas chaves.
 - Arquivos acoplados: sim; mudanças em src/views/** exigem atualização em manual/**.
 - Monorepo: não.'
 
 echo "rodando /kit:init em $P (pode levar alguns minutos)..."
-(cd "$P" && timeout 1500 claude -p "$PROMPT" --plugin-dir "$PLUGIN" --setting-sources project,local --permission-mode acceptEdits --allowedTools "Bash" "Write" "Edit" --max-turns 120 </dev/null >"$W/claude.out" 2>&1)
+(cd "$P" && timeout 1500 claude -p "$PROMPT" --plugin-dir "$PLUGIN" --setting-sources project,local --permission-mode acceptEdits --allowedTools "Bash" "Write" "Edit" "Write(./.claude/**)" "Edit(./.claude/**)" --max-turns 120 </dev/null >"$W/claude.out" 2>&1)
 CODE=$?
 
 PASS=0
@@ -56,22 +61,15 @@ missing=""
 while IFS= read -r f; do [ -e "$P/$f" ] || missing+="$f "; done <"$W/tracked-before"
 [ -z "$missing" ] && ok "nenhum arquivo existente removido" || ko "nenhum arquivo existente removido" "$missing"
 
-[ "$(git -C "$P" rev-list --count HEAD | tr -d '\r')" = "1" ] && ok "nenhum commit criado (remocao exige confirmacao)" ||
-  ko "nenhum commit criado (remocao exige confirmacao)" "$(git -C "$P" log --oneline | tr -d '\r')"
+[ "$(git -C "$P" rev-list --count HEAD | tr -d '\r')" = "1" ] && ok "nenhum commit criado" ||
+  ko "nenhum commit criado" "$(git -C "$P" log --oneline | tr -d '\r')"
 
-bad=""
-while IFS= read -r f; do
-  [ -e "$P/$f" ] || continue
-  case "$f" in
-    *.json)
-      git -C "$P" show "HEAD:$f" >"$W/before.json"
-      if ! bash "$MERGE" --check "$W/before.json" "$P/$f" 2>"$W/check.err"; then bad+="$f ($(tr '\n' ' ' <"$W/check.err")) "; fi ;;
-    *)
-      del="$(git -C "$P" diff --numstat HEAD -- "$f" | tr -d '\r' | awk '{ s += $2 } END { print s + 0 }')"
-      [ "$del" = "0" ] || bad+="$f (-$del linhas) " ;;
-  esac
-done <"$W/tracked-before"
-[ -z "$bad" ] && ok "arquivos existentes so receberam adicoes" || ko "arquivos existentes so receberam adicoes" "$bad"
+changed="$(cd "$P" && sha256sum -c --quiet "$W/hash-config" 2>/dev/null | tr -d '\r' | sed 's/: .*//' | paste -sd' ' -)"
+n_config="$(wc -l <"$W/hash-config" | tr -d ' ')"
+if [ -z "$changed" ] && [ "$n_config" -ge 10 ]; then ok "nenhum arquivo de configuração do projeto mudou (hash de $n_config arquivos: CLAUDE.md, settings, skills, agent, rule, hooks, MCP)"
+else ko "nenhum arquivo de configuração do projeto mudou" "alterados: ${changed:-nenhum} (conferidos: $n_config)"; fi
+changed="$(cd "$P" && sha256sum -c --quiet "$W/hash-before" 2>/dev/null | tr -d '\r' | sed 's/: .*//' | grep -vxF .gitignore | paste -sd' ' -)"
+[ -z "$changed" ] && ok "nenhum outro arquivo rastreado mudou" || ko "nenhum outro arquivo rastreado mudou" "$changed"
 
 A="$P/docs/claude-adoption.md"
 if [ -f "$A" ]; then
@@ -97,9 +95,10 @@ if jq -e '[.protected_paths[]? | objects | select((.glob // "") | test("strings/
   ok "lista de bloqueio do projeto virou protected_paths com a mesma mensagem"
 else ko "lista de bloqueio do projeto virou protected_paths com a mesma mensagem" "$(jq -c '.protected_paths' "$K" 2>&1)"; fi
 
-S="$P/.claude/settings.json"
-if jq -e '.enabledPlugins["kit@claude-kit"] == true and (.extraKnownMarketplaces["claude-kit"] != null)' "$S" >/dev/null 2>&1; then ok "settings habilita kit@claude-kit"; else ko "settings habilita kit@claude-kit" "$(jq -c '{enabledPlugins, extraKnownMarketplaces}' "$S" 2>&1)"; fi
-if jq -e '[.hooks.PreToolUse[]?.hooks[]?.command] | any(test("no-rm-rf"))' "$S" >/dev/null 2>&1; then ok "hook original do projeto continua registrado"; else ko "hook original do projeto continua registrado" "entrada removida"; fi
+SG="$P/.claude/kit-settings.suggested.json"
+if jq -e '.enabledPlugins["kit@claude-kit"] == true and (.extraKnownMarketplaces["claude-kit"] != null)' "$SG" >/dev/null 2>&1; then ok "sugestão habilita kit@claude-kit"; else ko "sugestão habilita kit@claude-kit" "$(jq -c '{enabledPlugins, extraKnownMarketplaces}' "$SG" 2>&1)"; fi
+if jq -e '(.permissions.deny // []) | index("Skill(kit:fix)") != null' "$SG" >/dev/null 2>&1; then ok "sugestão traz Skill(kit:fix) em deny"; else ko "sugestão traz Skill(kit:fix) em deny" "$(jq -c '.permissions' "$SG" 2>&1)"; fi
+if jq -e '(.hooks // null) == null and ((.permissions.allow // []) | index("Bash(npm test)") == null)' "$SG" >/dev/null 2>&1; then ok "sugestão só tem o que soma (sem repetir o settings)"; else ko "sugestão só tem o que soma (sem repetir o settings)" "$(head -c 300 "$SG" 2>&1)"; fi
 
 echo
 echo "$PASS passaram, $FAIL falharam"

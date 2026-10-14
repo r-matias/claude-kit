@@ -173,7 +173,7 @@ for f in .claude/skills/*/SKILL.md; do
     else
       risk="duas skills com o mesmo propósito ficam visíveis e o Claude escolhe uma de forma imprevisível"
     fi
-    echo "- [sobreposição] skill \`$name\` ($f) ↔ \`kit:$k\`. Risco: $risk. Recomendação: a skill do projeto é a dona; adicionar \`Skill(kit:$k)\` em \`permissions.deny\` do \`.claude/settings.json\` do projeto."
+    echo "- [sobreposição] skill \`$name\` ($f) ↔ \`kit:$k\`. Risco: $risk. Recomendação: a skill do projeto é a dona; sugerir \`Skill(kit:$k)\` em \`permissions.deny\` (o kit não altera o settings; o usuário aplica)."
   fi
   if printf '%s' "$(lower "$name $desc")" | grep -qE 'deploy|release|backup|push|migra|publica|publish' && [ "$dmi" != "true" ]; then
     found=1
@@ -187,7 +187,7 @@ for f in .claude/agents/*.md; do
   k="$(kit_agent_for "$name" "$(frontmatter "$f" description)")"
   if [ -n "$k" ]; then
     found=1
-    echo "- [sobreposição] agent \`$name\` ($f) ↔ \`kit:$k\`. Risco: dois agents com o mesmo papel; o Claude escolhe um de forma imprevisível. Recomendação: o agent do projeto é o dono; adicionar \`Agent(kit:$k)\` em \`permissions.deny\` do \`.claude/settings.json\` do projeto."
+    echo "- [sobreposição] agent \`$name\` ($f) ↔ \`kit:$k\`. Risco: dois agents com o mesmo papel; o Claude escolhe um de forma imprevisível. Recomendação: o agent do projeto é o dono; sugerir \`Agent(kit:$k)\` em \`permissions.deny\` (o kit não altera o settings; o usuário aplica)."
   fi
 done
 

@@ -93,6 +93,12 @@ setup_ws() {
   git_q init "$ws/sample"
   git_q -C "$ws/sample" add -A
   git_q -C "$ws/sample" commit -m init
+  # __HEAD0__ nos arquivos vira o hash do commit inicial; commits: N cria N commits vazios depois dele.
+  local h0 n_extra i f0
+  h0="$(git -C "$ws/sample" rev-parse HEAD 2>/dev/null | tr -d '\r')"
+  while IFS= read -r f0; do [ -n "$f0" ] && sed -i "s/__HEAD0__/$h0/g" "$f0"; done < <(grep -rlF __HEAD0__ "$ws/sample" --exclude-dir=.git 2>/dev/null)
+  n_extra="$(jq -r '.commits // 0' <<<"$case_json" | tr -d '\r')"
+  for ((i = 1; i <= n_extra; i++)); do git_q -C "$ws/sample" commit --allow-empty -m "extra $i"; done
   git_q init "$ws/nokit"
   git_q -C "$ws/nokit" add -A
   git_q -C "$ws/nokit" commit -m init
@@ -404,6 +410,10 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   else ko "merge-json: chave a chave, arrays por uniao, existente vence" "$(tr '\n' ' ' <"$U/merged.json")"; fi
   if grep -qF 'conflito em $.model' "$U/conflicts"; then ok "merge-json: conflito reportado no stderr"; else ko "merge-json: conflito reportado no stderr" "$(cat "$U/conflicts")"; fi
   if bash "$M" "$U/nao-existe.json" "$U/new.json" | jq -e '.model == "sonnet"' >/dev/null 2>&1; then ok "merge-json: existente ausente usa a proposta"; else ko "merge-json: existente ausente usa a proposta" ""; fi
+  if bash "$M" --additions "$U/old.json" "$U/new.json" | jq -e '. == {"permissions":{"allow":["C"],"ask":["Q"]},"enabledPlugins":{"kit@claude-kit":true}}' >/dev/null 2>&1; then
+    ok "merge-json --additions: so chaves e itens novos, sem conflito"
+  else ko "merge-json --additions: so chaves e itens novos, sem conflito" "$(bash "$M" --additions "$U/old.json" "$U/new.json" 2>&1 | tr '\n' ' ')"; fi
+  if bash "$M" --additions "$U/merged.json" "$U/new.json" | jq -e '. == {}' >/dev/null 2>&1; then ok "merge-json --additions: nada a somar da {}"; else ko "merge-json --additions: nada a somar da {}" ""; fi
   if bash "$M" --check "$U/old.json" "$U/merged.json" 2>/dev/null; then ok "merge-json --check: so adicoes passa"; else ko "merge-json --check: so adicoes passa" ""; fi
   if ! bash "$M" --check "$U/merged.json" "$U/old.json" 2>"$U/lost" && grep -qF '$.enabledPlugins: removido' "$U/lost"; then
     ok "merge-json --check: remocao falha e e listada"
@@ -464,6 +474,137 @@ if [ -z "$FILTER" ] || [[ "wave-base" == *"$FILTER"* ]]; then
   if ! bash "$WS" "$(mktemp -d "$TMP_ALL/nogit.XXXXXX")" >/dev/null 2>&1; then ok "wave-base: fora de repo git sai com erro"; else ko "wave-base: fora de repo git sai com erro" ""; fi
 fi
 
+echo "map-partition"
+if [ -z "$FILTER" ] || [[ "map-partition" == *"$FILTER"* ]]; then
+  MP="$SCRIPTS/map-partition.sh"
+  # Uso: mp_files <pasta> <caminho>... cria cada arquivo com 3 linhas.
+  mp_files() {
+    local d="$1" f
+    shift
+    for f in "$@"; do mkdir -p "$(dirname "$d/$f")"; printf 'a\nb\nc\n' >"$d/$f"; done
+  }
+  mp_commit() { git_q init "$1"; git_q -C "$1" add -A; git_q -C "$1" commit -m init; }
+
+  # Repo pequeno: uma unidade cobrindo tudo.
+  R="$(mktemp -d "$TMP_ALL/mp.XXXXXX")"
+  mp_files "$R" README.md src/a.js src/b.js lib/c.js
+  mp_commit "$R"
+  out="$(bash "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
+  if jq -e '.totals.units == 1 and .totals.files == 4 and .totals.loc == 12 and .units[0].paths == ["**"] and .totals.agents == 4
+      and (.repos | length) == 1 and (.repos[0].commit | length) == 40 and .primary == "."' <<<"$out" >/dev/null 2>&1; then
+    ok "map-partition: repo pequeno vira uma unidade com o repo inteiro"
+  else ko "map-partition: repo pequeno vira uma unidade com o repo inteiro" "$(head -c 400 <<<"$out") $(cat "$TMP_ALL/mp.err")"; fi
+
+  # Monorepo com workspaces: uma unidade por pacote, com o manifesto de cada um.
+  R="$(mktemp -d "$TMP_ALL/mp.XXXXXX")"
+  printf '{"workspaces":["packages/*","apps/*"]}\n' >"$R/package.json"
+  mkdir -p "$R/.claude"
+  printf '{"map":{"unit_max_files":5}}\n' >"$R/.claude/kit.json"
+  for p in packages/core packages/ui apps/web; do
+    mkdir -p "$R/$p"
+    printf '{"name":"%s"}\n' "${p##*/}" >"$R/$p/package.json"
+    mp_files "$R" "$p/src/one.ts" "$p/src/two.ts" "$p/src/three.ts"
+  done
+  mp_files "$R" tools/build.ts
+  mp_commit "$R"
+  out="$(bash "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
+  if jq -e '
+      def owner($m): [.units[] | select(.manifests | index($m))];
+      (owner("packages/core/package.json") | length == 1) and (owner("packages/ui/package.json") | length == 1)
+      and (owner("apps/web/package.json") | length == 1)
+      and (owner("packages/core/package.json")[0].paths == ["packages/core/**"])
+      and (owner("packages/ui/package.json")[0].paths == ["packages/ui/**"])
+      and (owner("apps/web/package.json")[0].paths == ["apps/**"])
+      and .totals.files == 14 and all(.units[]; .file_count <= 5)' <<<"$out" >/dev/null 2>&1; then
+    ok "map-partition: monorepo com workspaces separa pacotes e lista manifestos"
+  else ko "map-partition: monorepo com workspaces separa pacotes e lista manifestos" "$(jq -c '[.units[] | {unit, paths, manifests}]' <<<"$out" 2>&1 | head -c 600)"; fi
+
+  # Multi-repo: pasta-mae sem git com repos no kit.json; unidades por repositorio, nome com prefixo.
+  R="$(mktemp -d "$TMP_ALL/mp.XXXXXX")"
+  mkdir -p "$R/.claude" "$R/app" "$R/web" "$R/fora"
+  printf '{"repos":["app","web"]}\n' >"$R/.claude/kit.json"
+  mp_files "$R/app" src/main.rs src/lib.rs
+  mp_files "$R/web" src/home.ts
+  mp_files "$R/fora" x.js
+  mp_commit "$R/app"; mp_commit "$R/web"; mp_commit "$R/fora"
+  out="$(bash "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
+  if jq -e '([.repos[].repo] == ["app", "web"]) and .primary == "app" and ([.units[].repo] | unique) == ["app", "web"]
+      and all(.units[]; .unit | test("^(app|web)-")) and .totals.files == 3
+      and ([.units[] | select(.repo == "app") | .file_count] | add) == 2' <<<"$out" >/dev/null 2>&1; then
+    ok "map-partition: multi-repo usa repos do kit.json, unidades por repositorio"
+  else ko "map-partition: multi-repo usa repos do kit.json, unidades por repositorio" "$(head -c 500 <<<"$out") $(cat "$TMP_ALL/mp.err")"; fi
+
+  # Unidade gigante: 400 arquivos num pacote viram unidades de no maximo 150, sem perder arquivo.
+  R="$(mktemp -d "$TMP_ALL/mp.XXXXXX")"
+  mkdir -p "$R/api/flat"
+  printf '<Project />\n' >"$R/api/Api.csproj"
+  for d in a b c; do
+    mkdir -p "$R/api/src/$d"
+    for i in $(seq 1 120); do printf 'x\n' >"$R/api/src/$d/f$i.cs"; done
+  done
+  for i in $(seq 1 40); do printf 'x\n' >"$R/api/flat/g$i.cs"; done
+  mp_commit "$R"
+  out="$(bash "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
+  if jq -e '.totals.files == 401 and .totals.units >= 3 and all(.units[]; .file_count <= 150)
+      and ([.units[].paths[]] | length) == ([.units[].paths[]] | unique | length)
+      and all(.units[]; .manifests == ["api/Api.csproj"])' <<<"$out" >/dev/null 2>&1; then
+    ok "map-partition: unidade gigante é subdividida até o limite sem perder arquivo"
+  else ko "map-partition: unidade gigante é subdividida até o limite sem perder arquivo" "$(jq -c '[.units[] | {unit, file_count, paths}]' <<<"$out" 2>&1 | head -c 600)"; fi
+  # Pasta so com arquivos diretos: fatias.
+  R2="$(mktemp -d "$TMP_ALL/mp.XXXXXX")"
+  mkdir -p "$R2/big"
+  for i in $(seq 1 320); do printf 'x\n' >"$R2/big/f$i.py"; done
+  mp_commit "$R2"
+  out="$(bash "$MP" --root "$R2" 2>"$TMP_ALL/mp.err")"
+  if jq -e '.totals.files == 320 and .totals.units == 3 and all(.units[]; .file_count <= 150) and ([.units[].unit] == ["big-1", "big-2", "big-3"])' <<<"$out" >/dev/null 2>&1; then
+    ok "map-partition: pasta só com arquivos diretos é fatiada"
+  else ko "map-partition: pasta só com arquivos diretos é fatiada" "$(jq -c '[.units[] | {unit, file_count}]' <<<"$out" 2>&1 | head -c 400)"; fi
+
+  # Protegidos, segredos, vendor, build, gerados, lockfiles e binarios ficam de fora; source_globs vale.
+  R="$(mktemp -d "$TMP_ALL/mp.XXXXXX")"
+  mkdir -p "$R/.claude"
+  printf '{"source_globs":["**/*.cs","**/*.ts"],"protected_paths":["**/Migrations/**",{"glob":"gen/**","message":"gerado"}]}\n' >"$R/.claude/kit.json"
+  mp_files "$R" src/App.cs web/app.ts src/Migrations/001_Init.cs gen/Client.cs vendor/lib/x.ts dist/out.ts build/b.ts \
+    secrets/token.cs keys/k.cs .env.local.ts src/Form.Designer.cs src/api.generated.ts docs/readme.md notes.txt src/app.min.js
+  printf '\000\001binario\n' >"$R/src/blob.cs"
+  printf 'lock\n' >"$R/yarn.lock"
+  printf '{}\n' >"$R/package-lock.json"
+  mp_commit "$R"
+  out="$(bash "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
+  if jq -e '.totals.files == 2' <<<"$out" >/dev/null 2>&1 && ! grep -qE 'Migrations|gen/|vendor|dist|build/|secrets|keys|\.env|Designer|generated|readme|notes|min\.js|blob|lock' <<<"$(jq -c '.units' <<<"$out")"; then
+    ok "map-partition: protegidos, segredos, gerados, lockfiles, binários e fora de source_globs ignorados"
+  else ko "map-partition: protegidos, segredos, gerados, lockfiles, binários e fora de source_globs ignorados" "$(jq -c '[.units[] | {paths, file_count}]' <<<"$out" 2>&1 | head -c 500)"; fi
+
+  # --since marca so a unidade alterada; --path limita a area.
+  R="$(mktemp -d "$TMP_ALL/mp.XXXXXX")"
+  mkdir -p "$R/.claude"
+  printf '{"map":{"unit_max_files":3}}\n' >"$R/.claude/kit.json"
+  mp_files "$R" a/1.js a/2.js a/3.js b/1.js b/2.js b/3.js
+  mp_commit "$R"
+  c0="$(git -C "$R" rev-parse HEAD | tr -d '\r')"
+  printf 'novo\n' >>"$R/b/2.js"
+  out="$(bash "$MP" --root "$R" --since "$c0" 2>"$TMP_ALL/mp.err")"
+  if jq -e '.totals.changed == 1 and ([.units[] | select(.changed) | .paths[]] == ["b/**"]) and ([.units[] | select(.changed) | .changed_files] == [1])' <<<"$out" >/dev/null 2>&1; then
+    ok "map-partition: --since marca só a unidade com arquivo alterado"
+  else ko "map-partition: --since marca só a unidade com arquivo alterado" "$(jq -c '[.units[] | {paths, changed}]' <<<"$out" 2>&1 | head -c 400)"; fi
+  out="$(bash "$MP" --root "$R" --path a 2>"$TMP_ALL/mp.err")"
+  if jq -e '.totals.files == 3 and ([.units[].paths[]] == ["a/**"])' <<<"$out" >/dev/null 2>&1; then
+    ok "map-partition: --path limita a uma área"
+  else ko "map-partition: --path limita a uma área" "$(jq -c '.units' <<<"$out" 2>&1 | head -c 400)"; fi
+  # --status: ausente, em dia e desatualizado (limite do kit.json).
+  st1="$(bash "$MP" --root "$R" --status 2>&1)"; c1=$?
+  mkdir -p "$R/docs"
+  printf '<!-- kit:map v1 · 2026-10-14 · %s -->\n# Mapa\n' "$c0" >"$R/docs/codemap.md"
+  st2="$(bash "$MP" --root "$R" --status 2>&1)"; c2=$?
+  printf '{"map":{"unit_max_files":3,"stale_after_commits":1}}\n' >"$R/.claude/kit.json"
+  git_q -C "$R" commit --allow-empty -m a; git_q -C "$R" commit --allow-empty -m b
+  st3="$(bash "$MP" --root "$R" --status 2>&1)"; c3=$?
+  if [ "$c1:$st1" = "1:codemap: ausente" ] && [ "$c2:$st2" = "0:codemap: em dia" ] && [ "$c3" = "1" ] && grep -qF '2 commits atrás (limite 1); rode /kit:map --update' <<<"$st3"; then
+    ok "map-partition --status: ausente, em dia e desatualizado"
+  else ko "map-partition --status: ausente, em dia e desatualizado" "$c1:$st1 | $c2:$st2 | $c3:$st3"; fi
+  if ! bash "$MP" --root "$(mktemp -d "$TMP_ALL/nogit.XXXXXX")" >/dev/null 2>&1; then ok "map-partition: sem repositório git sai com erro"; else ko "map-partition: sem repositório git sai com erro" ""; fi
+fi
+
 echo "setup"
 if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   SU="$SCRIPTS/setup.sh"
@@ -502,30 +643,51 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
     ok "setup apply: settings inexistente criado com o template e kit ligado"
   else ko "setup apply: settings inexistente criado com o template e kit ligado" "exit $code, $(head -c 300 "$TMP_ALL/su.err")"; fi
 
-  # settings existente: chaves preservadas, arrays unidos, opt-in desliga o kit no usuario.
+  # status: maquina pronta depois do apply; settings ausente ou sem regras do kit pede o setup.
+  out="$(run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
+  code=$?
+  if [ "$code" = "0" ] && grep -qF 'ok settings' <<<"$out" && grep -qF 'aviso marketplace' <<<"$out"; then
+    ok "setup status: settings com as regras do kit está pronto"
+  else ko "setup status: settings com as regras do kit está pronto" "exit $code, $out"; fi
+  CS="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
+  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
+  code=$?
+  if [ "$code" = "1" ] && grep -qF 'falta settings' <<<"$out"; then ok "setup status: settings inexistente pede /kit:setup"; else ko "setup status: settings inexistente pede /kit:setup" "exit $code, $out"; fi
+  jq '.permissions.deny -= ["PowerShell"] | .sandbox.failIfUnavailable = false' "$C1/settings.json" >"$CS/settings.json"
+  mkdir -p "$CS/plugins"
+  printf '{"claude-kit":{}}\n' >"$CS/plugins/known_marketplaces.json"
+  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
+  code=$?
+  if [ "$code" = "1" ] && grep -qF 'falta settings: 1 regra' <<<"$out" && grep -qF 'ok marketplace claude-kit' <<<"$out"; then
+    ok "setup status: regra removida falta, valor trocado pelo usuário não"
+  else ko "setup status: regra removida falta, valor trocado pelo usuário não" "exit $code, $out"; fi
+
+  # settings existente: nunca alterado; a sugestao traz so o que somaria e a troca do opt-in.
   C2="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
   printf '%s' '{"model":"opus","permissions":{"allow":["Bash(ls *)"],"deny":["Bash(rm *)","Bash(curl *)"]},"enabledPlugins":{"kit@claude-kit":true,"outro@mkt":true},"sandbox":{"enabled":true,"network":{"allowedDomains":["example.com"]}}}' >"$C2/settings.json"
   cp "$C2/settings.json" "$TMP_ALL/su.before"
-  run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" propose opt-in >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err" &&
-    run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" apply >>"$TMP_ALL/su.out" 2>>"$TMP_ALL/su.err"
+  run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" propose opt-in >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
   code=$?
-  if [ "$code" = "0" ] && jq -e '.model == "opus" and .permissions.allow == ["Bash(ls *)"] and (.permissions.deny | index("Bash(rm *)") != null)
-      and ([.permissions.deny[] | select(. == "Bash(curl *)")] | length) == 1 and (.permissions.deny | index("PowerShell") != null)
-      and .enabledPlugins["outro@mkt"] == true and .enabledPlugins["kit@claude-kit"] == false
-      and .sandbox.network.allowedDomains == ["example.com"] and .sandbox.failIfUnavailable == true' "$C2/settings.json" >/dev/null 2>&1; then
-    ok "setup: settings existente preserva chaves, une arrays e opt-in desliga o kit"
-  else ko "setup: settings existente preserva chaves, une arrays e opt-in desliga o kit" "exit $code, $(tr -d '\n' <"$C2/settings.json" | head -c 400)"; fi
-  lost="$(bash "$SCRIPTS/merge-json.sh" --check "$TMP_ALL/su.before" "$C2/settings.json" 2>&1 | tr -d '\r')"
-  if [ "$lost" = '$.enabledPlugins.kit@claude-kit: true -> false' ]; then ok "setup: única troca é enabledPlugins do kit"; else ko "setup: única troca é enabledPlugins do kit" "$lost"; fi
-
-  # Proposta que remove valor: apply recusa e restaura o original.
-  cp "$C2/settings.json" "$TMP_ALL/su.before"
-  jq 'del(.model)' "$C2/settings.json" >"$C2/settings.kit-proposta.json"
+  SG="$C2/kit-settings.suggested.json"
+  if [ "$code" = "0" ] && cmp -s "$TMP_ALL/su.before" "$C2/settings.json" && [ ! -e "$C2/settings.kit-proposta.json" ] &&
+    jq -e '(.permissions.deny | index("PowerShell") != null) and (.permissions.deny | index("Bash(curl *)") == null)
+      and (.permissions | has("allow") | not) and (has("model") | not) and .enabledPlugins == {"kit@claude-kit": false}
+      and .sandbox.failIfUnavailable == true and (.sandbox | has("enabled") | not)' "$SG" >/dev/null 2>&1 &&
+    grep -qF 'troca sugerida: enabledPlugins."kit@claude-kit": true -> false' "$TMP_ALL/su.out" && grep -qF 'sugestão:' "$TMP_ALL/su.out"; then
+    ok "setup propose: settings existente intacto, sugestão só com o que somaria e a troca do opt-in"
+  else ko "setup propose: settings existente intacto, sugestão só com o que somaria e a troca do opt-in" "exit $code, $(tr -d '\n' <"$SG" 2>&1 | head -c 400)"; fi
   run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" apply >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
   code=$?
-  if [ "$code" = "1" ] && grep -qF '$.model: removido' "$TMP_ALL/su.err" && cmp -s "$TMP_ALL/su.before" "$C2/settings.json"; then
-    ok "setup apply: proposta que remove valor é recusada e o settings restaurado"
-  else ko "setup apply: proposta que remove valor é recusada e o settings restaurado" "exit $code, $(head -c 300 "$TMP_ALL/su.err")"; fi
+  if [ "$code" = "1" ] && cmp -s "$TMP_ALL/su.before" "$C2/settings.json" && grep -qF 'não altera settings existente' "$TMP_ALL/su.err"; then
+    ok "setup apply: settings existente é recusado e fica idêntico"
+  else ko "setup apply: settings existente é recusado e fica idêntico" "exit $code, $(head -c 300 "$TMP_ALL/su.err")"; fi
+  out="$(run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
+  code=$?
+  if [ "$code" = "0" ] && grep -qF 'aviso settings:' <<<"$out" && grep -qF 'kit-settings.suggested.json' <<<"$out"; then
+    ok "setup status: regras faltando com sugestão gerada vira aviso"
+  else ko "setup status: regras faltando com sugestão gerada vira aviso" "exit $code, $out"; fi
+  run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" propose todos >"$TMP_ALL/su.out" 2>&1
+  if grep -qF 'nada a sugerir' "$TMP_ALL/su.out" && [ ! -e "$C1/kit-settings.suggested.json" ]; then ok "setup propose: settings completo não gera sugestão"; else ko "setup propose: settings completo não gera sugestão" "$(cat "$TMP_ALL/su.out")"; fi
 
   # Windows nativo simulado: sem sandbox, failIfUnavailable false; WSL mantem true.
   C3="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
@@ -571,7 +733,7 @@ fi
 
 echo "checagens estaticas"
 if [ -z "$FILTER" ]; then
-  stack_hits="$(grep -nE '(^|[^a-z_-])(dotnet|npm|npx|pnpm|yarn|pytest|uv run|pip|poetry|cargo|mvn|gradlew?|go (build|test|vet)|golangci-lint|ruff|prettier|eslint|tsc)([^a-z_-]|$)' "$SCRIPTS"/*.sh || true)"
+  stack_hits="$(grep -nE '(^|[^a-z_.-])(dotnet|npm|npx|pnpm|yarn|pytest|uv run|pip|poetry|cargo|mvn|gradlew?|go (build|test|vet)|golangci-lint|ruff|prettier|eslint|tsc)([^a-z_-]|$)' "$SCRIPTS"/*.sh || true)"
   if [ -z "$stack_hits" ]; then ok "nenhum script referencia comando de stack"; else ko "nenhum script referencia comando de stack" "$stack_hits"; fi
 
   TPL="$REPO/plugins/kit/skills/plan/template.md"

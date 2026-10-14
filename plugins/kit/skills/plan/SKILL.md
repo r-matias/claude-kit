@@ -26,7 +26,7 @@ A resposta entra em Decisões como `- <data> · usuário · <decisão> — <perg
 
 ## Passos
 1. Leia a spec: $ARGUMENTS. Sem argumento, use a SPEC.md mais recente em `docs/specs/`.
-2. Delegue ao `kit:investigator` o mapeamento do código afetado: pontos de entrada, padrões a seguir (com `arquivo:linha` do melhor molde para cada tipo de mudança), testes existentes, docs de referência, riscos.
+2. Delegue ao `kit:investigator` (que lê o `docs/codemap.md`, se existir) o mapeamento do código afetado: pontos de entrada, padrões a seguir (com `arquivo:linha` do melhor molde para cada tipo de mudança), testes existentes, docs de referência, riscos.
 3. Liste as lacunas e classifique cada uma pela regra acima. Pergunte as de produto, escopo ou caras de reverter; decida as técnicas.
 4. **must_haves, de trás para frente.** Parta do resultado da SPEC (Objetivo, Escopo, Casos de borda, Verificação ponta a ponta):
    - **truths:** frases que precisam ser verdade quando acabar, cada uma verificável por teste ou comando. Todo item de Escopo e todo caso de borda vira ao menos uma truth.

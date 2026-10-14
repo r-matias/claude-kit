@@ -16,7 +16,7 @@ allowed-tools: Bash(git status *) Bash(git log *)
 
 ## Passos
 1. Colete o sintoma: $ARGUMENTS. Se faltar algo, pergunte com `AskUserQuestion` só o que muda a investigação: quando começou, frequência, mensagem de erro ou log, como reproduzir, o que mudou recentemente.
-2. Reconhecimento rápido: logs e mensagens citadas, `git log` recente nas áreas suspeitas, tentativa de reprodução com `test_related` ou `test` se houver caminho.
+2. Reconhecimento rápido: se existir `docs/codemap.md`, leia a parte da área suspeita antes (o código vence quando divergir); logs e mensagens citadas, `git log` recente nas áreas suspeitas, tentativa de reprodução com `test_related` ou `test` se houver caminho.
 3. Formule até três hipóteses distintas e falsificáveis.
 4. Dispare um subagent `kit:investigator` por hipótese, em paralelo (na mesma mensagem). Peça a cada um evidência a favor e contra.
 5. Devolva as hipóteses ranqueadas:

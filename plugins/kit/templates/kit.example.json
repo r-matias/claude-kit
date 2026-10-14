@@ -69,5 +69,11 @@
   "plan_dirs": [
     ".claude/plans"
   ],
-  "inject_plan_on_prompt": false
+  "inject_plan_on_prompt": false,
+  "map": {
+    "stale_after_commits": 50,
+    "unit_max_files": 150,
+    "unit_max_loc": 20000,
+    "max_agents": 30
+  }
 }
