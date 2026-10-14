@@ -1,12 +1,12 @@
 # Desenho do claude-kit
 
-Resumo das decisões que sustentam o kit. Instalação, uso e o comportamento exato de cada peça estão no [README](../README.md).
+Resumo das decisões que sustentam o kit. Instalação e uso estão no [README](../README.md); o comportamento exato de cada peça, em [reference.md](reference.md).
 
 ## Versão mínima
 
 **Claude Code ≥ 2.1.295.** É a versão que introduz `onFailure: "block"`, usado nos guardas (`guard-bash`, `guard-files`): sem ele, um guarda cujo script falta, quebra ou estoura o tempo deixa a ação passar. O `plugin.json` não aceita campo de versão mínima do Claude Code (os campos com versão são `version`, do próprio plugin, e `dependencies`, de outros plugins), então a exigência fica neste documento, no README, no `/kit:setup`, que para quando a versão é menor, e no aviso que o `session-context` mostra no início da sessão.
 
-A tabela de recursos dependentes de versão está na seção Requisitos do README.
+A tabela de recursos dependentes de versão está na seção Requisitos e plataformas do README.
 
 ## Princípios
 
