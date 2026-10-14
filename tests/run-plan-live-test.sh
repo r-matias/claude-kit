@@ -84,7 +84,7 @@ if grep -qx 'Agent:kit:plan-reviewer\|Task:kit:plan-reviewer' <<<"$calls"; then 
 if git -C "$d" diff --quiet HEAD -- src test data; then ok "nenhum código de produção alterado"; else ko "nenhum código de produção alterado" "$(git -C "$d" diff --stat HEAD -- src test data | tr '\n' ' ')"; fi
 if git -C "$d" diff HEAD -- docs/data-model.md | grep -q '^+.*lastLogin'; then ok "doc de referência (data-model.md) atualizado"; else ko "doc de referência (data-model.md) atualizado" "sem linha nova com lastLogin"; fi
 summary_lines="$(final_text "$d.jsonl" | grep -c .)"
-if [ "$summary_lines" -ge 1 ] && [ "$summary_lines" -le 7 ]; then ok "resumo curto ($summary_lines linhas)"; else ko "resumo curto" "$summary_lines linhas"; fi
+if [ "$summary_lines" -ge 1 ] && [ "$summary_lines" -le 5 ]; then ok "resumo curto ($summary_lines linhas)"; else ko "resumo curto" "$summary_lines linhas"; fi
 
 echo "lacuna de produto"
 d="$(run_plan lacuna-produto)"

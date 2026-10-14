@@ -43,4 +43,4 @@ A resposta entra em Decisões como `- <data> · usuário · <decisão> — <perg
 8. **Wave final**, fixa, como no template. Remova o passo F4 se o `kit.json` não tiver `smoke`.
 9. Grave `PLAN.md` ao lado da SPEC.md.
 10. Chame o `kit:plan-reviewer` com os caminhos da SPEC.md e do PLAN.md. Corrija todo achado BLOCKER e MAJOR no PLAN.md e chame de novo, até "aprovado" ou só MINOR (no máximo 3 rodadas; se sobrar BLOCKER, diga qual).
-11. Entregue um resumo de até 5 linhas: caminho do PLAN.md, número de waves e tarefas, decisões (quantas e a principal), resultado da revisão e o próximo passo (`/kit:execute <caminho>`).
+11. A resposta final é só o resumo, no máximo 5 linhas não vazias, sem título, introdução nem fecho, uma linha por item: caminho do PLAN.md; número de waves e tarefas; decisões (quantas e a principal); resultado da revisão; próximo passo (`/kit:execute <caminho>`).

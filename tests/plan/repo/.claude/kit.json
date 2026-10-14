@@ -5,6 +5,6 @@
   },
   "source_globs": ["src/**/*.js"],
   "coupled_changes": [
-    { "when": ["src/store.js"], "require": ["docs/data-model.md"], "level": "warn", "message": "Campos do users.json estão documentados em docs/data-model.md." }
+    { "when": ["src/store.js"], "require": ["docs/data-model.md"], "level": "block", "message": "Campos do users.json estão documentados em docs/data-model.md; atualize o doc junto." }
   ]
 }

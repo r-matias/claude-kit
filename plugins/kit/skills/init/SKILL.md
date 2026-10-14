@@ -54,7 +54,7 @@ Projeto já configurado pelo kit. Não refaça a entrevista; confira e proponha 
    - `verify_on_stop`: o conjunto mais rápido que pega erro real (normalmente `build` ou `typecheck` + `test_related`). Avise que roda ao fim de cada turno com mudança em código.
    - `source_globs`: extensões de código-fonte do stack.
 4. **Checks de domínio.** Pergunte (ou use a resposta pré-aprovada) se o projeto tem:
-   - **i18n**: procure `**/i18n/*.json`, `**/locales/**/*.json`, `**/lang/*.json`. Se houver, proponha `key_parity` com os arquivos de cada conjunto e uma `message` curta.
+   - **i18n**: procure `**/i18n/*.json`, `**/locales/**/*.json`, `**/lang/*.json` e qualquer pasta com dois ou mais JSON nomeados por código de idioma (`pt.json`, `en-US.json`, `pt_BR.json`, ou subpastas `pt/`, `en/` com os mesmos nomes de arquivo), como `strings/` ou `translations/`; ignore pastas de código gerado. Se houver, proponha `key_parity` com os arquivos de cada conjunto e uma `message` curta.
    - **arquivos acoplados**: pares que precisam mudar juntos (telas ↔ manual, schema ↔ migração, contrato de API ↔ cliente gerado, código ↔ doc de referência). Se houver, proponha `coupled_changes` com `when`, `require` e `message` dizendo o que atualizar. Para cada par, pergunte o nível: `"level": "block"` (padrão: o turno só termina com o par alterado) ou `"level": "warn"` (só um aviso na edição, para acoplamentos do tipo "se mudou X, confira Y"). `hint` é opcional: texto extra, como o comando que regenera o par.
    - Sem resposta ou "não": não inclua as chaves.
 5. **Propor `.claude/settings.json`** a partir de `templates/project-settings.json`:
