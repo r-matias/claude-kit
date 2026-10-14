@@ -1,6 +1,7 @@
 {
   "script": "session-context.sh",
   "cases": [
+    {"name": "plano no formato com waves: conta so caixas e lista tarefas, checkpoint e wave final", "plan": "# Plano: X\nSpec: ./SPEC.md\n\n## must_haves\n### truths\n- truth-alfa vale\n### artifacts\n- `src/a.cs` — provê A\n### tests\n- `test/a.cs` — cobre truth-alfa\n\n## Interfaces\n- `int A()` — tarefa 1\n\n## Wave 1 — base\nParalelo: 1, 2\n\n- [x] 1. Criar A\n  - files: `src/a.cs`\n  - behavior:\n    - chamada → 1\n  - action: copiar molde\n  - verify: `test_related`\n  - done: A devolve 1\n  - Evidência: test_related → ok\n- [ ] 2. Criar B\n  - files: `src/b.cs`\n  - behavior:\n    - comportamento-beta → 2\n  - action: idem\n  - verify: `test_related`\n  - done: B devolve 2\n- [ ] Checkpoint wave 1: re-rodar os verify da wave\n\n## Wave final — revisão e verificação\n- [ ] F1. Revisão independente\n- [ ] F2. Corrigir BLOCKER e MAJOR\n- [ ] F3. Verificação ponta a ponta\n\n## Decisões\n- 2026-10-14 · kit · decisao-gama — motivo\n", "stdout": ["docs/specs/feat/PLAN.md (1/6)", "- [ ] 2. Criar B", "- [ ] Checkpoint wave 1", "- [ ] F3. Verificação ponta a ponta"], "stdout_not": ["truth-alfa", "comportamento-beta", "decisao-gama", "1. Criar A"]},
     { "name": "mostra branch, alterados e tarefas pendentes", "change": "src/App.cs",
       "plan": "# Plano\n- [x] 1. feito\n- [ ] 2. tarefa pendente\n", "exit": 0,
       "stdout": ["Branch: main", "src/App.cs", "- [ ] 2. tarefa pendente", "docs/specs/feat/PLAN.md (1/2)"], "stdout_not": ["1. feito"] },

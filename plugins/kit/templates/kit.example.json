@@ -4,7 +4,8 @@
     "test": "dotnet test --nologo",
     "test_related": "dotnet test --nologo --filter {files}",
     "lint": "npm run lint --prefix frontend",
-    "typecheck": "npx tsc --noEmit -p frontend"
+    "typecheck": "npx tsc --noEmit -p frontend",
+    "smoke": "bash scripts/smoke.sh"
   },
   "format": {
     "**/*.cs": "dotnet format --include {files}",

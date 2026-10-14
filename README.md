@@ -13,6 +13,7 @@ claude-kit/
 │   ├── .claude-plugin/plugin.json
 │   ├── skills/{init,spec,plan,execute,epic,fix,hunt}/SKILL.md
 │   ├── skills/init/{adopt.md,stacks.md}  # modo adotar e referência de stacks
+│   ├── skills/plan/template.md          # formato do PLAN.md
 │   ├── agents/{investigator,code-reviewer,plan-reviewer,security-reviewer,test-writer}.md
 │   ├── hooks/hooks.json
 │   ├── scripts/{lib.sh,guard-bash.sh,guard-files.sh,format.sh,advise.sh,verify-gate.sh,session-context.sh,pre-compact.sh}
@@ -68,7 +69,9 @@ O plugin é instalado uma vez por máquina; em cada repositório ele só é liga
 **No dia a dia**
 
 - Feature: `/kit:spec` → `/clear` → `/kit:plan` → `/kit:execute`
-  - O `/kit:plan` não pede revisão do plano. Lacuna técnica (nome de campo, parâmetro, flag, pasta, biblioteca já prevista) ele decide pelo padrão mais simples coerente com os docs, registra em "Decisões assumidas" do PLAN.md com o motivo e atualiza o doc de referência quando houver. Ele só pergunta em decisão de produto (o que o usuário vê, regra de negócio), escopo fora da SPEC ou decisão cara de reverter (schema público, contrato de API, dependência nova). Antes de entregar, o `kit:plan-reviewer` confere o plano contra a SPEC e a skill corrige o que ele apontar; você recebe um resumo de até 5 linhas.
+  - O `/kit:plan` não pede revisão do plano. Lacuna técnica (nome de campo, parâmetro, flag, pasta, biblioteca já prevista) ele decide pelo padrão mais simples coerente com os docs, registra em "Decisões" do PLAN.md com data, origem e motivo e atualiza o doc de referência quando houver. Ele só pergunta em decisão de produto (o que o usuário vê, regra de negócio), escopo fora da SPEC ou decisão cara de reverter (schema público, contrato de API, dependência nova). Antes de entregar, o `kit:plan-reviewer` confere o plano contra a SPEC e a skill corrige o que ele apontar; você recebe um resumo de até 5 linhas.
+  - O PLAN.md ([template](plugins/kit/skills/plan/template.md)) é derivado de trás para frente: `must_haves` no topo (truths verificáveis, artifacts com o que cada arquivo provê, tests com o que cada teste cobre), depois `Interfaces` com assinaturas, rotas, schemas e códigos de erro exatos. As tarefas ficam agrupadas em waves por dependência, com a linha `Paralelo:` dizendo quais podem rodar ao mesmo tempo, e cada uma tem `files`, `behavior` (cada linha vira teste), `action` (com o molde `arquivo:linha`), `verify` (chave do `kit.json`) e `done` (assertiva testável). Toda wave termina num checkpoint. A wave final é fixa: revisão pelo `kit:code-reviewer` e pelo `kit:security-reviewer`, correção de BLOCKER/MAJOR com nova revisão, verificação ponta a ponta da SPEC e `smoke` se o `kit.json` tiver. Só tarefas, checkpoints e passos da wave final levam caixa `- [ ]`, que é o que os hooks contam como progresso.
+  - O `/kit:execute` segue as waves (delegando as tarefas paralelas a subagents), só marca `[x]` com o `done` comprovado e, em cada checkpoint, re-roda os `verify` da wave, confere os `done` e avalia o contexto: acima de ~70%, para e recomenda `/compact` seguido de `/kit:execute`, que retoma da próxima caixa. Plano no formato antigo (sem waves) roda tarefa a tarefa.
   - O `/kit:execute` segue a mesma regra para decisões que surgem na execução e também para antes de ação irreversível (deploy, push, chamada a serviço externo real, migração em banco real).
 - Épico: `/kit:epic`; cada fatia vira uma feature
 - Bug conhecido: `/kit:fix <issue>`
@@ -89,7 +92,8 @@ O plugin é instalado uma vez por máquina; em cada repositório ele só é liga
     "test": "dotnet test --nologo",
     "test_related": "dotnet test --nologo --filter {files}",
     "lint": "npm run lint --prefix frontend",
-    "typecheck": "npx tsc --noEmit -p frontend"
+    "typecheck": "npx tsc --noEmit -p frontend",
+    "smoke": "bash scripts/smoke.sh"
   },
   "format": {
     "**/*.cs": "dotnet format --include {files}",
@@ -122,6 +126,7 @@ O plugin é instalado uma vez por máquina; em cada repositório ele só é liga
 ```
 
 - Comandos rodam com `bash -c` na pasta que contém o `.claude/` do `kit.json`.
+- `smoke` é opcional e só o `/kit:execute` usa, no último passo da wave final do plano.
 - `{files}` vira a lista de caminhos relativos, cada um entre aspas simples.
 - Globs aceitam `**`, `*`, `?` e `{a,b}`, relativos à raiz do `kit.json`. Glob sem `/` também casa pelo nome do arquivo.
 - Chaves ausentes são puladas sem erro. Monorepo: um `kit.json` por pacote; os hooks usam o mais próximo do arquivo.
@@ -212,7 +217,7 @@ bash tests/run-tests.sh "rm -rf"   # filtra por nome do caso
 KIT_TEST_DEBUG=1 bash tests/run-tests.sh "<caso>"   # mostra input, stdout e stderr
 ```
 
-Cada caso monta um workspace novo a partir de `tests/sample/` (repo git com `kit.json` de comandos `true`/`false`), grava os arquivos de base (`files`), faz commit, aplica as mudanças do turno (`change`, `edit`, `touch` para envelhecer arquivos), passa o JSON do hook pelo script e confere decisão, motivo (`reason`), exit code, stdout e stderr (conteúdo e ordem), JSON de saída (`json_check`), execução repetida (`repeat_empty`) e arquivos depois do hook (`after`). Com `workspace.repos`, o caso roda numa pasta-mãe sem git com repositórios filhos. Cada caso tem `session_id` e `TMPDIR` próprios. Fixtures podem declarar `defaults` mesclados em cada caso. Também testa `merge-json.sh` e `inventory.sh`, confere que todo hook do `hooks.json` está em forma shell e, no Windows, roda cada um pelo `bash.exe` do Git com um PATH sem nenhum `bash` (o caso que quebrava a forma exec), checa que nenhum script referencia comando de stack, que todos os JSON são válidos e roda `claude plugin validate` no plugin e no marketplace.
+Cada caso monta um workspace novo a partir de `tests/sample/` (repo git com `kit.json` de comandos `true`/`false`), grava os arquivos de base (`files`), faz commit, aplica as mudanças do turno (`change`, `edit`, `touch` para envelhecer arquivos), passa o JSON do hook pelo script e confere decisão, motivo (`reason`), exit code, stdout e stderr (conteúdo e ordem), JSON de saída (`json_check`), execução repetida (`repeat_empty`) e arquivos depois do hook (`after`). Com `workspace.repos`, o caso roda numa pasta-mãe sem git com repositórios filhos. Cada caso tem `session_id` e `TMPDIR` próprios. Fixtures podem declarar `defaults` mesclados em cada caso. Também testa `merge-json.sh` e `inventory.sh`, a ordem de seções e campos do template do PLAN.md e que só tarefas, checkpoints e passos da wave final têm caixa, confere que todo hook do `hooks.json` está em forma shell e, no Windows, roda cada um pelo `bash.exe` do Git com um PATH sem nenhum `bash` (o caso que quebrava a forma exec), checa que nenhum script referencia comando de stack, que todos os JSON são válidos e roda `claude plugin validate` no plugin e no marketplace.
 
 ```bash
 bash tests/run-adopt-test.sh [--keep]   # aceite ao vivo do modo adotar
@@ -225,7 +230,7 @@ Copia `tests/adopt/repo/` (que tem hooks, skills, agent, rule, CLAUDE.md e MCP p
 
 O `run-guards-live-test.sh` exige Claude Code ≥ 2.1.295. Ele apaga o script de um guarda numa cópia do plugin e confere no disco que o comando (Bash) ou a escrita (Write) que criaria um arquivo-sonda não aconteceu. O controle, com o script presente, cria a sonda. A contraprova, com o script ausente e sem `onFailure`, também cria, o que mostra que o bloqueio vem do campo.
 
-O `run-plan-live-test.sh` copia `tests/plan/repo/` com uma SPEC de `tests/plan/specs/` e roda `/kit:plan` via `claude -p`. Com a SPEC de lacuna técnica (último login), confere que o PLAN.md sai com "Decisões assumidas" (decisão — motivo), sem `AskUserQuestion`, com o `kit:plan-reviewer` chamado, `docs/data-model.md` atualizado, nenhum código de produção alterado e resumo curto. Com a SPEC de lacuna de produto (bloqueio sem limite de tentativas definido), confere que a skill pergunta sobre o limite e não grava o PLAN.md. Como `claude -p` não tem usuário, vale a chamada ao `AskUserQuestion` ou a pergunta no texto final.
+O `run-plan-live-test.sh` copia `tests/plan/repo/` com uma SPEC de `tests/plan/specs/` e roda `/kit:plan` via `claude -p`. Com a SPEC de lacuna técnica (último login), confere o formato do PLAN.md (seções na ordem, cada tarefa com `files`/`behavior`/`action`/`verify`/`done`, cada wave com `Paralelo:` e checkpoint, wave final F1 a F3 sem smoke porque a fixture não tem, caixa só onde deve, `lastLoginAt` em Interfaces) e Decisões com data, origem `kit` e motivo, sem `AskUserQuestion`, com o `kit:plan-reviewer` chamado, `docs/data-model.md` atualizado, nenhum código de produção alterado e resumo curto. Com a SPEC de lacuna de produto (bloqueio sem limite de tentativas definido), confere que a skill pergunta sobre o limite e não grava o PLAN.md. Como `claude -p` não tem usuário, vale a chamada ao `AskUserQuestion` ou a pergunta no texto final.
 
 A fixture guarda a configuração como `_claude/`, `_CLAUDE.md` e `_mcp.json` para o próprio Claude Code não carregar as skills e o CLAUDE.md de teste quando você trabalha no repo do kit.
 

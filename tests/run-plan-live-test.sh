@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Teste ao vivo do /kit:plan: lacuna tecnica vira "Decisoes assumidas" sem pergunta; lacuna de
+# Teste ao vivo do /kit:plan: lacuna tecnica vira Decisoes (origem kit) sem pergunta, no formato
+# must_haves/Interfaces/waves/wave final; lacuna de
 # produto vira pergunta e nao gera PLAN.md. Confere no disco e no transcript (stream-json).
 # Custa duas sessoes do Claude Code (alguns minutos cada). Uso: tests/run-plan-live-test.sh [--keep]
 set -u
@@ -50,9 +51,34 @@ d="$(run_plan lacuna-tecnica)"
 P="$d/docs/specs/lacuna-tecnica/PLAN.md"
 calls="$(tools_called "$d.jsonl")"
 if [ -f "$P" ]; then ok "PLAN.md gravado"; else ko "PLAN.md gravado" "$(final_text "$d.jsonl" | tail -n 10)"; fi
-if [ -f "$P" ] && awk '/^## Decisões assumidas/ {s = 1; next} /^## / {s = 0} s && /^- .+ — .+/ {n++} END {exit !(n > 0)}' "$P"; then
-  ok "seção Decisões assumidas com decisão e motivo"
-else ko "seção Decisões assumidas com decisão e motivo" "$( [ -f "$P" ] && sed -n '/## Decisões assumidas/,/^## [^D]/p' "$P" | head -n 10)"; fi
+[ -f "$P" ] || : >"$P.vazio"
+PF="$P"; [ -f "$P" ] || PF="$P.vazio"
+heads="$(grep -E '^##+ ' "$PF" | tr -d '\r' | sed -E 's/^(##+ (must_haves|truths|artifacts|tests|Interfaces|Wave final|Wave [0-9]+|Decisões)).*/\1/' |
+  grep -E '^##+ (must_haves|truths|artifacts|tests|Interfaces|Wave final|Wave [0-9]+|Decisões)$' | sed -E 's/Wave [0-9]+/Wave N/' | awk '!seen[$0]++' | paste -sd'|' -)"
+if [ "$heads" = "## must_haves|### truths|### artifacts|### tests|## Interfaces|## Wave N|## Wave final|## Decisões" ]; then
+  ok "seções na ordem: must_haves, Interfaces, waves, wave final, Decisões"
+else ko "seções na ordem: must_haves, Interfaces, waves, wave final, Decisões" "$heads"; fi
+# Cada tarefa numerada tem files, behavior, action, verify e done, nessa ordem.
+bad_tasks="$(tr -d '\r' <"$PF" | awk '
+  function flush() { if (t != "" && f != "files|behavior|action|verify|done") print t " -> " f }
+  /^- \[[ xX]\] [0-9]+\. / { flush(); t = $0; f = ""; next }
+  /^- \[|^## / { flush(); t = ""; f = ""; next }
+  t != "" && match($0, /^  - (files|behavior|action|verify|done):/) { k = substr($0, 5, RLENGTH - 5); f = f (f == "" ? "" : "|") k }
+  END { flush() }')"
+ntasks="$(grep -cE '^- \[[ xX]\] [0-9]+\. ' "$PF")"
+if [ "$ntasks" -gt 0 ] && [ -z "$bad_tasks" ]; then ok "$ntasks tarefas com files, behavior, action, verify e done"; else ko "tarefas com files, behavior, action, verify e done" "${bad_tasks:-nenhuma tarefa}"; fi
+waves="$(grep -cE '^## Wave [0-9]+' "$PF")"
+cps="$(grep -cE '^- \[ \] Checkpoint wave [0-9]+:' "$PF")"
+pars="$(grep -cE '^Paralelo:' "$PF")"
+if [ "$waves" -gt 0 ] && [ "$cps" = "$waves" ] && [ "$pars" = "$waves" ]; then ok "$waves waves, cada uma com Paralelo e checkpoint"; else ko "waves com Paralelo e checkpoint" "waves=$waves checkpoints=$cps paralelo=$pars"; fi
+final="$(sed -n '/^## Wave final/,/^## [^W]/p' "$PF" | grep -oE '^- \[ \] F[0-9]+' | sed 's/.* //' | paste -sd' ' -)"
+if [ "$final" = "F1 F2 F3" ]; then ok "wave final F1-F3, sem smoke (kit.json sem smoke)"; else ko "wave final F1-F3, sem smoke" "$final"; fi
+stray="$(grep -E '\[[ xX]\]' "$PF" | grep -vE '^- \[[ xX]\] ([0-9]+\.|Checkpoint wave [0-9]+:|F[0-9]+\.) ' || true)"
+if [ -z "$stray" ]; then ok "caixa só em tarefa, checkpoint e wave final"; else ko "caixa só em tarefa, checkpoint e wave final" "$stray"; fi
+if sed -n '/^## Interfaces/,/^## /p' "$PF" | grep -q 'lastLoginAt'; then ok "Interfaces cita lastLoginAt"; else ko "Interfaces cita lastLoginAt" "ausente"; fi
+if sed -n '/^## Decisões/,/^## [^D]/p' "$PF" | grep -qE '^- [0-9]{4}-[0-9]{2}-[0-9]{2} · kit · .+ — .+'; then
+  ok "Decisões com data, origem kit e motivo"
+else ko "Decisões com data, origem kit e motivo" "$(sed -n '/^## Decisões/,/^## [^D]/p' "$PF" | head -n 6)"; fi
 if ! grep -qx 'AskUserQuestion' <<<"$calls"; then ok "nenhuma pergunta ao usuário"; else ko "nenhuma pergunta ao usuário" "AskUserQuestion chamado"; fi
 if grep -qx 'Agent:kit:plan-reviewer\|Task:kit:plan-reviewer' <<<"$calls"; then ok "kit:plan-reviewer chamado"; else ko "kit:plan-reviewer chamado" "$(tr '\n' ' ' <<<"$calls")"; fi
 if git -C "$d" diff --quiet HEAD -- src test data; then ok "nenhum código de produção alterado"; else ko "nenhum código de produção alterado" "$(git -C "$d" diff --stat HEAD -- src test data | tr '\n' ' ')"; fi
