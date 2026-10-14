@@ -129,6 +129,115 @@ else
   echo "- nenhum .mcp.json"
 fi
 
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# Proposito de uma skill do projeto comparado com as skills do kit (nome ou descricao).
+kit_skill_for() {
+  local t
+  t="$(lower "$1 $2")"
+  case "$t" in
+    *épico* | *epico* | *epic*) echo epic ;;
+    *spec* | *especifica*) echo spec ;;
+    *planej* | *plan*) echo plan ;;
+    *execut* | *implement*) echo execute ;;
+    *hunt* | *debug* | *investig* | *diagnos*) echo hunt ;;
+    *fix* | *corrig* | *conserta* | *bug*) echo fix ;;
+  esac
+}
+
+kit_agent_for() {
+  local t
+  t="$(lower "$1 $2")"
+  case "$t" in
+    *secur* | *segur*) echo security-reviewer ;;
+    *review* | *revis*) echo code-reviewer ;;
+    *investig* | *explor*) echo investigator ;;
+    *test*) echo test-writer ;;
+  esac
+}
+
+echo
+echo "## Riscos e sobreposições"
+found=0
+
+for f in .claude/skills/*/SKILL.md; do
+  [ -f "$f" ] || continue
+  name="$(frontmatter "$f" name)"; [ -n "$name" ] || name="$(basename "$(dirname "$f")")"
+  desc="$(frontmatter "$f" description)"
+  dmi="$(frontmatter "$f" disable-model-invocation)"
+  k="$(kit_skill_for "$name" "$desc")"
+  if [ -n "$k" ]; then
+    found=1
+    if [ "$dmi" = "true" ]; then
+      risk="a skill do projeto tem disable-model-invocation: true e a do kit não, então o Claude escolhe sozinho \`kit:$k\` para pedidos como \"corrige esse bug\""
+    else
+      risk="duas skills com o mesmo propósito ficam visíveis e o Claude escolhe uma de forma imprevisível"
+    fi
+    echo "- [sobreposição] skill \`$name\` ($f) ↔ \`kit:$k\`. Risco: $risk. Recomendação: a skill do projeto é a dona; adicionar \`Skill(kit:$k)\` em \`permissions.deny\` do \`.claude/settings.json\` do projeto."
+  fi
+  if printf '%s' "$(lower "$name $desc")" | grep -qE 'deploy|release|backup|push|migra|publica|publish' && [ "$dmi" != "true" ]; then
+    found=1
+    echo "- [efeito colateral] skill \`$name\` ($f) parece ter efeito colateral e não tem disable-model-invocation: true; o Claude pode invocá-la sozinho."
+  fi
+done
+
+for f in .claude/agents/*.md; do
+  [ -f "$f" ] || continue
+  name="$(frontmatter "$f" name)"; [ -n "$name" ] || name="$(basename "$f" .md)"
+  k="$(kit_agent_for "$name" "$(frontmatter "$f" description)")"
+  if [ -n "$k" ]; then
+    found=1
+    echo "- [sobreposição] agent \`$name\` ($f) ↔ \`kit:$k\`. Risco: dois agents com o mesmo papel; o Claude escolhe um de forma imprevisível. Recomendação: o agent do projeto é o dono; adicionar \`Agent(kit:$k)\` em \`permissions.deny\` do \`.claude/settings.json\` do projeto."
+  fi
+done
+
+# Hooks do projeto: aviso mudo (texto no stdout sem additionalContext) e guarda que falha aberta sem jq.
+for s in .claude/settings.json .claude/settings.local.json; do
+  [ -f "$s" ] || continue
+  while IFS=$'\t' read -r ev cmd; do
+    [ -n "$cmd" ] || continue
+    case "$ev" in PreToolUse | PostToolUse | Stop) ;; *) continue ;; esac
+    script="$(printf '%s' "$cmd" | sed -e 's/\${CLAUDE_PROJECT_DIR}/./g' -e 's/\$CLAUDE_PROJECT_DIR/./g' -e 's/"//g' |
+      grep -oE '[^ ]+\.(sh|bash|py|js|mjs|cjs|ts)' | head -n 1)"
+    [ -n "$script" ] && [ -f "$script" ] || continue
+    if grep -E '^[[:space:]]*(echo|printf)([[:space:]]|$)' "$script" | grep -vqE '>&2|>[[:space:]]*/dev/|>>?[[:space:]]*[^&[:space:]]' &&
+      ! grep -q 'additionalContext' "$script"; then
+      found=1
+      echo "- [aviso possivelmente mudo] hook $ev \`$script\` ($s) imprime texto no stdout sem JSON additionalContext; com exit 0 esse texto não chega ao Claude. Recomendação: migrar para \`coupled_changes\` com \`level: warn\` ou trocar a saída para JSON \`additionalContext\`."
+    fi
+    if [ "$ev" = "PreToolUse" ] && grep -qE 'jq.*\|\|[[:space:]]*exit[[:space:]]+0' "$script"; then
+      found=1
+      echo "- [falha aberta] hook PreToolUse \`$script\` ($s) faz \`jq ... || exit 0\`: sem jq (ou com JSON inesperado) a guarda libera tudo. Recomendação: substituir pelo \`guard-files\` com \`protected_paths\` (mensagem por item) ou trocar para exit 2."
+    fi
+  done < <(jq -r '(.hooks // {}) | to_entries[] | .key as $ev | .value[]? | .hooks[]? |
+    "\($ev)\t\(.command // "")\(if .args then " " + (.args | join(" ")) else "" end)"' "$s" 2>/dev/null | tr -d '\r')
+done
+
+if git ls-files --error-unmatch .claude/settings.local.json >/dev/null 2>&1; then
+  found=1
+  echo "- [settings.local.json versionado] \`.claude/settings.local.json\` está no git; ele é pessoal e costuma ficar fora do repositório."
+fi
+
+for s in .claude/settings.json .claude/settings.local.json; do
+  [ -f "$s" ] || continue
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    found=1
+    echo "- [sintaxe antiga] regra \`$r\` em $s usa \`:*\`; a forma atual é \`Tool(prefixo *)\`."
+  done < <(jq -r '(.permissions // {}) | [.allow, .ask, .deny] | map(. // []) | add | .[] | select(test(":\\*\\)$"))' "$s" 2>/dev/null | tr -d '\r')
+done
+
+secret_deny=0
+for s in .claude/settings.json .claude/settings.local.json "$HOME/.claude/settings.json"; do
+  [ -f "$s" ] || continue
+  jq -e '(.permissions.deny // []) | any(test("^Read\\(.*(\\.env|secret|\\.pem|\\.key)"))' "$s" >/dev/null 2>&1 && secret_deny=1
+done
+if [ "$secret_deny" -eq 0 ]; then
+  found=1
+  echo "- [sem deny de segredos] nenhuma regra \`Read(...)\` em \`permissions.deny\` cobre \`.env\`, chaves ou \`secrets/\` (projeto, local ou usuário)."
+fi
+[ "$found" -eq 1 ] || echo "- nenhum"
+
 echo
 echo "## Outros arquivos em .claude/"
 if [ -d .claude ]; then

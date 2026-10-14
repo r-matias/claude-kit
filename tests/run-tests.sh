@@ -49,7 +49,9 @@ setup_ws() {
     mkdir -p "$ws/sample/docs/specs/feat"
     printf '%b' "$plan" >"$ws/sample/docs/specs/feat/PLAN.md"
   fi
-  write_map "$ws/sample" "$(jq -c '.files // {}' <<<"$case_json")"
+  local base
+  base="$(case_base "$ws" "$case_json")"
+  [ "$base" = "$ws/sample" ] && write_map "$ws/sample" "$(jq -c '.files // {}' <<<"$case_json")"
 
   git_q init "$ws/sample"
   git_q -C "$ws/sample" add -A
@@ -59,13 +61,39 @@ setup_ws() {
   git_q -C "$ws/nokit" commit -m init
   printf 'class X {}\n' >"$ws/nokit/src/X.cs"
 
+  # Pasta-mae sem git com repositorios filhos: workspace.repos = {nome: {caminho: conteudo}}.
+  if [ "$base" = "$ws/mroot" ]; then
+    mkdir -p "$ws/mroot"
+    local repo
+    while IFS= read -r repo; do
+      [ -n "$repo" ] || continue
+      mkdir -p "$ws/mroot/$repo"
+      write_map "$ws/mroot/$repo" "$(jq -c --arg r "$repo" '.workspace.repos[$r]' <<<"$case_json")"
+      git_q init "$ws/mroot/$repo"
+      git_q -C "$ws/mroot/$repo" add -A
+      git_q -C "$ws/mroot/$repo" commit -m init
+    done < <(jq -r '.workspace.repos // {} | keys_unsorted[]' <<<"$case_json" | tr -d '\r')
+    write_map "$ws/mroot" "$(jq -c '.files // {}' <<<"$case_json")"
+  fi
+
   while IFS= read -r change; do
     [ -n "$change" ] || continue
-    mkdir -p "$(dirname "$ws/sample/$change")"
-    printf '// alterado\n' >>"$ws/sample/$change"
+    mkdir -p "$(dirname "$base/$change")"
+    printf '// alterado\n' >>"$base/$change"
   done < <(jq -r '.change // empty | if type == "array" then .[] else . end' <<<"$case_json" | tr -d '\r')
-  write_map "$ws/sample" "$(jq -c '.edit // {}' <<<"$case_json")"
+  write_map "$base" "$(jq -c '.edit // {}' <<<"$case_json")"
+
+  # touch: {caminho: minutos atras} para simular arquivos antigos.
+  local k mins
+  while IFS=$'\t' read -r k mins; do
+    [ -n "$k" ] || continue
+    touch -d "@$(($(date +%s) - mins * 60))" "$base/$k"
+  done < <(jq -r '(.touch // {}) | to_entries[] | "\(.key)\t\(.value)"' <<<"$case_json" | tr -d '\r')
   printf '%s' "$ws"
+}
+
+case_base() {
+  if jq -e '.workspace' <<<"$2" >/dev/null 2>&1; then printf '%s' "$1/mroot"; else printf '%s' "$1/sample"; fi
 }
 
 # Grava {caminho: valor} sob a raiz dada: string vira conteudo, objeto/array vira JSON, null apaga.
@@ -90,48 +118,61 @@ case_list() {
 }
 
 resolve_token() {
-  local v="$1" ws="$2"
+  local v="$1" ws="$2" base="$3"
   case "$v" in
     __NOKIT__*) native_join "$(native_path "$ws/nokit")" "${v#__NOKIT__/}" ;;
     __NOGIT__*) native_path "$ws/nogit" ;;
-    *) native_join "$(native_path "$ws/sample")" "$v" ;;
+    *) native_join "$(native_path "$base")" "$v" ;;
   esac
 }
 
 run_case() {
-  local script="$1" case_json="$2" name ws input out err code cwd file tool
+  local script="$1" case_json="$2" name ws base input out err code cwd file tool sid
   name="$(jq -r '.name' <<<"$case_json")"
   if [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]]; then return; fi
 
   ws="$(setup_ws "$case_json")"
+  base="$(case_base "$ws" "$case_json")"
   cwd="$(jq -r '.cwd // empty' <<<"$case_json")"
   case "$cwd" in
     __NOKIT__) cwd="$(native_path "$ws/nokit")" ;;
     __NOGIT__) cwd="$(native_path "$ws/nogit")" ;;
-    *) cwd="$(native_path "$ws/sample")" ;;
+    "") cwd="$(native_path "$base")" ;;
+    *) cwd="$(native_join "$(native_path "$base")" "$cwd")" ;;
   esac
+  sid="teste-${ws##*.}"
+  mkdir -p "$ws/tmp"
 
   case "$script" in
     guard-bash.sh)
       input="$(jq -cn --arg c "$(jq -r '.command' <<<"$case_json")" --arg d "$cwd" \
         '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: $c}, cwd: $d}')" ;;
-    guard-files.sh | format.sh)
+    guard-files.sh | format.sh | advise.sh)
       tool="$(jq -r '.tool' <<<"$case_json")"
-      file="$(resolve_token "$(jq -r '.file' <<<"$case_json")" "$ws")"
-      local ev="PreToolUse"; [ "$script" = "format.sh" ] && ev="PostToolUse"
-      input="$(jq -cn --arg t "$tool" --arg f "$file" --arg d "$cwd" --arg e "$ev" \
-        '{hook_event_name: $e, tool_name: $t, tool_input: {file_path: $f}, cwd: $d}')" ;;
+      file="$(resolve_token "$(jq -r '.file' <<<"$case_json")" "$ws" "$base")"
+      local ev="PreToolUse"; [ "$script" != "guard-files.sh" ] && ev="PostToolUse"
+      input="$(jq -cn --arg t "$tool" --arg f "$file" --arg d "$cwd" --arg e "$ev" --arg s "$sid" \
+        '{hook_event_name: $e, session_id: $s, tool_name: $t, tool_input: {file_path: $f}, cwd: $d}')" ;;
     verify-gate.sh)
-      input="$(jq -cn --arg d "$cwd" --argjson a "$(jq '.stop_hook_active // false' <<<"$case_json")" \
-        '{hook_event_name: "Stop", stop_hook_active: $a, cwd: $d}')" ;;
+      input="$(jq -cn --arg d "$cwd" --arg s "$sid" --argjson a "$(jq '.stop_hook_active // false' <<<"$case_json")" \
+        '{hook_event_name: "Stop", session_id: $s, stop_hook_active: $a, cwd: $d}')" ;;
     session-context.sh)
-      input="$(jq -cn --arg d "$cwd" '{hook_event_name: "SessionStart", source: "startup", cwd: $d}')" ;;
+      input="$(jq -cn --arg d "$cwd" --arg s "$sid" --arg o "$(jq -r '.source // "startup"' <<<"$case_json")" \
+        '{hook_event_name: "SessionStart", session_id: $s, source: $o, cwd: $d}')" ;;
+    pre-compact.sh)
+      input="$(jq -cn --arg d "$cwd" --arg s "$sid" '{hook_event_name: "PreCompact", session_id: $s, trigger: "auto", cwd: $d}')" ;;
   esac
+
+  local -a args=()
+  while IFS= read -r s; do [ -n "$s" ] && args+=("$s"); done < <(jq -r '(.args // [])[]' <<<"$case_json" | tr -d '\r')
 
   out="$ws/stdout"
   err="$ws/stderr"
-  (cd "$ws" && env -u CLAUDE_PROJECT_DIR bash "$SCRIPTS/$script" <<<"$input" >"$out" 2>"$err")
+  (cd "$ws" && TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR bash "$SCRIPTS/$script" "${args[@]}" <<<"$input" >"$out" 2>"$err")
   code=$?
+  if [ "$(jq -r '.repeat_empty // false' <<<"$case_json")" = "true" ]; then
+    (cd "$ws" && TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR bash "$SCRIPTS/$script" "${args[@]}" <<<"$input" >"$ws/stdout2" 2>/dev/null)
+  fi
 
   local expect exp_exit why=""
   expect="$(jq -r '.expect // empty' <<<"$case_json")"
@@ -163,17 +204,19 @@ run_case() {
   fi
   while IFS= read -r s; do
     [ -n "$s" ] || continue
-    [ ! -e "$ws/sample/$s" ] || why="${why:+$why; }deveria nao existir: $s"
+    [ ! -e "$base/$s" ] || why="${why:+$why; }deveria nao existir: $s"
   done < <(jq -r '(.after.absent // [])[]' <<<"$case_json" | tr -d '\r')
   while IFS= read -r s; do
     [ -n "$s" ] || continue
-    [ -e "$ws/sample/$s" ] || why="${why:+$why; }deveria existir: $s"
+    [ -e "$base/$s" ] || why="${why:+$why; }deveria existir: $s"
   done < <(jq -r '(.after.exists // [])[]' <<<"$case_json" | tr -d '\r')
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     local want
-    want="$(jq -r --arg k "$s" '.after.contains[$k]' <<<"$case_json" | tr -d '\r')"
-    grep -qF -- "$want" "$ws/sample/$s" 2>/dev/null || why="${why:+$why; }$s sem '$want'"
+    while IFS= read -r want; do
+      [ -n "$want" ] || continue
+      grep -qF -- "$want" "$base/$s" 2>/dev/null || why="${why:+$why; }$s sem '$want'"
+    done < <(jq -r --arg k "$s" '.after.contains[$k] | if type == "array" then .[] else . end' <<<"$case_json" | tr -d '\r')
   done < <(jq -r '(.after.contains // {}) | keys_unsorted[]' <<<"$case_json" | tr -d '\r')
   while IFS= read -r s; do
     [ -n "$s" ] || continue
@@ -186,8 +229,21 @@ run_case() {
   if [ "$(jq -r '.stdout_empty // false' <<<"$case_json")" = "true" ] && [ -s "$out" ]; then
     why="${why:+$why; }stdout deveria ser vazio"
   fi
-  if [ "$expect" != "deny" ] && [ "$script" != "session-context.sh" ] && [ -s "$out" ]; then
+  local has_out_expect
+  has_out_expect="$(jq -r 'has("stdout") or has("json_check")' <<<"$case_json")"
+  if [ "$expect" != "deny" ] && [ "$script" != "session-context.sh" ] && [ "$has_out_expect" != "true" ] && [ -s "$out" ]; then
     why="${why:+$why; }stdout deveria ser vazio"
+  fi
+  s="$(jq -r '.reason // empty' <<<"$case_json" | tr -d '\r')"
+  if [ -n "$s" ] && ! jq -r '.hookSpecificOutput.permissionDecisionReason // empty' "$out" 2>/dev/null | grep -qF -- "$s"; then
+    why="${why:+$why; }motivo sem '$s': $(head -c 300 "$out")"
+  fi
+  s="$(jq -r '.json_check // empty' <<<"$case_json" | tr -d '\r')"
+  if [ -n "$s" ] && ! jq -e "$s" "$out" >/dev/null 2>&1; then
+    why="${why:+$why; }json_check falhou ($s): $(head -c 300 "$out")"
+  fi
+  if [ "$(jq -r '.repeat_empty // false' <<<"$case_json")" = "true" ] && [ -s "$ws/stdout2" ]; then
+    why="${why:+$why; }segunda execucao deveria ter saida vazia: $(head -c 200 "$ws/stdout2")"
   fi
 
   [ -n "${KIT_TEST_DEBUG:-}" ] && { echo "--- input: $input"; echo "--- stdout:"; cat "$out"; echo "--- stderr:"; cat "$err"; }
@@ -241,7 +297,7 @@ if [ -z "$FILTER" ] || [[ "sem jq" == *"$FILTER"* ]]; then
         ok "$s sem jq bloqueia com exit 2"
       else ko "$s sem jq bloqueia com exit 2" "exit $code, stdout='$out', stderr='$(cat "$TMP_ALL/nojq.err")'"; fi
     done
-    for s in format.sh verify-gate.sh session-context.sh; do
+    for s in format.sh verify-gate.sh session-context.sh advise.sh pre-compact.sh; do
       out="$(printf '%s' '{"cwd":"."}' | PATH="$NOJQ_PATH" "$BASH_BIN" "$SCRIPTS/$s" 2>"$TMP_ALL/nojq.err")"
       code=$?
       if [ "$code" = "0" ] && [ -z "$out" ] && [ ! -s "$TMP_ALL/nojq.err" ]; then
@@ -272,15 +328,32 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   mv "$U/adopt/_claude" "$U/adopt/.claude"
   mv "$U/adopt/_CLAUDE.md" "$U/adopt/CLAUDE.md"
   mv "$U/adopt/_mcp.json" "$U/adopt/.mcp.json"
+  git_q init "$U/adopt"
+  git_q -C "$U/adopt" add -A
+  git_q -C "$U/adopt" add -f .claude/settings.local.json
+  git_q -C "$U/adopt" commit -m init
   bash "$SCRIPTS/inventory.sh" "$U/adopt" >"$U/inv" 2>&1
   inv_miss=""
   for s in 'PreToolUse [Bash] command: bash "$CLAUDE_PROJECT_DIR/.claude/hooks/no-rm-rf.sh"' \
     'PostToolUse [Edit|Write]' '`.claude/hooks/manual-check.sh`' '`review`' '`manual-sync`' \
     '`i18n-checker`' 'tools: Read, Grep, Glob' '`.claude/rules/api.md` paths:' '`CLAUDE.md`' '`docs-search`: stdio node' \
-    'permissions: allow 2, ask 0, deny 1'; do
+    'permissions: allow 2, ask 0, deny 2'; do
     grep -qF -- "$s" "$U/inv" || inv_miss+="[$s] "
   done
   if [ -z "$inv_miss" ]; then ok "inventory: lista hooks, skills, agents, rules, CLAUDE.md e MCP"; else ko "inventory: lista hooks, skills, agents, rules, CLAUDE.md e MCP" "faltam $inv_miss"; fi
+
+  # Riscos: cada linha esperada e o que nao pode ser marcado (hooks que usam stderr corretamente).
+  risk_miss=""
+  for s in '[sobreposição] skill `fix`' 'Skill(kit:fix)' 'disable-model-invocation: true e a do kit não' \
+    '[efeito colateral] skill `publicar-previa`' '[falha aberta] hook PreToolUse `./.claude/hooks/block-generated.sh`' \
+    '[aviso possivelmente mudo] hook PostToolUse `./.claude/hooks/lint-hint.sh`' \
+    '[settings.local.json versionado]' '[sintaxe antiga] regra `Bash(rm:*)`'; do
+    grep -qF -- "$s" "$U/inv" || risk_miss+="[$s] "
+  done
+  for s in 'manual-check.sh` (.claude/settings.json) imprime' 'no-rm-rf.sh` (.claude/settings.json) imprime' '[sem deny de segredos]' 'skill `review` (.claude'; do
+    ! grep -qF -- "$s" "$U/inv" || risk_miss+="[nao deveria: $s] "
+  done
+  if [ -z "$risk_miss" ]; then ok "inventory: sobreposicoes, aviso mudo, falha aberta e riscos de configuracao"; else ko "inventory: sobreposicoes, aviso mudo, falha aberta e riscos de configuracao" "$risk_miss"; fi
 fi
 
 echo "checagens estaticas"

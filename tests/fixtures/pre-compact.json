@@ -1,0 +1,15 @@
+{
+  "script": "pre-compact.sh",
+  "cases": [
+    { "name": "pre-compact: grava snapshot com alterados e plano ativo", "change": "src/App.cs",
+      "plan": "# Plano\n- [x] 1. feito\n- [ ] 2. pendente\n",
+      "after": { "contains": { ".claude/state/kit-snapshot.md": ["Snapshot do kit em", "branch: main", "src/App.cs", "docs/specs/feat/PLAN.md (1/2)", "- [ ] 2. pendente"] } } },
+    { "name": "pre-compact: snapshot com os dois repositorios",
+      "workspace": { "repos": {
+        "app": { "src/main.rs": "fn main() {}\n" },
+        "web": { "src/home.ts": "x\n" } } },
+      "change": ["app/src/main.rs", "web/src/home.ts"],
+      "after": { "contains": { ".claude/state/kit-snapshot.md": ["### app (branch: main)", "src/main.rs", "### web (branch: main)", "src/home.ts"] } } },
+    { "name": "pre-compact: sem git sai 0", "cwd": "__NOGIT__", "exit": 0 }
+  ]
+}

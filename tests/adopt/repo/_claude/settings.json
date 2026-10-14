@@ -5,7 +5,8 @@
       "Bash(npm run lint)"
     ],
     "deny": [
-      "Read(./.env)"
+      "Read(./.env)",
+      "Bash(rm:*)"
     ]
   },
   "hooks": {
@@ -18,6 +19,15 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-rm-rf.sh\""
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-generated.sh\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -27,6 +37,15 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/manual-check.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lint-hint.sh\""
           }
         ]
       }

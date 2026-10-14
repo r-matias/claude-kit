@@ -12,7 +12,16 @@
   },
   "protected_paths": [
     "**/Migrations/**",
-    "**/*.generated.*"
+    "**/*.generated.*",
+    {
+      "glob": "web/src/i18n/generated/**",
+      "message": "Gerado por npm run sync-strings. Edite em app/src/locales/ e rode o sync."
+    },
+    {
+      "glob": "**/*.db*",
+      "message": "Banco local. Use a CLI de admin.",
+      "write": "deny"
+    }
   ],
   "verify_on_stop": [
     "build",
@@ -31,7 +40,19 @@
       "require": [
         "manual/**"
       ],
-      "message": "Telas mudaram; atualize o manual para refletir as telas atuais."
+      "message": "Telas mudaram; atualize o manual para refletir as telas atuais.",
+      "level": "block",
+      "hint": "o manual de cada tela fica em manual/<tela>.md"
+    },
+    {
+      "when": [
+        "api/src/**"
+      ],
+      "require": [
+        "web/src/pages/**"
+      ],
+      "level": "warn",
+      "message": "Se o formato da resposta mudou, ajuste os fetch do site."
     }
   ],
   "key_parity": [
@@ -43,5 +64,9 @@
       ],
       "message": "Textos precisam existir nas 3 línguas."
     }
-  ]
+  ],
+  "plan_dirs": [
+    ".claude/plans"
+  ],
+  "inject_plan_on_prompt": false
 }

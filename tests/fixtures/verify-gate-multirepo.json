@@ -1,0 +1,84 @@
+{
+  "script": "verify-gate.sh",
+  "defaults": {
+    "workspace": {
+      "repos": {
+        "app": {
+          ".claude/kit.json": {
+            "commands": { "build": "true", "test_related": "true" },
+            "verify_on_stop": ["build", "test_related"],
+            "source_globs": ["**/*.rs"]
+          },
+          "src/main.rs": "fn main() {}\n",
+          "src/types.rs": "pub struct Tipo;\n",
+          "strings/pt.json": { "menu": { "sair": "Sair" } }
+        },
+        "web": {
+          ".claude/kit.json": {
+            "commands": { "build": "true" },
+            "verify_on_stop": ["build"],
+            "source_globs": ["**/*.ts"]
+          },
+          "src/types.ts": "export type Tipo = {};\n",
+          "src/pages/home.ts": "export const home = 1;\n",
+          "strings/en.json": { "menu": { "sair": "Exit" } }
+        }
+      }
+    }
+  },
+  "cases": [
+    { "name": "multi-repo: teste falhando em app sai 2 citando app",
+      "workspace": { "repos": { "app": { ".claude/kit.json": { "commands": { "test_related": "echo 2 testes falharam em app; false" } } } } },
+      "change": "app/src/main.rs", "exit": 2,
+      "stderr": ["[app] 'test_related' falhou", "2 testes falharam em app"], "stderr_not": "[web]" },
+    { "name": "multi-repo: mudanca so em web com verificacao verde sai 0",
+      "workspace": { "repos": { "app": { ".claude/kit.json": { "commands": { "test_related": "false" } } } } },
+      "change": "web/src/pages/home.ts", "exit": 0 },
+    { "name": "multi-repo: falha em web cita web",
+      "workspace": { "repos": { "web": { ".claude/kit.json": { "commands": { "build": "echo build do web quebrou; false" } } } } },
+      "change": ["web/src/types.ts", "app/src/main.rs"], "exit": 2,
+      "stderr": ["[web] 'build' falhou", "build do web quebrou"], "stderr_not": "[app]" },
+    { "name": "multi-repo: falhas de dois repositorios saem numa unica mensagem",
+      "workspace": { "repos": {
+        "app": { ".claude/kit.json": { "commands": { "test_related": "false" } } },
+        "web": { ".claude/kit.json": { "commands": { "build": "false" } } } } },
+      "change": ["web/src/types.ts", "app/src/main.rs"], "exit": 2,
+      "stderr": ["2 problema(s) neste turno", "[app]", "[web]"] },
+    { "name": "multi-repo: coupled_changes da raiz, so o primeiro alterado sai 2",
+      "files": { ".claude/kit.json": { "coupled_changes": [
+        { "when": ["app/src/types.rs"], "require": ["web/src/types.ts"],
+          "message": "Tipos compartilhados precisam ficar idênticos.", "hint": "rode o gerador de tipos" } ] } },
+      "change": "app/src/types.rs", "exit": 2,
+      "stderr": ["[raiz] [coupled_changes] Tipos compartilhados precisam ficar idênticos.", "disparado por: app/src/types.rs",
+        "esperado também alteração em: web/src/types.ts", "dica: rode o gerador de tipos"] },
+    { "name": "multi-repo: coupled_changes da raiz, ambos alterados sai 0",
+      "files": { ".claude/kit.json": { "coupled_changes": [
+        { "when": ["app/src/types.rs"], "require": ["web/src/types.ts"], "message": "Tipos compartilhados precisam ficar idênticos." } ] } },
+      "change": ["app/src/types.rs", "web/src/types.ts"], "exit": 0 },
+    { "name": "multi-repo: regra warn nao afeta o gate",
+      "files": { ".claude/kit.json": { "coupled_changes": [
+        { "when": ["app/src/types.rs"], "require": ["web/src/types.ts"], "level": "warn", "message": "Confira os tipos do site." } ] } },
+      "change": "app/src/types.rs", "exit": 0 },
+    { "name": "multi-repo: key_parity da raiz entre repositorios",
+      "files": { ".claude/kit.json": { "key_parity": [
+        { "files": ["app/strings/pt.json", "web/strings/en.json"], "message": "Textos nos dois repositórios." } ] } },
+      "edit": { "app/strings/pt.json": { "menu": { "sair": "Sair", "voltar": "Voltar" } } }, "exit": 2,
+      "stderr": "menu.voltar falta em en.json" },
+    { "name": "multi-repo: sem repos explicito, terceiro repositorio e descoberto",
+      "workspace": { "repos": { "legado": {
+        ".claude/kit.json": { "commands": { "build": "echo legado quebrou; false" }, "verify_on_stop": ["build"], "source_globs": ["**/*.rs"] },
+        "src/velho.rs": "fn velho() {}\n" } } },
+      "change": "legado/src/velho.rs", "exit": 2, "stderr": "[legado] 'build' falhou" },
+    { "name": "multi-repo: repos explicito ignora terceiro repositorio nao listado",
+      "workspace": { "repos": { "legado": {
+        ".claude/kit.json": { "commands": { "build": "echo legado quebrou; false" }, "verify_on_stop": ["build"], "source_globs": ["**/*.rs"] },
+        "src/velho.rs": "fn velho() {}\n" } } },
+      "files": { ".claude/kit.json": { "repos": ["app", "web"] } },
+      "change": "legado/src/velho.rs", "exit": 0 },
+    { "name": "multi-repo: diretorios ignorados nao sao varridos",
+      "workspace": { "repos": { "node_modules/pacote": {
+        ".claude/kit.json": { "commands": { "build": "false" }, "verify_on_stop": ["build"], "source_globs": ["**/*.rs"] },
+        "src/lib.rs": "fn lib() {}\n" } } },
+      "change": "node_modules/pacote/src/lib.rs", "exit": 0 }
+  ]
+}

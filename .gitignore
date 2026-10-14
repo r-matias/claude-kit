@@ -2,5 +2,5 @@ node_modules/
 .DS_Store
 
 # Documentos de especificacao do kit, mantidos fora do repositorio
-Estrutura Claude Code — Kit portável multi-stack.md
-Aditivo 01 — Kit portável adoção e checks de domínio.md
+Estrutura Claude Code*.md
+Aditivo *.md

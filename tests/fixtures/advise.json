@@ -1,0 +1,32 @@
+{
+  "script": "advise.sh",
+  "defaults": {
+    "tool": "Edit",
+    "kit": {
+      "coupled_changes": [
+        { "when": ["src/api/**"], "require": ["src/pages/**"], "level": "warn",
+          "message": "Se o formato da resposta mudou, ajuste os fetch do site.", "hint": "os fetch ficam em src/pages/*.ts" },
+        { "when": ["src/core/**"], "require": ["docs/core.md"], "message": "Regra bloqueante, sem aviso na edição." }
+      ]
+    },
+    "files": { "src/api/users.ts": "export const users = [];\n", "src/core/rules.ts": "export const r = 1;\n" }
+  },
+  "cases": [
+    { "name": "advise: edicao que casa regra warn gera additionalContext, segunda vez sem saida", "file": "src/api/users.ts",
+      "json_check": ".hookSpecificOutput.hookEventName == \"PostToolUse\" and (.hookSpecificOutput.additionalContext | startswith(\"[kit] Se o formato da resposta mudou, ajuste os fetch do site. | verificar: src/pages/** | editado: src/api/users.ts | dica: os fetch ficam em src/pages/*.ts\"))",
+      "repeat_empty": true },
+    { "name": "advise: arquivo que nao casa nao gera saida", "file": "src/App.cs" },
+    { "name": "advise: regra block nao gera aviso na edicao", "file": "src/core/rules.ts" },
+    { "name": "advise: Write de arquivo novo que casa tambem avisa", "tool": "Write", "file": "src/api/orders.ts",
+      "json_check": ".hookSpecificOutput.additionalContext | contains(\"editado: src/api/orders.ts\")" },
+    { "name": "advise: sem kit.json nao gera saida", "file": "__NOKIT__/notes.md" },
+    { "name": "advise: regra warn da pasta-mae vale para arquivo de repositorio filho",
+      "workspace": { "repos": {
+        "app": { ".claude/kit.json": { "commands": {} }, "src/api.rs": "fn api() {}\n" },
+        "web": { "src/pages/home.ts": "x\n" } } },
+      "files": { ".claude/kit.json": { "coupled_changes": [
+        { "when": ["app/src/api.rs"], "require": ["web/src/pages/**"], "level": "warn", "message": "A API mudou; confira as páginas do site." } ] } },
+      "file": "app/src/api.rs",
+      "json_check": ".hookSpecificOutput.additionalContext == \"[kit] A API mudou; confira as páginas do site. | verificar: web/src/pages/** | editado: app/src/api.rs\"" }
+  ]
+}

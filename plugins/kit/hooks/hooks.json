@@ -1,5 +1,5 @@
 {
-  "description": "kit: guardas, formatação e gate de verificação",
+  "description": "kit: guardas, formatação, avisos, gate de verificação e contexto",
   "hooks": {
     "PreToolUse": [
       {
@@ -19,7 +19,8 @@
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/format.sh"], "timeout": 60 }
+          { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/format.sh"], "timeout": 60 },
+          { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/advise.sh"], "timeout": 10 }
         ]
       }
     ],
@@ -32,9 +33,23 @@
     ],
     "SessionStart": [
       {
-        "matcher": "startup|resume|compact",
+        "matcher": "startup|resume|compact|fork",
         "hooks": [
           { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-context.sh"], "timeout": 15 }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/pre-compact.sh"], "timeout": 10 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-context.sh", "--plan-only"], "timeout": 10 }
         ]
       }
     ]

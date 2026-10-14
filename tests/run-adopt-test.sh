@@ -29,6 +29,7 @@ materialize_adopt_repo "$P"
 gitq() { git -C "$P" -c user.name=kit-test -c user.email=kit@test -c init.defaultBranch=main -c core.autocrlf=false "$@" >/dev/null 2>&1; }
 gitq init
 gitq add -A
+gitq add -f .claude/settings.local.json
 gitq commit -m init
 git -C "$P" ls-files | tr -d '\r' >"$W/tracked-before"
 
@@ -76,11 +77,14 @@ A="$P/docs/claude-adoption.md"
 if [ -f "$A" ]; then
   ok "docs/claude-adoption.md gerado"
   miss=""
-  for piece in no-rm-rf manual-check review manual-sync i18n-checker docs-search; do
+  for piece in no-rm-rf manual-check lint-hint block-generated review manual-sync fix publicar-previa i18n-checker docs-search; do
     grep -qi -- "$piece" "$A" || miss+="$piece "
   done
   [ -z "$miss" ] && ok "relatorio cobre todas as pecas do inventario" || ko "relatorio cobre todas as pecas do inventario" "faltam: $miss"
   grep -q '^## Registro de kit-skip' "$A" && ok "relatorio segue o modelo do adopt.md" || ko "relatorio segue o modelo do adopt.md" "sem a secao 'Registro de kit-skip' (adopt.md nao foi lido?)"
+  if grep -qF 'Skill(kit:fix)' "$A" && grep -qiE 'disable-model-invocation' "$A"; then ok "relatorio recomenda Skill(kit:fix) em deny e explica o motivo"; else ko "relatorio recomenda Skill(kit:fix) em deny e explica o motivo" "$(grep -n -i 'fix' "$A" | head -5)"; fi
+  if grep -i 'lint-hint' "$A" | grep -qi 'mudo'; then ok "relatorio marca lint-hint como aviso possivelmente mudo"; else ko "relatorio marca lint-hint como aviso possivelmente mudo" "$(grep -n -i 'lint-hint' "$A" | head -3)"; fi
+  if grep -i 'block-generated' "$A" | grep -qi 'falha aberta'; then ok "relatorio marca block-generated como falha aberta"; else ko "relatorio marca block-generated como falha aberta" "$(grep -n -i 'block-generated' "$A" | head -3)"; fi
 else
   ko "docs/claude-adoption.md gerado" "arquivo ausente"
 fi
@@ -89,6 +93,9 @@ K="$P/.claude/kit.json"
 if jq -e '.commands | length > 0' "$K" >/dev/null 2>&1; then ok ".claude/kit.json criado com commands"; else ko ".claude/kit.json criado com commands" "ausente ou sem commands"; fi
 if jq -e '[.key_parity[]?.files[]?] | any(test("strings/en.json"))' "$K" >/dev/null 2>&1; then ok "key_parity declarado para strings"; else ko "key_parity declarado para strings" "$(jq -c '.key_parity' "$K" 2>&1)"; fi
 if jq -e '[.coupled_changes[]? | (.when[]?, .require[]?)] | (any(test("src/views")) and any(test("manual")))' "$K" >/dev/null 2>&1; then ok "coupled_changes declarado para telas e manual"; else ko "coupled_changes declarado para telas e manual" "$(jq -c '.coupled_changes' "$K" 2>&1)"; fi
+if jq -e '[.protected_paths[]? | objects | select((.glob // "") | test("strings/generated")) | (.message // "")] | any(test("gerador|Edite"; "i"))' "$K" >/dev/null 2>&1; then
+  ok "lista de bloqueio do projeto virou protected_paths com a mesma mensagem"
+else ko "lista de bloqueio do projeto virou protected_paths com a mesma mensagem" "$(jq -c '.protected_paths' "$K" 2>&1)"; fi
 
 S="$P/.claude/settings.json"
 if jq -e '.enabledPlugins["kit@claude-kit"] == true and (.extraKnownMarketplaces["claude-kit"] != null)' "$S" >/dev/null 2>&1; then ok "settings habilita kit@claude-kit"; else ko "settings habilita kit@claude-kit" "$(jq -c '{enabledPlugins, extraKnownMarketplaces}' "$S" 2>&1)"; fi

@@ -14,6 +14,19 @@ Para cada peça, leia o conteúdo (script do hook, corpo da skill/agent) e regis
 
 Hooks e settings de `~/.claude` são da camada de usuário: entram no inventário para detectar sobreposição, mas o init nunca os altera.
 
+A seção "Riscos e sobreposições" do inventário já traz detecções prontas. Cada linha vira uma entrada na tabela do relatório, com a recomendação e o motivo:
+
+| Marca | O que significa | Recomendação padrão |
+| --- | --- | --- |
+| `[sobreposição] skill` | Skill do projeto com o mesmo propósito de uma skill do kit. Se a do projeto tem `disable-model-invocation: true` e a do kit não, o Claude escolhe sozinho a do kit para pedidos como "corrige esse bug". | A skill do projeto é a dona: propor `Skill(kit:<nome>)` em `permissions.deny` do `.claude/settings.json` do projeto, explicando o motivo. |
+| `[sobreposição] agent` | Agent do projeto com o mesmo papel de um agent do kit. | O agent do projeto é o dono: propor `Agent(kit:<nome>)` em `permissions.deny`. |
+| `[aviso possivelmente mudo]` | Hook PreToolUse, PostToolUse ou Stop que imprime texto no stdout sem JSON `additionalContext`; com exit 0 o texto não chega ao Claude. | Migrar para `coupled_changes` com `level: "warn"` ou trocar a saída do script para JSON `additionalContext`. |
+| `[falha aberta]` | Hook PreToolUse que faz `jq ... \|\| exit 0`: sem jq, a guarda libera tudo. | Substituir pelo `guard-files` com `protected_paths` (mensagem por item) ou trocar para exit 2. |
+| `[efeito colateral]` | Skill de deploy, release, backup, push, migração ou publicação sem `disable-model-invocation: true`. | Listar; sugerir o campo, sem alterar. |
+| `[settings.local.json versionado]`, `[sintaxe antiga]`, `[sem deny de segredos]` | Configuração pessoal no git, regra `Tool(x:*)` e ausência de `Read(...)` em deny para `.env`, chaves e `secrets/`. | Listar, sem alterar. |
+
+Listas de bloqueio do projeto (hook que nega edição de caminhos com uma mensagem) viram itens de `protected_paths` em forma de objeto, com a mesma mensagem que o hook original mostrava: `{ "glob": "<caminho>/**", "message": "<texto do hook>" }`. Use `"write": "deny"` quando o hook também impede criar arquivos ali.
+
 ## 2. Classificação
 
 Cada peça recebe um destino:
@@ -27,7 +40,7 @@ Cada peça recebe um destino:
 | Somar | Ambos agregam algo diferente | Skill de review do projeto passa a chamar `kit:code-reviewer` + seus itens específicos |
 
 Equivalentes do kit para comparar:
-- Hooks: `guard-bash` (comandos destrutivos), `guard-files` (segredos, `protected_paths`), `format` (formatter por glob), `verify-gate` (build/teste, `key_parity`, `coupled_changes` no Stop), `session-context` (branch, alterados, plano). Comportamento exato no README do kit.
+- Hooks: `guard-bash` (comandos destrutivos), `guard-files` (segredos, `protected_paths` com mensagem por item), `format` (formatter por glob), `advise` (avisos `coupled_changes` com `level: "warn"` na edição), `verify-gate` (build/teste, `key_parity`, `coupled_changes` no Stop, em todos os repositórios da sessão), `session-context` e `pre-compact` (branch, alterados, planos ativos, snapshot na compactação). Comportamento exato no README do kit.
 - Skills: `spec`, `plan`, `execute`, `epic`, `fix`, `hunt`.
 - Agents: `investigator`, `code-reviewer`, `security-reviewer`, `test-writer`.
 
@@ -89,6 +102,11 @@ Data: <AAAA-MM-DD> · Versão do kit: <version do plugin.json>
 
 ## Sobreposições resolvidas
 - <peça A> × <peça B>: dona = <...>; a outra <sai | passa a chamar>.
+
+## Riscos detectados
+| Marca | Peça | Motivo | Recomendação | Status |
+| --- | --- | --- | --- | --- |
+| sobreposição | skill fix | a do projeto tem disable-model-invocation: true e a do kit não; o Claude escolheria kit:fix sozinho | `Skill(kit:fix)` em permissions.deny | proposto |
 
 ## Promover ao kit
 - <peça>: <o que faria no kit e por que é genérica>

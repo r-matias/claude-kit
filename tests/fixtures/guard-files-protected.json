@@ -1,0 +1,32 @@
+{
+  "script": "guard-files.sh",
+  "defaults": {
+    "kit": {
+      "protected_paths": [
+        "**/Migrations/**",
+        { "glob": "web/generated/**", "message": "Gerado pelo sync de textos. Edite em src/strings/ e rode o sync." },
+        { "glob": "**/*.db", "message": "Banco local. Use a CLI de admin.", "write": "deny" }
+      ]
+    },
+    "files": { "web/generated/strings.ts": "export const s = {};\n", "data/local.db": "x" }
+  },
+  "cases": [
+    { "name": "protected objeto: Edit negado com a mensagem customizada", "tool": "Edit", "file": "web/generated/strings.ts",
+      "expect": "deny", "reason": "web/generated/strings.ts é protegido. Gerado pelo sync de textos. Edite em src/strings/ e rode o sync." },
+    { "name": "protected objeto sem write: arquivo novo liberado", "tool": "Write", "file": "web/generated/novo.ts", "expect": "allow" },
+    { "name": "protected objeto com write deny: arquivo novo negado", "tool": "Write", "file": "data/outro.db",
+      "expect": "deny", "reason": "Banco local. Use a CLI de admin." },
+    { "name": "protected objeto com write deny: edicao negada", "tool": "Edit", "file": "data/local.db",
+      "expect": "deny", "reason": "Banco local. Use a CLI de admin." },
+    { "name": "protected string na mesma lista continua igual a v0.1.0", "tool": "Edit", "file": "Migrations/001_Init.cs",
+      "expect": "deny", "reason": "casa protected_paths (**/Migrations/**) do kit.json. Gere um arquivo novo ou edite manualmente." },
+    { "name": "protected string: migration nova continua liberada", "tool": "Write", "file": "Migrations/002_Nova.cs", "expect": "allow" },
+    { "name": "protected da pasta-mae vale para repositorio filho com kit.json proprio",
+      "workspace": { "repos": {
+        "web": { ".claude/kit.json": { "protected_paths": ["**/*.lock"] }, "src/generated/strings.ts": "x\n" } } },
+      "files": { ".claude/kit.json": { "protected_paths": [
+        { "glob": "web/src/generated/**", "message": "Gerado a partir de app/src/locales/." } ] } },
+      "tool": "Edit", "file": "web/src/generated/strings.ts",
+      "expect": "deny", "reason": "Gerado a partir de app/src/locales/." }
+  ]
+}

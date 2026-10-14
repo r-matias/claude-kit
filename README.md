@@ -15,7 +15,7 @@ claude-kit/
 │   ├── skills/init/{adopt.md,stacks.md}  # modo adotar e referência de stacks
 │   ├── agents/{investigator,code-reviewer,security-reviewer,test-writer}.md
 │   ├── hooks/hooks.json
-│   ├── scripts/{lib.sh,guard-bash.sh,guard-files.sh,format.sh,verify-gate.sh,session-context.sh}
+│   ├── scripts/{lib.sh,guard-bash.sh,guard-files.sh,format.sh,advise.sh,verify-gate.sh,session-context.sh,pre-compact.sh}
 │   ├── scripts/{inventory.sh,merge-json.sh}   # apoio do /kit:init, não são hooks
 │   └── templates/{kit.example.json,project-settings.json,CLAUDE.project.md}
 ├── templates/user-settings.json        # camada 1, aplicada à mão em ~/.claude
@@ -77,18 +77,29 @@ O plugin é instalado uma vez por máquina; em cada repositório ele só é liga
     "**/*.cs": "dotnet format --include {files}",
     "**/*.{ts,html,scss}": "npx prettier --write {files}"
   },
-  "protected_paths": ["**/Migrations/**", "**/*.generated.*"],
+  "protected_paths": [
+    "**/Migrations/**",
+    { "glob": "web/src/i18n/generated/**",
+      "message": "Gerado por npm run sync-strings. Edite em app/src/locales/ e rode o sync." },
+    { "glob": "**/*.db*", "message": "Banco local. Use a CLI de admin.", "write": "deny" }
+  ],
   "verify_on_stop": ["build", "test_related"],
   "source_globs": ["**/*.cs", "**/*.ts"],
   "coupled_changes": [
     { "when": ["src/views/**", "src/widgets/**"],
       "require": ["manual/**"],
-      "message": "Telas mudaram; atualize o manual para refletir as telas atuais." }
+      "level": "block",
+      "message": "Telas mudaram; atualize o manual para refletir as telas atuais.",
+      "hint": "o manual de cada tela fica em manual/<tela>.md" },
+    { "when": ["api/src/**"], "require": ["web/src/pages/**"],
+      "level": "warn", "message": "Se o formato da resposta mudou, ajuste os fetch do site." }
   ],
   "key_parity": [
     { "files": ["strings/pt.json", "strings/en.json", "strings/es.json"],
       "message": "Textos precisam existir nas 3 línguas." }
-  ]
+  ],
+  "plan_dirs": [".claude/plans"],
+  "inject_plan_on_prompt": false
 }
 ```
 
@@ -98,14 +109,42 @@ O plugin é instalado uma vez por máquina; em cada repositório ele só é liga
 - Chaves ausentes são puladas sem erro. Monorepo: um `kit.json` por pacote; os hooks usam o mais próximo do arquivo.
 - Valores de partida por stack: `plugins/kit/skills/init/stacks.md`.
 
+### `protected_paths`
+
+Cada item é uma string (glob) ou um objeto `{ "glob", "message", "write" }`.
+- `message` substitui o texto genérico da negação. Use para dizer o que fazer em vez de editar.
+- `write`: `"allow"` (padrão: arquivo novo pode ser criado ali) ou `"deny"` (nem criar). Útil para binários, bancos e artefatos.
+- Edit, e Write sobre arquivo existente, são sempre negados para um caminho protegido. Strings continuam com o comportamento da v0.1.0.
+
+### Planos ativos
+
+O `session-context` e o `pre-compact` mostram até 3 planos ativos com a contagem "feitas/total" e as tarefas pendentes do mais recente. Plano ativo é um `docs/specs/**/PLAN.md` (na raiz da sessão ou em qualquer repositório dela), ou um `.md` dos diretórios de `plan_dirs`, modificado nos últimos 14 dias e com tarefa `- [ ]` pendente. Com `"inject_plan_on_prompt": true`, a linha de planos ativos entra também em cada mensagem (UserPromptSubmit); custa contexto a cada turno, então fica desligado por padrão.
+
 ### Checks de domínio (opcionais)
 
 Avaliados pelo `verify-gate` sobre os arquivos alterados (diff contra HEAD + não rastreados). Projeto que não declara as chaves não é afetado.
 
-- **`coupled_changes`**: se algum arquivo alterado casa um glob de `when` e nenhum casa `require`, o gate bloqueia com `message` e a lista dos arquivos que dispararam a regra.
+- **`coupled_changes`**: cada regra tem um `level`.
+  - `"block"` (padrão): no Stop, se algum arquivo alterado casa um glob de `when` e nenhum casa `require`, o gate bloqueia com `message`, a lista dos arquivos que dispararam a regra e o `hint`, se houver.
+  - `"warn"`: o `verify-gate` ignora a regra. Na edição (PostToolUse) de um arquivo que casa `when`, o `advise.sh` injeta no contexto do Claude `[kit] <message> | verificar: <require> | editado: <arquivo> | dica: <hint>`, como fato e não como ordem. Não bloqueia nada e aparece uma vez por arquivo por sessão.
 - **`key_parity`**: só roda se algum dos `files` mudou. Achata as chaves aninhadas com `.` e lista cada chave ausente e em quais arquivos (`home.welcome falta em en.json, es.json`). Arquivo listado inexistente ou JSON inválido também é falha. Quando dois arquivos têm o mesmo nome (`pt/common.json`, `en/common.json`), o rótulo é o caminho declarado.
 - **Válvula de escape**: `.claude/kit-skip` com uma linha de justificativa libera `coupled_changes` (não libera `key_parity` nem os comandos). Quando o gate passa, o arquivo é apagado e a justificativa vai para a seção "Registro de kit-skip" de `docs/claude-adoption.md`, ou para `.claude/kit-skip.log` se aquele não existir. Se outra checagem falhar no mesmo turno, o `kit-skip` é mantido até o gate passar. Arquivo vazio não libera.
 - **Ordem**: comandos de `verify_on_stop`, depois `key_parity`, depois `coupled_changes`. Todas as falhas do turno saem numa única mensagem numerada.
+
+### Workspace com vários repositórios
+
+Numa pasta-mãe com repositórios filhos independentes (ex.: `workspace/` com `app/` e `web/`, cada um com seu `.git`), abra a sessão na pasta-mãe. Os hooks descobrem os repositórios:
+- o repositório do próprio `cwd`, se houver;
+- os filhos: diretórios com `.git` (pasta ou arquivo) até 3 níveis, ignorando `node_modules`, `target`, `dist`, `build`, `vendor`, `.venv` e o que o `.gitignore` do pai ignorar;
+- ou só os listados em `"repos": ["app", "web"]` no `kit.json` da pasta-mãe, que tem prioridade sobre a descoberta.
+
+A descoberta tem cache por sessão em `$TMPDIR`, invalidado quando o `kit.json` da pasta-mãe muda.
+
+- **`verify-gate`**: coleta os alterados de cada repositório, agrupa pelo `kit.json` mais próximo e roda as checagens de cada grupo. A mensagem única cita o repositório em cada item (`[app] 'test_related' falhou ...`).
+- **Regras entre repositórios**: `coupled_changes` e `key_parity` do `kit.json` da pasta-mãe enxergam os alterados de todos os filhos, com caminho relativo à pasta-mãe (`app/src/types.rs` → `web/src/types.ts`). O mesmo vale para `protected_paths` e para as regras `warn` da pasta-mãe.
+- **Busca do `kit.json`**: sobe do arquivo até o primeiro `.git`; se esse `.git` é de um filho da pasta da sessão, continua subindo até a pasta da sessão, nunca acima dela.
+- **`session-context`**: branch e alterados de cada repositório, até 15 linhas por repositório.
+- Repositório único: comportamento idêntico ao da v0.1.0.
 
 ## Modo adotar
 
@@ -118,6 +157,14 @@ Quando o repositório já tem configuração do Claude Code, o `/kit:init` entra
 5. **Remoção** só com confirmação explícita na conversa, um commit por peça. Respostas pré-aprovadas no argumento (`/kit:init <respostas>`) valem para adições, nunca para remoções.
 6. **Relatório** em `docs/claude-adoption.md`: peça, destino, prova e status.
 
+O inventário também detecta, com uma recomendação para cada item:
+- **Sobreposição de skills e agents** com os do kit. Se a skill do projeto tem `disable-model-invocation: true` e a do kit não, o Claude escolhe sozinho a do kit (ex.: `kit:fix` para "corrige esse bug"). Recomendação: a peça do projeto é a dona, e entram `Skill(kit:<nome>)` ou `Agent(kit:<nome>)` em `permissions.deny` do projeto.
+- **Aviso possivelmente mudo**: hook PreToolUse, PostToolUse ou Stop que imprime texto no stdout sem JSON `additionalContext`; com exit 0 esse texto não chega ao Claude.
+- **Falha aberta**: hook PreToolUse com `jq ... || exit 0`, que libera tudo sem jq.
+- **Outros riscos**, só listados: skill com efeito colateral sem `disable-model-invocation`, `settings.local.json` versionado, regra com a sintaxe antiga `:*` e ausência de deny de leitura para segredos.
+
+Listas de bloqueio do projeto viram `protected_paths` em forma de objeto, com a mesma mensagem que o hook original mostrava.
+
 Regras de escrita do init, inclusive em repo novo: mesclar JSON chave a chave, nunca sobrescrever settings, hooks, skills, agents ou CLAUDE.md existentes, mostrar o diff e só gravar após confirmação.
 
 ## Hooks
@@ -125,10 +172,15 @@ Regras de escrita do init, inclusive em repo novo: mesclar JSON chave a chave, n
 | Script | Evento | O que faz |
 | --- | --- | --- |
 | `guard-bash.sh` | PreToolUse `Bash` | Nega `rm -rf` fora do projeto ou em `/`, `~`, `..`, variáveis não resolvíveis; `git push --force`/`-f`/`+refspec`; `git reset --hard`; `git clean -fdx` (dry-run liberado); `DROP DATABASE/TABLE/SCHEMA`, `TRUNCATE` SQL; `curl`/`wget` com pipe para shell; `chmod -R 777`; `mkfs`; `dd of=/dev/*` (exceto `/dev/null`). Analisa também o conteúdo de `sh -c`, `bash -c`, `$()` e cadeias com `&&`, `;`, `\|`. |
-| `guard-files.sh` | PreToolUse `Edit\|Write` | Nega escrita em `.env*` (exceto `.env.example/.sample/.template/.dist`), `*.pem`, `*.key`, `secrets/`. Nega Edit, e Write sobre arquivo existente, em `protected_paths`; Write de arquivo novo é liberado. |
+| `guard-files.sh` | PreToolUse `Edit\|Write` | Nega escrita em `.env*` (exceto `.env.example/.sample/.template/.dist`), `*.pem`, `*.key`, `secrets/`. Nega Edit, e Write sobre arquivo existente, em `protected_paths` do `kit.json` mais próximo e dos `kit.json` acima dele até a pasta da sessão; Write de arquivo novo só é negado em item com `"write": "deny"`. Item com `message` usa esse texto na negação. |
 | `format.sh` | PostToolUse `Edit\|Write` | Roda o formatter do primeiro glob de `format` que casa. Falha: exit 2 com as últimas 30 linhas. |
-| `verify-gate.sh` | Stop | Se algum arquivo alterado (diff contra HEAD + não rastreados) casa `source_globs`, roda `verify_on_stop` em ordem até a primeira falha (últimas 60 linhas). Depois avalia `key_parity` e `coupled_changes`. Todas as falhas saem numa única mensagem com exit 2. Respeita `stop_hook_active`. Comandos já verificados com sucesso no mesmo estado não rodam de novo (marca em `.git/kit-verify-*`). |
-| `session-context.sh` | SessionStart | Injeta branch, `git status --short` e as tarefas pendentes do `PLAN.md` mais recente em `docs/specs/`. |
+| `advise.sh` | PostToolUse `Edit\|Write` | Regras `coupled_changes` com `level: "warn"` cujo `when` casa com o arquivo editado viram `additionalContext` (JSON, porque stdout puro de PostToolUse não chega ao Claude). Uma vez por arquivo por sessão. Nunca bloqueia. |
+| `verify-gate.sh` | Stop | Em cada repositório da sessão, se algum arquivo alterado (diff contra HEAD + não rastreados) casa `source_globs`, roda `verify_on_stop` em ordem até a primeira falha (últimas 60 linhas). Depois avalia `key_parity` e `coupled_changes` com `level: "block"`. Todas as falhas saem numa única mensagem com exit 2. Respeita `stop_hook_active`. Comandos já verificados com sucesso no mesmo estado não rodam de novo (marca em `.git/kit-verify-*`). |
+| `session-context.sh` | SessionStart (`startup\|resume\|compact\|fork`) | Injeta branch e `git status --short` de cada repositório, os planos ativos e as tarefas pendentes do mais recente. Na origem `compact`, inclui o snapshot do `pre-compact` se ele tiver menos de 2 horas. |
+| `session-context.sh --plan-only` | UserPromptSubmit | Só a linha de planos ativos, e só se `inject_plan_on_prompt` for `true`; caso contrário não imprime nada. |
+| `pre-compact.sh` | PreCompact | Grava `<raiz>/.claude/state/kit-snapshot.md` com data, branch, modificados e staged (até 20 cada) de cada repositório e os planos ativos. Sempre exit 0: nunca bloqueia a compactação. Adicione `.claude/state/` ao `.gitignore` (o `/kit:init` propõe). |
+
+Sem `jq`, os guardas bloqueiam e os demais hooks saem com 0 sem fazer nada.
 
 Os guardas devolvem `permissionDecision: "deny"` com o motivo; Claude recebe o motivo e ajusta. `onFailure: "block"` nos guardas só tem efeito no Claude Code v2.1.295+; em versões anteriores o campo é ignorado e os guardas continuam funcionando.
 
@@ -140,14 +192,14 @@ bash tests/run-tests.sh "rm -rf"   # filtra por nome do caso
 KIT_TEST_DEBUG=1 bash tests/run-tests.sh "<caso>"   # mostra input, stdout e stderr
 ```
 
-Cada caso monta um workspace novo a partir de `tests/sample/` (repo git com `kit.json` de comandos `true`/`false`), grava os arquivos de base (`files`), faz commit, aplica as mudanças do turno (`change`, `edit`), passa o JSON do hook pelo script e confere decisão, exit code, stderr (conteúdo e ordem) e arquivos depois do gate (`after`). Fixtures podem declarar `defaults` mesclados em cada caso. Também testa `merge-json.sh` e `inventory.sh`, checa que nenhum script referencia comando de stack, que todos os JSON são válidos e roda `claude plugin validate` no plugin e no marketplace.
+Cada caso monta um workspace novo a partir de `tests/sample/` (repo git com `kit.json` de comandos `true`/`false`), grava os arquivos de base (`files`), faz commit, aplica as mudanças do turno (`change`, `edit`, `touch` para envelhecer arquivos), passa o JSON do hook pelo script e confere decisão, motivo (`reason`), exit code, stdout e stderr (conteúdo e ordem), JSON de saída (`json_check`), execução repetida (`repeat_empty`) e arquivos depois do hook (`after`). Com `workspace.repos`, o caso roda numa pasta-mãe sem git com repositórios filhos. Cada caso tem `session_id` e `TMPDIR` próprios. Fixtures podem declarar `defaults` mesclados em cada caso. Também testa `merge-json.sh` e `inventory.sh`, checa que nenhum script referencia comando de stack, que todos os JSON são válidos e roda `claude plugin validate` no plugin e no marketplace.
 
 ```bash
 bash tests/run-adopt-test.sh [--keep]   # aceite ao vivo do modo adotar
-bash tests/run-skills-live-test.sh      # skills carregam em repo sem commits e fora de repo git
+bash tests/run-skills-live-test.sh      # skills carregam sem commits e fora de repo git; deny de skill/agent do kit
 ```
 
-Copia `tests/adopt/repo/` (que tem hooks, skills, agent, rule, CLAUDE.md e MCP próprios) para uma pasta temporária, roda `/kit:init` com respostas pré-aprovadas via `claude -p --plugin-dir` e confere: nenhum arquivo removido, nenhum commit criado, JSON existentes só com adições (`merge-json.sh --check`), demais arquivos sem linhas removidas, `docs/claude-adoption.md` cobrindo todas as peças, `kit.json` com `key_parity` e `coupled_changes`, plugin habilitado e hook original ainda registrado. Leva alguns minutos e consome uma sessão do Claude Code. Roda com `--setting-sources project,local` para não disparar hooks pessoais do `~/.claude`.
+Copia `tests/adopt/repo/` (que tem hooks, skills, agent, rule, CLAUDE.md e MCP próprios) para uma pasta temporária, roda `/kit:init` com respostas pré-aprovadas via `claude -p --plugin-dir` e confere: nenhum arquivo removido, nenhum commit criado, JSON existentes só com adições (`merge-json.sh --check`), demais arquivos sem linhas removidas, `docs/claude-adoption.md` cobrindo todas as peças e recomendando `Skill(kit:fix)` em deny (com o motivo), aviso mudo e falha aberta marcados, `kit.json` com `key_parity`, `coupled_changes` e a lista de bloqueio convertida em `protected_paths` com mensagem, plugin habilitado e hook original ainda registrado. Leva alguns minutos e consome uma sessão do Claude Code. Roda com `--setting-sources project,local` para não disparar hooks pessoais do `~/.claude`.
 
 A fixture guarda a configuração como `_claude/`, `_CLAUDE.md` e `_mcp.json` para o próprio Claude Code não carregar as skills e o CLAUDE.md de teste quando você trabalha no repo do kit.
 
