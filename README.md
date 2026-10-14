@@ -47,6 +47,7 @@ claude-kit/
 - **Windows nativo não tem sandbox.** O `templates/user-settings.json` usa `sandbox.failIfUnavailable: true`, e com isso o Claude Code se recusa a iniciar no Windows nativo. Escolha um dos dois:
   - usar o WSL2 (recomendado: mantém o sandbox); ou
   - remover `failIfUnavailable` da cópia em `~/.claude/settings.json` e aceitar rodar sem sandbox. Nesse caso, as regras de `permissions.deny` e os guardas do kit continuam valendo, mas não há isolamento de disco e rede.
+- **Ferramenta PowerShell desligada.** Os guardas do kit cobrem só `Bash` e `Edit|Write|MultiEdit`; comandos da ferramenta PowerShell não passam por nenhum deles. Por isso o `templates/user-settings.json` tem `"PowerShell"` em `permissions.deny`, o que tira a ferramenta do contexto do Claude. Quem precisar do PowerShell remove essa linha da cópia em `~/.claude/settings.json` e fica sem guarda nessa ferramenta.
 
 ## Como usar
 
@@ -197,6 +198,8 @@ Sem `jq`, os guardas bloqueiam e os demais hooks saem com 0 sem fazer nada.
 
 Os guardas devolvem `permissionDecision: "deny"` com o motivo; Claude recebe o motivo e ajusta. Com `onFailure: "block"` (Claude Code 2.1.295+), um guarda que não consegue rodar também bloqueia: script ausente, saída com código diferente de 0 e 2, timeout ou JSON inválido. No `Stop` o campo não tem efeito, segundo a doc oficial.
 
+Os hooks usam a forma shell com `"shell": "bash"` explícito (`"command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/<script>.sh\""`, sem `args`). Na forma exec (`command` + `args`) o Claude Code procura `bash` no PATH, e no Windows isso falha com `Executable not found in $PATH: "bash"` quando o `Git\bin` não está no PATH; com `onFailure: "block"`, todo Bash/Edit/Write ficaria bloqueado. Na forma shell, o Windows roda o comando pelo Git Bash que o Claude Code localiza (o mesmo da ferramenta Bash; se não achar, `CLAUDE_CODE_GIT_BASH_PATH`), e o `bash` dentro da string é resolvido pelo PATH que o Git Bash monta.
+
 ## Testes
 
 ```bash
@@ -205,7 +208,7 @@ bash tests/run-tests.sh "rm -rf"   # filtra por nome do caso
 KIT_TEST_DEBUG=1 bash tests/run-tests.sh "<caso>"   # mostra input, stdout e stderr
 ```
 
-Cada caso monta um workspace novo a partir de `tests/sample/` (repo git com `kit.json` de comandos `true`/`false`), grava os arquivos de base (`files`), faz commit, aplica as mudanças do turno (`change`, `edit`, `touch` para envelhecer arquivos), passa o JSON do hook pelo script e confere decisão, motivo (`reason`), exit code, stdout e stderr (conteúdo e ordem), JSON de saída (`json_check`), execução repetida (`repeat_empty`) e arquivos depois do hook (`after`). Com `workspace.repos`, o caso roda numa pasta-mãe sem git com repositórios filhos. Cada caso tem `session_id` e `TMPDIR` próprios. Fixtures podem declarar `defaults` mesclados em cada caso. Também testa `merge-json.sh` e `inventory.sh`, checa que nenhum script referencia comando de stack, que todos os JSON são válidos e roda `claude plugin validate` no plugin e no marketplace.
+Cada caso monta um workspace novo a partir de `tests/sample/` (repo git com `kit.json` de comandos `true`/`false`), grava os arquivos de base (`files`), faz commit, aplica as mudanças do turno (`change`, `edit`, `touch` para envelhecer arquivos), passa o JSON do hook pelo script e confere decisão, motivo (`reason`), exit code, stdout e stderr (conteúdo e ordem), JSON de saída (`json_check`), execução repetida (`repeat_empty`) e arquivos depois do hook (`after`). Com `workspace.repos`, o caso roda numa pasta-mãe sem git com repositórios filhos. Cada caso tem `session_id` e `TMPDIR` próprios. Fixtures podem declarar `defaults` mesclados em cada caso. Também testa `merge-json.sh` e `inventory.sh`, confere que todo hook do `hooks.json` está em forma shell e, no Windows, roda cada um pelo `bash.exe` do Git com um PATH sem nenhum `bash` (o caso que quebrava a forma exec), checa que nenhum script referencia comando de stack, que todos os JSON são válidos e roda `claude plugin validate` no plugin e no marketplace.
 
 ```bash
 bash tests/run-adopt-test.sh [--keep]   # aceite ao vivo do modo adotar

@@ -5,13 +5,13 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/guard-bash.sh"], "timeout": 10, "onFailure": "block" }
+          { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard-bash.sh\"", "timeout": 10, "onFailure": "block" }
         ]
       },
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/guard-files.sh"], "timeout": 10, "onFailure": "block" }
+          { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard-files.sh\"", "timeout": 10, "onFailure": "block" }
         ]
       }
     ],
@@ -19,15 +19,15 @@
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/format.sh"], "timeout": 60 },
-          { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/advise.sh"], "timeout": 10 }
+          { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/format.sh\"", "timeout": 60 },
+          { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/advise.sh\"", "timeout": 10 }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/verify-gate.sh"], "timeout": 600 }
+          { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/verify-gate.sh\"", "timeout": 600 }
         ]
       }
     ],
@@ -35,21 +35,21 @@
       {
         "matcher": "startup|resume|compact|fork",
         "hooks": [
-          { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-context.sh"], "timeout": 15 }
+          { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-context.sh\"", "timeout": 15 }
         ]
       }
     ],
     "PreCompact": [
       {
         "hooks": [
-          { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/pre-compact.sh"], "timeout": 10 }
+          { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/pre-compact.sh\"", "timeout": 10 }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-context.sh", "--plan-only"], "timeout": 10 }
+          { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-context.sh\" --plan-only", "timeout": 10 }
         ]
       }
     ]

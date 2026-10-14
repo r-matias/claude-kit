@@ -324,6 +324,54 @@ if [ -z "$FILTER" ] || [[ "sem jq" == *"$FILTER"* ]]; then
   fi
 fi
 
+echo "hooks em forma shell"
+if [ -z "$FILTER" ] || [[ "forma shell" == *"$FILTER"* ]]; then
+  HOOKS="$REPO/plugins/kit/hooks/hooks.json"
+  bad_form="$(jq -r '.hooks[][].hooks[] | select(has("args") or .shell != "bash"
+    or (.command | test("^bash \"\\$\\{CLAUDE_PLUGIN_ROOT\\}/scripts/[a-z-]+\\.sh\"( --plan-only)?$") | not)) | .command' "$HOOKS" | tr -d '\r')"
+  if [ -z "$bad_form" ]; then ok "hooks.json: forma shell, shell bash, sem args"; else ko "hooks.json: forma shell, shell bash, sem args" "$bad_form"; fi
+
+  # No Windows, a forma shell roda pelo Git Bash que o Claude Code localiza, nao por busca no PATH.
+  # Simula isso chamando o bash.exe do Git pelo caminho com um PATH sem nenhum bash.
+  if command -v cygpath >/dev/null 2>&1; then
+    GIT_BASH="$(cygpath -m /)bin/bash.exe"
+    SIM_PATH="$(dirname "$(command -v jq)"):$(dirname "$(command -v git)"):$(cygpath -u "$SYSTEMROOT")/System32"
+    PLUGIN_NATIVE="$(native_path "$REPO/plugins/kit")"
+    SIM_CWD="$(native_path "$(mktemp -d "$TMP_ALL/shell.XXXXXX")")"
+    if [ ! -x "$GIT_BASH" ]; then
+      ko "simulacao de PATH sem bash" "Git Bash nao encontrado em $GIT_BASH"
+    elif PATH="$SIM_PATH" command -v bash >/dev/null 2>&1; then
+      ko "simulacao de PATH sem bash" "bash ainda encontrado em $(PATH="$SIM_PATH" command -v bash)"
+    else
+      ok "forma exec falharia: bash fora do PATH simulado"
+      while IFS=$'\t' read -r ev cmd; do
+        [ -n "$cmd" ] || continue
+        cmd="${cmd//\$\{CLAUDE_PLUGIN_ROOT\}/$PLUGIN_NATIVE}"
+        input="$(jq -cn --arg e "$ev" --arg d "$SIM_CWD" \
+          '{hook_event_name: $e, session_id: "teste-shell", tool_name: "Bash", tool_input: {command: "echo oi"}, source: "startup", cwd: $d}')"
+        out="$(cd "$SIM_CWD" && env PATH="$SIM_PATH" TMPDIR="$TMP_ALL" "$GIT_BASH" -c "$cmd" <<<"$input" 2>"$TMP_ALL/shell.err")"
+        code=$?
+        label="$ev: ${cmd##*/scripts/} roda sem bash no PATH"
+        label="${label//\"/}"
+        if [ "$code" = "0" ] && ! grep -q "not found" "$TMP_ALL/shell.err" && ! grep -q '"deny"' <<<"$out"; then
+          ok "$label"
+        else ko "$label" "exit $code, stdout='$out', stderr='$(head -c 300 "$TMP_ALL/shell.err")'"; fi
+      done < <(jq -r '.hooks | to_entries[] | .key as $e | .value[].hooks[] | "\($e)\t\(.command)"' "$HOOKS" | tr -d '\r')
+
+      # O guarda precisa decidir de fato, nao so sair 0.
+      cmd="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[0].command' "$HOOKS" | tr -d '\r')"
+      cmd="${cmd//\$\{CLAUDE_PLUGIN_ROOT\}/$PLUGIN_NATIVE}"
+      out="$(cd "$SIM_CWD" && jq -cn --arg d "$SIM_CWD" '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: "git push --force origin main"}, cwd: $d}' |
+        env PATH="$SIM_PATH" TMPDIR="$TMP_ALL" "$GIT_BASH" -c "$cmd" 2>"$TMP_ALL/shell.err")"
+      if jq -e '.hookSpecificOutput.permissionDecision == "deny"' <<<"$out" >/dev/null 2>&1; then
+        ok "PreToolUse: guard-bash.sh nega push --force sem bash no PATH"
+      else ko "PreToolUse: guard-bash.sh nega push --force sem bash no PATH" "stdout='$out', stderr='$(head -c 300 "$TMP_ALL/shell.err")'"; fi
+    fi
+  else
+    echo "  pulado simulacao de PATH sem bash (so no Windows)"
+  fi
+fi
+
 echo "scripts de apoio do init"
 if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   U="$(mktemp -d "$TMP_ALL/unit.XXXXXX")"
