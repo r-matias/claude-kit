@@ -11,16 +11,17 @@ claude-kit/
 ├── .claude-plugin/marketplace.json     # este repo é o marketplace
 ├── plugins/kit/
 │   ├── .claude-plugin/plugin.json
-│   ├── skills/{init,spec,plan,execute,epic,fix,hunt}/SKILL.md
+│   ├── skills/{setup,init,spec,plan,execute,epic,fix,hunt}/SKILL.md
 │   ├── skills/init/{adopt.md,stacks.md}  # modo adotar e referência de stacks
 │   ├── skills/plan/template.md          # formato do PLAN.md
 │   ├── agents/{investigator,code-reviewer,plan-reviewer,security-reviewer,test-writer}.md
 │   ├── hooks/hooks.json
 │   ├── scripts/{lib.sh,guard-bash.sh,guard-files.sh,format.sh,advise.sh,verify-gate.sh,session-context.sh,pre-compact.sh}
 │   ├── scripts/{inventory.sh,merge-json.sh}   # apoio do /kit:init, não são hooks
+│   ├── scripts/setup.sh                 # apoio do /kit:setup: dependências, plataforma e settings do usuário
 │   ├── scripts/wave-base.sh             # apoio do /kit:execute: base do diff de cada wave
-│   └── templates/{kit.example.json,project-settings.json,CLAUDE.project.md}
-├── templates/user-settings.json        # camada 1, aplicada à mão em ~/.claude
+│   ├── templates/{kit.example.json,project-settings.json,CLAUDE.project.md}
+│   └── templates/user-settings.json     # camada 1, mesclada em ~/.claude pelo /kit:setup
 ├── docs/design.md                      # princípios, camadas e versão mínima
 └── tests/
     ├── run-tests.sh                    # fixtures dos hooks + scripts de apoio + checagens estáticas
@@ -38,7 +39,7 @@ claude-kit/
 
 ## Requisitos
 
-- **Claude Code ≥ 2.1.295** (necessário para `onFailure: "block"` nos guardas). Em versões anteriores o campo é ignorado: se o script de um guarda faltar, falhar ou estourar o tempo, a ação passa. O `session-context` avisa no início da sessão quando `claude --version` é menor que 2.1.295. O `plugin.json` não tem campo de versão mínima do Claude Code, então a exigência fica só documentada aqui e no aviso.
+- **Claude Code ≥ 2.1.295** (necessário para `onFailure: "block"` nos guardas). Em versões anteriores o campo é ignorado: se o script de um guarda faltar, falhar ou estourar o tempo, a ação passa. O `session-context` avisa no início da sessão quando `claude --version` é menor que 2.1.295, com `claude update` e `/kit:setup`. O `plugin.json` não tem campo de versão mínima do Claude Code, então a exigência fica só documentada aqui e no aviso.
 
   | Recurso usado pelo kit | Desde | Efeito em versão anterior |
   | --- | --- | --- |
@@ -49,25 +50,39 @@ claude-kit/
   | `claude plugin validate` | 2.1.47 ou anterior (`/plugin validate` desde 2.0.12); 2.1.233 passou a checar `.claude/skills` | Sem validação de manifesto pela CLI |
 
   Fonte: [changelog oficial](https://code.claude.com/docs/en/changelog) e [referência de hooks](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails).
-- `bash`, `jq` e `git` (no Windows, Git Bash + `jq` no PATH). Sem `jq`, os guardas (`guard-bash`, `guard-files`) bloqueiam toda chamada com "kit: jq não encontrado; instale o jq"; os hooks de qualidade (`format`, `verify-gate`, `session-context`) saem com 0 sem fazer nada.
-- **Windows nativo não tem sandbox.** O `templates/user-settings.json` usa `sandbox.failIfUnavailable: true`, e com isso o Claude Code se recusa a iniciar no Windows nativo. Escolha um dos dois:
+- `bash`, `jq` e `git` (no Windows, Git Bash + `jq` no PATH). Sem `jq`, os guardas (`guard-bash`, `guard-files`) bloqueiam toda chamada com "kit: jq não encontrado; instale o jq"; os hooks de qualidade (`format`, `verify-gate`, `advise`, `pre-compact`) saem com 0 sem fazer nada. O `session-context` avisa no início da sessão quando falta `jq` ou `git`, com o comando de instalação da plataforma (`winget`, `brew` ou `apt`) e "rode /kit:setup"; sem isso, o dev só veria os guardas bloqueando.
+- **Windows nativo não tem sandbox.** O `plugins/kit/templates/user-settings.json` usa `sandbox.failIfUnavailable: true`, e com isso o Claude Code se recusa a iniciar no Windows nativo. O `/kit:setup` detecta o Windows nativo, grava `failIfUnavailable: false` e avisa que não há sandbox. Escolha um dos dois:
   - usar o WSL2 (recomendado: mantém o sandbox); ou
-  - remover `failIfUnavailable` da cópia em `~/.claude/settings.json` e aceitar rodar sem sandbox. Nesse caso, as regras de `permissions.deny` e os guardas do kit continuam valendo, mas não há isolamento de disco e rede.
-- **Ferramenta PowerShell desligada.** Os guardas do kit cobrem só `Bash` e `Edit|Write|MultiEdit`; comandos da ferramenta PowerShell não passam por nenhum deles. Por isso o `templates/user-settings.json` tem `"PowerShell"` em `permissions.deny`, o que tira a ferramenta do contexto do Claude. Quem precisar do PowerShell remove essa linha da cópia em `~/.claude/settings.json` e fica sem guarda nessa ferramenta.
+  - aceitar rodar sem sandbox (o que o `/kit:setup` configura no Windows nativo). Nesse caso, as regras de `permissions.deny` e os guardas do kit continuam valendo, mas não há isolamento de disco e rede.
+- **Ferramenta PowerShell desligada.** Os guardas do kit cobrem só `Bash` e `Edit|Write|MultiEdit`; comandos da ferramenta PowerShell não passam por nenhum deles. Por isso o `user-settings.json` tem `"PowerShell"` em `permissions.deny`, o que tira a ferramenta do contexto do Claude. Quem precisar do PowerShell remove essa linha da cópia em `~/.claude/settings.json` e fica sem guarda nessa ferramenta.
 
 ## Como usar
 
 O plugin é instalado uma vez por máquina; em cada repositório ele só é ligado por uma linha versionada no `.claude/settings.json`, e o único arquivo de stack é o `kit.json`.
 
-**Uma vez por máquina**
+### Primeiro uso
 
-1. `/plugin marketplace add r-matias/claude-kit` e `/plugin install kit@claude-kit`.
-2. Copiar `templates/user-settings.json` para `~/.claude/settings.json` (mesclando com o que já existir).
+No Claude Code, uma vez por máquina:
+
+1. `/plugin marketplace add r-matias/claude-kit`
+2. `/plugin install kit@claude-kit`
+3. `/kit:setup`
+
+O `/kit:setup` não precisa de configuração manual:
+
+- confere Claude Code ≥ 2.1.295, `git`, `bash` e `jq`; para o que faltar, mostra o comando de instalação do sistema (`winget`, `brew` ou `apt`, ou `claude update`) e para;
+- detecta Windows nativo, WSL2, macOS ou Linux e ajusta `sandbox.failIfUnavailable` (`false` no Windows nativo, onde não há sandbox, e diz isso);
+- pergunta se o kit fica ligado em todos os projetos ou só nos que o habilitam (`enabledPlugins."kit@claude-kit": false` no usuário; cada projeto liga no próprio settings);
+- mescla `plugins/kit/templates/user-settings.json` em `~/.claude/settings.json` (ou `$CLAUDE_CONFIG_DIR/settings.json`) com o `merge-json.sh`, mostra o diff, grava só após confirmação e confere com `merge-json.sh --check` que nada foi removido. A única troca aceita é o `enabledPlugins` do kit; se a conferência falhar, o arquivo original volta.
+
+Alternativa manual: copiar `plugins/kit/templates/user-settings.json` para `~/.claude/settings.json`, mesclando com o que já existir, e ajustar `failIfUnavailable` no Windows nativo (ver [Requisitos](#requisitos)).
+
+Rode `/kit:setup` de novo quando o `session-context` avisar que falta dependência ou que a versão do Claude Code é antiga.
 
 **Em cada repositório novo**
 
-3. Abrir o Claude Code no repo e rodar `/kit:init`. Ele detecta o stack e propõe `kit.json`, `.claude/settings.json` (liga o plugin, allow-list, domínios) e um CLAUDE.md curto. Se o repo já tem `.claude/`, `CLAUDE.md` ou `.mcp.json`, entra no [modo adotar](#modo-adotar).
-4. Revisar, ajustar e commitar. Quem clonar o repo, ou você em outra máquina, recebe a indicação do marketplace e do plugin pelo settings versionado.
+1. Abrir o Claude Code no repo e rodar `/kit:init`. Ele detecta o stack e propõe `kit.json`, `.claude/settings.json` (liga o plugin, allow-list, domínios) e um CLAUDE.md curto. Se o repo já tem `.claude/`, `CLAUDE.md` ou `.mcp.json`, entra no [modo adotar](#modo-adotar).
+2. Revisar, ajustar e commitar. Quem clonar o repo, ou você em outra máquina, recebe a indicação do marketplace e do plugin pelo settings versionado.
 
 **No dia a dia**
 
@@ -202,11 +217,11 @@ Regras de escrita do init, inclusive em repo novo: mesclar JSON chave a chave, n
 | `format.sh` | PostToolUse `Edit\|Write` | Roda o formatter do primeiro glob de `format` que casa. Falha: exit 2 com as últimas 30 linhas. |
 | `advise.sh` | PostToolUse `Edit\|Write` | Regras `coupled_changes` com `level: "warn"` cujo `when` casa com o arquivo editado viram `additionalContext` (JSON, porque stdout puro de PostToolUse não chega ao Claude). Uma vez por arquivo por sessão. Nunca bloqueia. |
 | `verify-gate.sh` | Stop | Em cada repositório da sessão, se algum arquivo alterado (diff contra HEAD + não rastreados) casa `source_globs`, roda `verify_on_stop` em ordem até a primeira falha (últimas 60 linhas). Depois avalia `key_parity` e `coupled_changes` com `level: "block"`. Todas as falhas saem numa única mensagem com exit 2. Respeita `stop_hook_active`. Comandos já verificados com sucesso no mesmo estado não rodam de novo (marca em `.git/kit-verify-*`). |
-| `session-context.sh` | SessionStart (`startup\|resume\|compact\|fork`) | Injeta branch e `git status --short` de cada repositório, os planos ativos e as tarefas pendentes do mais recente. Na origem `compact`, inclui o snapshot do `pre-compact` se ele tiver menos de 2 horas. |
+| `session-context.sh` | SessionStart (`startup\|resume\|compact\|fork`) | Injeta branch e `git status --short` de cada repositório, os planos ativos e as tarefas pendentes do mais recente. Na origem `compact`, inclui o snapshot do `pre-compact` se ele tiver menos de 2 horas. Sem `jq`, sem `git` ou com Claude Code abaixo de 2.1.295, avisa com o comando de correção e "rode /kit:setup". |
 | `session-context.sh --plan-only` | UserPromptSubmit | Só a linha de planos ativos, e só se `inject_plan_on_prompt` for `true`; caso contrário não imprime nada. |
 | `pre-compact.sh` | PreCompact | Grava `<raiz>/.claude/state/kit-snapshot.md` com data, branch, modificados e staged (até 20 cada) de cada repositório e os planos ativos. Sempre exit 0: nunca bloqueia a compactação. Adicione `.claude/state/` ao `.gitignore` (o `/kit:init` propõe). |
 
-Sem `jq`, os guardas bloqueiam e os demais hooks saem com 0 sem fazer nada.
+Sem `jq`, os guardas bloqueiam, o `session-context` só avisa e os demais hooks saem com 0 sem fazer nada.
 
 Os guardas devolvem `permissionDecision: "deny"` com o motivo; Claude recebe o motivo e ajusta. Com `onFailure: "block"` (Claude Code 2.1.295+), um guarda que não consegue rodar também bloqueia: script ausente, saída com código diferente de 0 e 2, timeout ou JSON inválido. No `Stop` o campo não tem efeito, segundo a doc oficial.
 
@@ -220,7 +235,7 @@ bash tests/run-tests.sh "rm -rf"   # filtra por nome do caso
 KIT_TEST_DEBUG=1 bash tests/run-tests.sh "<caso>"   # mostra input, stdout e stderr
 ```
 
-Cada caso monta um workspace novo a partir de `tests/sample/` (repo git com `kit.json` de comandos `true`/`false`), grava os arquivos de base (`files`), faz commit, aplica as mudanças do turno (`change`, `edit`, `touch` para envelhecer arquivos), passa o JSON do hook pelo script e confere decisão, motivo (`reason`), exit code, stdout e stderr (conteúdo e ordem), JSON de saída (`json_check`), execução repetida (`repeat_empty`) e arquivos depois do hook (`after`). Com `workspace.repos`, o caso roda numa pasta-mãe sem git com repositórios filhos. Cada caso tem `session_id` e `TMPDIR` próprios. Fixtures podem declarar `defaults` mesclados em cada caso. Também testa `merge-json.sh`, `inventory.sh` e `wave-base.sh` (diff da wave com arquivo alterado e novo, sem ignorado, index e commits intactos), a ordem de seções e campos do template do PLAN.md e que só tarefas, checkpoints e passos da wave final têm caixa, confere que todo hook do `hooks.json` está em forma shell e, no Windows, roda cada um pelo `bash.exe` do Git com um PATH sem nenhum `bash` (o caso que quebrava a forma exec), checa que nenhum script referencia comando de stack, que todos os JSON são válidos e roda `claude plugin validate` no plugin e no marketplace.
+Cada caso monta um workspace novo a partir de `tests/sample/` (repo git com `kit.json` de comandos `true`/`false`), grava os arquivos de base (`files`), faz commit, aplica as mudanças do turno (`change`, `edit`, `touch` para envelhecer arquivos), passa o JSON do hook pelo script e confere decisão, motivo (`reason`), exit code, stdout e stderr (conteúdo e ordem), JSON de saída (`json_check`), execução repetida (`repeat_empty`) e arquivos depois do hook (`after`). Com `workspace.repos`, o caso roda numa pasta-mãe sem git com repositórios filhos. Cada caso tem `session_id` e `TMPDIR` próprios. Fixtures podem declarar `defaults` mesclados em cada caso. Também testa `merge-json.sh`, `inventory.sh`, `wave-base.sh` (diff da wave com arquivo alterado e novo, sem ignorado, index e commits intactos) e `setup.sh` (settings inexistente e existente com chaves preservadas, proposta que remove valor recusada com restauração, Windows nativo e WSL2 simulados por um `uname` falso, `jq` ausente com o comando de cada plataforma, Claude Code antigo), o aviso do `session-context` sem `jq` e sem `git`, a ordem de seções e campos do template do PLAN.md e que só tarefas, checkpoints e passos da wave final têm caixa, confere que todo hook do `hooks.json` está em forma shell e, no Windows, roda cada um pelo `bash.exe` do Git com um PATH sem nenhum `bash` (o caso que quebrava a forma exec), checa que nenhum script referencia comando de stack, que todos os JSON são válidos e roda `claude plugin validate` no plugin e no marketplace.
 
 ```bash
 bash tests/run-adopt-test.sh [--keep]   # aceite ao vivo do modo adotar

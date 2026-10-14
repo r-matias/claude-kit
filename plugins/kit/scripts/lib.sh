@@ -279,3 +279,63 @@ kit_deny_pretool() {
   jq -cn --arg r "$1" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
   exit 0
 }
+
+# Versao minima do Claude Code para onFailure: "block" nos guardas.
+KIT_MIN_CLAUDE="2.1.295"
+
+# Uso: kit_version_lt <a> <b>. Compara x.y.z numericamente; 0 se a < b.
+kit_version_lt() {
+  local IFS=.
+  local -a a=($1) b=($2)
+  local i
+  for i in 0 1 2; do
+    [ "${a[$i]:-0}" -lt "${b[$i]:-0}" ] && return 0
+    [ "${a[$i]:-0}" -gt "${b[$i]:-0}" ] && return 1
+  done
+  return 1
+}
+
+# Versao x.y.z do Claude Code no PATH. Vazio se o comando faltar ou a versao for ilegivel.
+kit_claude_version() {
+  local v
+  command -v claude >/dev/null 2>&1 || return 0
+  if command -v timeout >/dev/null 2>&1; then v="$(timeout 5 claude --version 2>/dev/null)"; else v="$(claude --version 2>/dev/null)"; fi
+  printf '%s' "$v" | tr -d '\r' | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -n 1
+}
+
+# windows (Git Bash/MSYS no Windows nativo), wsl, macos ou linux.
+kit_platform() {
+  case "$(uname -s 2>/dev/null)" in
+    MINGW* | MSYS* | CYGWIN*) echo windows ;;
+    Darwin) echo macos ;;
+    Linux)
+      if [ -n "${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/version 2>/dev/null; then echo wsl; else echo linux; fi ;;
+    *) echo linux ;;
+  esac
+}
+
+# Comando de instalacao de uma dependencia (jq, git, bash, claude) na plataforma dada.
+kit_install_hint() {
+  case "$1" in
+    claude) echo "claude update"; return 0 ;;
+  esac
+  case "$2:$1" in
+    windows:jq) echo "winget install jqlang.jq" ;;
+    windows:*) echo "winget install Git.Git" ;;
+    macos:*) echo "brew install $1" ;;
+    *) echo "sudo apt install $1" ;;
+  esac
+}
+
+# Avisos de dependencia para o inicio da sessao, um por linha: jq, git e versao do Claude Code.
+kit_dependency_notes() {
+  local p v
+  p="$(kit_platform)"
+  command -v jq >/dev/null 2>&1 || echo "kit: jq não encontrado; os guardas bloqueiam toda chamada. Instale com \`$(kit_install_hint jq "$p")\` e rode /kit:setup"
+  command -v git >/dev/null 2>&1 || echo "kit: git não encontrado; contexto e verificação desligados. Instale com \`$(kit_install_hint git "$p")\` e rode /kit:setup"
+  v="$(kit_claude_version)"
+  if [ -n "$v" ] && kit_version_lt "$v" "$KIT_MIN_CLAUDE"; then
+    echo "kit: Claude Code < $KIT_MIN_CLAUDE, guardas sem onFailure:block — rode claude update (versão atual: $v) e depois /kit:setup"
+  fi
+  return 0
+}

@@ -314,13 +314,33 @@ if [ -z "$FILTER" ] || [[ "sem jq" == *"$FILTER"* ]]; then
         ok "$s sem jq bloqueia com exit 2"
       else ko "$s sem jq bloqueia com exit 2" "exit $code, stdout='$out', stderr='$(cat "$TMP_ALL/nojq.err")'"; fi
     done
-    for s in format.sh verify-gate.sh session-context.sh advise.sh pre-compact.sh; do
+    for s in format.sh verify-gate.sh advise.sh pre-compact.sh; do
       out="$(printf '%s' '{"cwd":"."}' | PATH="$NOJQ_PATH" "$BASH_BIN" "$SCRIPTS/$s" 2>"$TMP_ALL/nojq.err")"
       code=$?
       if [ "$code" = "0" ] && [ -z "$out" ] && [ ! -s "$TMP_ALL/nojq.err" ]; then
         ok "$s sem jq sai 0 sem fazer nada"
       else ko "$s sem jq sai 0 sem fazer nada" "exit $code, stdout='$out', stderr='$(cat "$TMP_ALL/nojq.err")'"; fi
     done
+    out="$(printf '%s' '{"cwd":"."}' | PATH="$NOJQ_PATH" "$BASH_BIN" "$SCRIPTS/session-context.sh" 2>"$TMP_ALL/nojq.err")"
+    code=$?
+    if [ "$code" = "0" ] && grep -qF 'kit: jq não encontrado' <<<"$out" && grep -qE '`(winget install jqlang.jq|brew install jq|sudo apt install jq)`' <<<"$out" &&
+      grep -qF '/kit:setup' <<<"$out" && [ ! -s "$TMP_ALL/nojq.err" ]; then
+      ok "session-context.sh sem jq avisa com o comando de instalação e /kit:setup"
+    else ko "session-context.sh sem jq avisa com o comando de instalação e /kit:setup" "exit $code, stdout='$out', stderr='$(cat "$TMP_ALL/nojq.err")'"; fi
+    out="$(printf '%s' '{"cwd":"."}' | PATH="$NOJQ_PATH" "$BASH_BIN" "$SCRIPTS/session-context.sh" --plan-only 2>&1)"
+    if [ "$?" = "0" ] && [ -z "$out" ]; then ok "session-context.sh --plan-only sem jq não avisa"; else ko "session-context.sh --plan-only sem jq não avisa" "stdout='$out'"; fi
+  fi
+  NOGIT_PATH="$(path_without git)"
+  if PATH="$NOGIT_PATH" command -v git >/dev/null 2>&1; then
+    ko "PATH de teste sem git" "git ainda encontrado em $(PATH="$NOGIT_PATH" command -v git)"
+  else
+    ng="$(mktemp -d "$TMP_ALL/nogit.XXXXXX")"
+    out="$(jq -cn --arg d "$(native_path "$ng")" '{hook_event_name: "SessionStart", source: "startup", cwd: $d}' |
+      PATH="$NOGIT_PATH" "$BASH_BIN" "$SCRIPTS/session-context.sh" 2>"$TMP_ALL/nogit.err")"
+    code=$?
+    if [ "$code" = "0" ] && grep -qF 'kit: git não encontrado' <<<"$out" && grep -qF '/kit:setup' <<<"$out"; then
+      ok "session-context.sh sem git avisa com o comando de instalação e /kit:setup"
+    else ko "session-context.sh sem git avisa com o comando de instalação e /kit:setup" "exit $code, stdout='$out', stderr='$(cat "$TMP_ALL/nogit.err")'"; fi
   fi
 fi
 
@@ -442,6 +462,111 @@ if [ -z "$FILTER" ] || [[ "wave-base" == *"$FILTER"* ]]; then
   if [ "$(git -C "$WB" diff --cached --name-only | tr -d '\r')" = "s.txt" ]; then ok "wave-base: index do usuário intacto"; else ko "wave-base: index do usuário intacto" "$(git -C "$WB" diff --cached --name-only | tr '\n' ' ')"; fi
   if [ "$(git -C "$WB" rev-list --count HEAD | tr -d '\r')" = "1" ]; then ok "wave-base: nenhum commit criado"; else ko "wave-base: nenhum commit criado" ""; fi
   if ! bash "$WS" "$(mktemp -d "$TMP_ALL/nogit.XXXXXX")" >/dev/null 2>&1; then ok "wave-base: fora de repo git sai com erro"; else ko "wave-base: fora de repo git sai com erro" ""; fi
+fi
+
+echo "setup"
+if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
+  SU="$SCRIPTS/setup.sh"
+  TPL_USER="$REPO/plugins/kit/templates/user-settings.json"
+  # Stubs de plataforma e versao: uname responde $1, claude responde $2. WSL via WSL_DISTRO_NAME.
+  setup_bin() {
+    local d
+    d="$(mktemp -d "$TMP_ALL/setup-bin.XXXXXX")"
+    printf '#!/usr/bin/env bash\necho "%s"\n' "$1" >"$d/uname"
+    printf '#!/usr/bin/env bash\necho "%s (Claude Code)"\n' "${2:-9.9.9}" >"$d/claude"
+    chmod +x "$d/uname" "$d/claude"
+    printf '%s' "$d"
+  }
+  LINUX_BIN="$(setup_bin Linux)"
+  WIN_BIN="$(setup_bin MINGW64_NT-10.0-26100)"
+  MAC_BIN="$(setup_bin Darwin)"
+  # Uso: run_setup <config> <PATH> <subcomando...>. Sem WSL_DISTRO_NAME herdado.
+  run_setup() {
+    local cfg="$1" path="$2"
+    shift 2
+    env -u WSL_DISTRO_NAME CLAUDE_CONFIG_DIR="$cfg" PATH="$path" bash "$SU" "$@"
+  }
+  NOJQ_PATH="${NOJQ_PATH:-$(path_without jq)}"
+
+  # settings inexistente: a proposta vira o settings, kit ligado em todos.
+  C1="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")/claude"
+  run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" propose todos >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
+  code=$?
+  if [ "$code" = "0" ] && grep -qF '(novo)' "$TMP_ALL/su.out" && [ ! -e "$C1/settings.json" ]; then
+    ok "setup propose: settings inexistente mostra diff e não grava"
+  else ko "setup propose: settings inexistente mostra diff e não grava" "exit $code, $(head -c 300 "$TMP_ALL/su.err")"; fi
+  run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" apply >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
+  code=$?
+  if [ "$code" = "0" ] && jq -e --slurpfile t "$TPL_USER" '.permissions.deny == $t[0].permissions.deny and .sandbox.failIfUnavailable == true
+      and .enabledPlugins["kit@claude-kit"] == true' "$C1/settings.json" >/dev/null 2>&1 && [ ! -e "$C1/settings.kit-proposta.json" ]; then
+    ok "setup apply: settings inexistente criado com o template e kit ligado"
+  else ko "setup apply: settings inexistente criado com o template e kit ligado" "exit $code, $(head -c 300 "$TMP_ALL/su.err")"; fi
+
+  # settings existente: chaves preservadas, arrays unidos, opt-in desliga o kit no usuario.
+  C2="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
+  printf '%s' '{"model":"opus","permissions":{"allow":["Bash(ls *)"],"deny":["Bash(rm *)","Bash(curl *)"]},"enabledPlugins":{"kit@claude-kit":true,"outro@mkt":true},"sandbox":{"enabled":true,"network":{"allowedDomains":["example.com"]}}}' >"$C2/settings.json"
+  cp "$C2/settings.json" "$TMP_ALL/su.before"
+  run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" propose opt-in >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err" &&
+    run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" apply >>"$TMP_ALL/su.out" 2>>"$TMP_ALL/su.err"
+  code=$?
+  if [ "$code" = "0" ] && jq -e '.model == "opus" and .permissions.allow == ["Bash(ls *)"] and (.permissions.deny | index("Bash(rm *)") != null)
+      and ([.permissions.deny[] | select(. == "Bash(curl *)")] | length) == 1 and (.permissions.deny | index("PowerShell") != null)
+      and .enabledPlugins["outro@mkt"] == true and .enabledPlugins["kit@claude-kit"] == false
+      and .sandbox.network.allowedDomains == ["example.com"] and .sandbox.failIfUnavailable == true' "$C2/settings.json" >/dev/null 2>&1; then
+    ok "setup: settings existente preserva chaves, une arrays e opt-in desliga o kit"
+  else ko "setup: settings existente preserva chaves, une arrays e opt-in desliga o kit" "exit $code, $(tr -d '\n' <"$C2/settings.json" | head -c 400)"; fi
+  lost="$(bash "$SCRIPTS/merge-json.sh" --check "$TMP_ALL/su.before" "$C2/settings.json" 2>&1 | tr -d '\r')"
+  if [ "$lost" = '$.enabledPlugins.kit@claude-kit: true -> false' ]; then ok "setup: única troca é enabledPlugins do kit"; else ko "setup: única troca é enabledPlugins do kit" "$lost"; fi
+
+  # Proposta que remove valor: apply recusa e restaura o original.
+  cp "$C2/settings.json" "$TMP_ALL/su.before"
+  jq 'del(.model)' "$C2/settings.json" >"$C2/settings.kit-proposta.json"
+  run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" apply >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
+  code=$?
+  if [ "$code" = "1" ] && grep -qF '$.model: removido' "$TMP_ALL/su.err" && cmp -s "$TMP_ALL/su.before" "$C2/settings.json"; then
+    ok "setup apply: proposta que remove valor é recusada e o settings restaurado"
+  else ko "setup apply: proposta que remove valor é recusada e o settings restaurado" "exit $code, $(head -c 300 "$TMP_ALL/su.err")"; fi
+
+  # Windows nativo simulado: sem sandbox, failIfUnavailable false; WSL mantem true.
+  C3="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
+  out="$(run_setup "$C3" "$WIN_BIN:$NOCLAUDE_PATH" check 2>&1)"
+  code=$?
+  if [ "$code" = "0" ] && grep -qF 'plataforma: windows nativo — sem sandbox' <<<"$out"; then
+    ok "setup check: Windows nativo simulado avisa que não há sandbox"
+  else ko "setup check: Windows nativo simulado avisa que não há sandbox" "exit $code, $out"; fi
+  run_setup "$C3" "$WIN_BIN:$NOCLAUDE_PATH" propose todos >/dev/null 2>&1
+  if jq -e '.sandbox.failIfUnavailable == false and .sandbox.enabled == true' "$C3/settings.kit-proposta.json" >/dev/null 2>&1; then
+    ok "setup propose: Windows nativo simulado usa failIfUnavailable false"
+  else ko "setup propose: Windows nativo simulado usa failIfUnavailable false" "$(head -c 300 "$C3/settings.kit-proposta.json" 2>&1)"; fi
+  C4="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
+  out="$(WSL_DISTRO_NAME=Ubuntu CLAUDE_CONFIG_DIR="$C4" PATH="$LINUX_BIN:$NOCLAUDE_PATH" bash "$SU" check 2>&1)"
+  WSL_DISTRO_NAME=Ubuntu CLAUDE_CONFIG_DIR="$C4" PATH="$LINUX_BIN:$NOCLAUDE_PATH" bash "$SU" propose todos >/dev/null 2>&1
+  if grep -qF 'plataforma: wsl2' <<<"$out" && jq -e '.sandbox.failIfUnavailable == true' "$C4/settings.kit-proposta.json" >/dev/null 2>&1; then
+    ok "setup: WSL2 simulado mantém failIfUnavailable true"
+  else ko "setup: WSL2 simulado mantém failIfUnavailable true" "$out"; fi
+  rm -f "$C4/settings.kit-proposta.json"
+
+  # jq ausente simulado: check falha com o comando de instalacao da plataforma; propose recusa.
+  out="$(run_setup "$C4" "$WIN_BIN:$NOJQ_PATH" check 2>&1)"
+  code=$?
+  if [ "$code" = "1" ] && grep -qF 'falta jq — instale: winget install jqlang.jq' <<<"$out" && grep -qF 'ok git' <<<"$out"; then
+    ok "setup check: jq ausente (Windows) falha com winget install jqlang.jq"
+  else ko "setup check: jq ausente (Windows) falha com winget install jqlang.jq" "exit $code, $out"; fi
+  out="$(run_setup "$C4" "$MAC_BIN:$NOJQ_PATH" check 2>&1)"
+  if grep -qF 'falta jq — instale: brew install jq' <<<"$out"; then ok "setup check: jq ausente (macOS) sugere brew install jq"; else ko "setup check: jq ausente (macOS) sugere brew install jq" "$out"; fi
+  out="$(run_setup "$C4" "$LINUX_BIN:$NOJQ_PATH" check 2>&1)"
+  if grep -qF 'falta jq — instale: sudo apt install jq' <<<"$out"; then ok "setup check: jq ausente (Linux) sugere sudo apt install jq"; else ko "setup check: jq ausente (Linux) sugere sudo apt install jq" "$out"; fi
+  run_setup "$C4" "$LINUX_BIN:$NOJQ_PATH" propose todos >/dev/null 2>&1
+  code=$?
+  if [ "$code" = "2" ] && [ ! -e "$C4/settings.json" ] && [ ! -e "$C4/settings.kit-proposta.json" ]; then ok "setup propose: sem jq recusa e não grava"; else ko "setup propose: sem jq recusa e não grava" "exit $code"; fi
+
+  # Claude Code abaixo da minima: check falha com claude update.
+  OLD_BIN="$(setup_bin Linux 2.1.200)"
+  out="$(run_setup "$C4" "$OLD_BIN:$NOCLAUDE_PATH" check 2>&1)"
+  code=$?
+  if [ "$code" = "1" ] && grep -qF 'falta claude >= 2.1.295 (atual 2.1.200) — rode: claude update' <<<"$out"; then
+    ok "setup check: Claude Code antigo falha com claude update"
+  else ko "setup check: Claude Code antigo falha com claude update" "exit $code, $out"; fi
 fi
 
 echo "checagens estaticas"

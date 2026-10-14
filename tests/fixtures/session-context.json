@@ -7,7 +7,7 @@
       "stdout": ["Branch: main", "src/App.cs", "- [ ] 2. tarefa pendente", "docs/specs/feat/PLAN.md (1/2)"], "stdout_not": ["1. feito"] },
     { "name": "sem git sai 0 sem saida", "cwd": "__NOGIT__", "exit": 0, "stdout_empty": true },
     { "name": "versao: Claude Code antigo gera aviso", "fake_claude": "2.1.291",
-      "stdout": ["Branch: main", "kit: Claude Code < 2.1.295, guardas sem onFailure:block — rode claude update (versão atual: 2.1.291)"] },
+      "stdout": ["Branch: main", "kit: Claude Code < 2.1.295, guardas sem onFailure:block — rode claude update (versão atual: 2.1.291) e depois /kit:setup"] },
     { "name": "versao: Claude Code na versao minima nao avisa", "fake_claude": "2.1.295",
       "stdout": ["Branch: main"], "stdout_not": ["onFailure"] },
     { "name": "versao: Claude Code novo nao avisa", "fake_claude": "2.2.0",
