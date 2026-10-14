@@ -1,0 +1,10 @@
+{
+  "commands": {
+    "test": "node --test test/",
+    "test_related": "node --test {files}"
+  },
+  "source_globs": ["src/**/*.js"],
+  "coupled_changes": [
+    { "when": ["src/store.js"], "require": ["docs/data-model.md"], "level": "warn", "message": "Campos do users.json estão documentados em docs/data-model.md." }
+  ]
+}

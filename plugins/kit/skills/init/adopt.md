@@ -42,7 +42,7 @@ Cada peça recebe um destino:
 Equivalentes do kit para comparar:
 - Hooks: `guard-bash` (comandos destrutivos), `guard-files` (segredos, `protected_paths` com mensagem por item), `format` (formatter por glob), `advise` (avisos `coupled_changes` com `level: "warn"` na edição), `verify-gate` (build/teste, `key_parity`, `coupled_changes` no Stop, em todos os repositórios da sessão), `session-context` e `pre-compact` (branch, alterados, planos ativos, snapshot na compactação). Comportamento exato no README do kit.
 - Skills: `spec`, `plan`, `execute`, `epic`, `fix`, `hunt`.
-- Agents: `investigator`, `code-reviewer`, `security-reviewer`, `test-writer`.
+- Agents: `investigator`, `code-reviewer`, `plan-reviewer`, `security-reviewer`, `test-writer`.
 
 **Sobreposições a resolver:** dois hooks bloqueando a mesma coisa (mensagens duplicadas, tempo extra) e duas skills ou agents de review com escopos parecidos (Claude escolhe um de forma imprevisível). Uma peça vira dona; a outra sai (após prova e confirmação) ou passa a chamá-la.
 

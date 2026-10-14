@@ -14,7 +14,8 @@ allowed-tools: Bash(git status *) Bash(git branch *)
 - Uma tarefa por vez, na ordem do plano. Não adiante trabalho de tarefas futuras.
 - Depois de cada edição relevante, rode a verificação da tarefa. Nunca marque `[x]` sem evidência.
 - Comandos vêm de `.claude/kit.json`; não invente comandos do stack.
-- Se a tarefa exigir mudar o escopo da SPEC (requisito novo, interface diferente, arquivo fora do previsto com impacto), pare e pergunte antes.
+- Decisão técnica pequena que surgir (nome, parâmetro, flag, pasta, biblioteca já prevista): decida pelo padrão mais simples coerente com a SPEC e o código, registre em "Decisões assumidas" do PLAN.md (`- <decisão> — <motivo>`), atualize o doc de referência se houver um, e siga.
+- Pare e pergunte só em: decisão de produto (o que o usuário vê, regra de negócio), escopo fora da SPEC, decisão cara de reverter (schema público, contrato de API, dependência nova) ou ação irreversível (deploy, push, chamada a serviço externo real, migração em banco real). Na dúvida entre técnica e produto, conta como produto.
 - Após duas tentativas falhas na mesma tarefa, pare, resuma o que tentou e recomende `/clear` com um prompt melhor.
 
 ## Passos

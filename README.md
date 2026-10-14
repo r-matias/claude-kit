@@ -13,7 +13,7 @@ claude-kit/
 │   ├── .claude-plugin/plugin.json
 │   ├── skills/{init,spec,plan,execute,epic,fix,hunt}/SKILL.md
 │   ├── skills/init/{adopt.md,stacks.md}  # modo adotar e referência de stacks
-│   ├── agents/{investigator,code-reviewer,security-reviewer,test-writer}.md
+│   ├── agents/{investigator,code-reviewer,plan-reviewer,security-reviewer,test-writer}.md
 │   ├── hooks/hooks.json
 │   ├── scripts/{lib.sh,guard-bash.sh,guard-files.sh,format.sh,advise.sh,verify-gate.sh,session-context.sh,pre-compact.sh}
 │   ├── scripts/{inventory.sh,merge-json.sh}   # apoio do /kit:init, não são hooks
@@ -25,8 +25,10 @@ claude-kit/
     ├── run-adopt-test.sh               # aceite ao vivo do modo adotar (usa claude -p)
     ├── run-skills-live-test.sh         # aceite ao vivo do carregamento das skills e do deny de skill/agent
     ├── run-guards-live-test.sh         # aceite ao vivo do onFailure: guarda ausente bloqueia
+    ├── run-plan-live-test.sh           # aceite ao vivo do /kit:plan: decide lacuna técnica, pergunta lacuna de produto
     ├── fixtures/*.json
     ├── sample/                         # projeto mínimo com kit.json de comandos true/false
+    ├── plan/{repo,specs}/              # projeto mínimo e SPECs com lacuna técnica e de produto
     └── adopt/repo/                     # repo com .claude/ próprio (guardado como _claude/, _CLAUDE.md, _mcp.json)
 ```
 
@@ -66,6 +68,8 @@ O plugin é instalado uma vez por máquina; em cada repositório ele só é liga
 **No dia a dia**
 
 - Feature: `/kit:spec` → `/clear` → `/kit:plan` → `/kit:execute`
+  - O `/kit:plan` não pede revisão do plano. Lacuna técnica (nome de campo, parâmetro, flag, pasta, biblioteca já prevista) ele decide pelo padrão mais simples coerente com os docs, registra em "Decisões assumidas" do PLAN.md com o motivo e atualiza o doc de referência quando houver. Ele só pergunta em decisão de produto (o que o usuário vê, regra de negócio), escopo fora da SPEC ou decisão cara de reverter (schema público, contrato de API, dependência nova). Antes de entregar, o `kit:plan-reviewer` confere o plano contra a SPEC e a skill corrige o que ele apontar; você recebe um resumo de até 5 linhas.
+  - O `/kit:execute` segue a mesma regra para decisões que surgem na execução e também para antes de ação irreversível (deploy, push, chamada a serviço externo real, migração em banco real).
 - Épico: `/kit:epic`; cada fatia vira uma feature
 - Bug conhecido: `/kit:fix <issue>`
 - Falha sem causa clara: `/kit:hunt`, depois `/kit:fix`
@@ -214,11 +218,14 @@ Cada caso monta um workspace novo a partir de `tests/sample/` (repo git com `kit
 bash tests/run-adopt-test.sh [--keep]   # aceite ao vivo do modo adotar
 bash tests/run-skills-live-test.sh      # skills carregam sem commits e fora de repo git; deny de skill/agent do kit
 bash tests/run-guards-live-test.sh      # guarda ausente bloqueia (onFailure), com controle e contraprova
+bash tests/run-plan-live-test.sh [--keep]   # /kit:plan decide lacuna técnica e pergunta lacuna de produto
 ```
 
 Copia `tests/adopt/repo/` (que tem hooks, skills, agent, rule, CLAUDE.md e MCP próprios) para uma pasta temporária, roda `/kit:init` com respostas pré-aprovadas via `claude -p --plugin-dir` e confere: nenhum arquivo removido, nenhum commit criado, JSON existentes só com adições (`merge-json.sh --check`), demais arquivos sem linhas removidas, `docs/claude-adoption.md` cobrindo todas as peças e recomendando `Skill(kit:fix)` em deny (com o motivo), aviso mudo e falha aberta marcados, `kit.json` com `key_parity`, `coupled_changes` e a lista de bloqueio convertida em `protected_paths` com mensagem, plugin habilitado e hook original ainda registrado. Leva alguns minutos e consome uma sessão do Claude Code. Roda com `--setting-sources project,local` para não disparar hooks pessoais do `~/.claude`.
 
 O `run-guards-live-test.sh` exige Claude Code ≥ 2.1.295. Ele apaga o script de um guarda numa cópia do plugin e confere no disco que o comando (Bash) ou a escrita (Write) que criaria um arquivo-sonda não aconteceu. O controle, com o script presente, cria a sonda. A contraprova, com o script ausente e sem `onFailure`, também cria, o que mostra que o bloqueio vem do campo.
+
+O `run-plan-live-test.sh` copia `tests/plan/repo/` com uma SPEC de `tests/plan/specs/` e roda `/kit:plan` via `claude -p`. Com a SPEC de lacuna técnica (último login), confere que o PLAN.md sai com "Decisões assumidas" (decisão — motivo), sem `AskUserQuestion`, com o `kit:plan-reviewer` chamado, `docs/data-model.md` atualizado, nenhum código de produção alterado e resumo curto. Com a SPEC de lacuna de produto (bloqueio sem limite de tentativas definido), confere que a skill pergunta sobre o limite e não grava o PLAN.md. Como `claude -p` não tem usuário, vale a chamada ao `AskUserQuestion` ou a pergunta no texto final.
 
 A fixture guarda a configuração como `_claude/`, `_CLAUDE.md` e `_mcp.json` para o próprio Claude Code não carregar as skills e o CLAUDE.md de teste quando você trabalha no repo do kit.
 
