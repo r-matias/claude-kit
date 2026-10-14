@@ -22,7 +22,7 @@ Paralelo: <números das tarefas com arquivos disjuntos, ou "nenhum">
   - action: <como fazer>; molde: `<caminho:linha>`
   - verify: `<chave do kit.json>`
   - done: <assertiva testável>
-- [ ] Checkpoint wave 1: re-rodar os verify da wave, confirmar cada done, avaliar o contexto
+- [ ] Checkpoint wave 1: re-rodar os verify da wave, confirmar cada done, revisar o diff da wave, avaliar o contexto
 
 ## Wave final — revisão e verificação
 - [ ] F1. Revisão independente: `kit:code-reviewer` e `kit:security-reviewer` sobre todos os arquivos alterados

@@ -18,4 +18,4 @@ Dificultar ataques de força bruta bloqueando a conta depois de muitas tentativa
 - Senha certa antes do limite zera a contagem.
 
 ## Verificação ponta a ponta
-1. `node --test test/` passa com testes do bloqueio e do desbloqueio.
+1. `node --test` passa com testes do bloqueio e do desbloqueio.

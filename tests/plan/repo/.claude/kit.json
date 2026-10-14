@@ -1,6 +1,6 @@
 {
   "commands": {
-    "test": "node --test test/",
+    "test": "node --test",
     "test_related": "node --test {files}"
   },
   "source_globs": ["src/**/*.js"],

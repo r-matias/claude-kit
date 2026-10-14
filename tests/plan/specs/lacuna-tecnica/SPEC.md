@@ -23,4 +23,4 @@ Suporte precisa saber quando cada usuário entrou pela última vez.
 - Login com senha errada → data não muda.
 
 ## Verificação ponta a ponta
-1. `node --test test/` passa, com testes cobrindo os dois casos de borda.
+1. `node --test` passa, com testes cobrindo os dois casos de borda.

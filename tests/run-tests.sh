@@ -421,6 +421,29 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   if [ -z "$risk_miss" ]; then ok "inventory: sobreposicoes, aviso mudo, falha aberta e riscos de configuracao"; else ko "inventory: sobreposicoes, aviso mudo, falha aberta e riscos de configuracao" "$risk_miss"; fi
 fi
 
+echo "wave-base"
+if [ -z "$FILTER" ] || [[ "wave-base" == *"$FILTER"* ]]; then
+  WB="$(mktemp -d "$TMP_ALL/wave.XXXXXX")"
+  WS="$SCRIPTS/wave-base.sh"
+  printf 'a\n' >"$WB/a.txt"
+  printf 'ign.txt\n' >"$WB/.gitignore"
+  git_q init "$WB"
+  git_q -C "$WB" add -A
+  git_q -C "$WB" commit -m init
+  printf 'staged\n' >"$WB/s.txt"
+  git_q -C "$WB" add s.txt
+  base="$(bash "$WS" "$WB" 2>/dev/null)"
+  printf 'b\n' >>"$WB/a.txt"
+  printf 'novo\n' >"$WB/n.txt"
+  printf 'x\n' >"$WB/ign.txt"
+  now="$(bash "$WS" "$WB" 2>/dev/null)"
+  wdiff="$(git -C "$WB" diff --name-status "$base" "$now" 2>/dev/null | tr -d '\r' | paste -sd' ' -)"
+  if [ "$wdiff" = "$(printf 'M\ta.txt A\tn.txt')" ]; then ok "wave-base: diff da wave tem alterado e novo, sem ignorado nem o que já existia"; else ko "wave-base: diff da wave tem alterado e novo, sem ignorado nem o que já existia" "$wdiff"; fi
+  if [ "$(git -C "$WB" diff --cached --name-only | tr -d '\r')" = "s.txt" ]; then ok "wave-base: index do usuário intacto"; else ko "wave-base: index do usuário intacto" "$(git -C "$WB" diff --cached --name-only | tr '\n' ' ')"; fi
+  if [ "$(git -C "$WB" rev-list --count HEAD | tr -d '\r')" = "1" ]; then ok "wave-base: nenhum commit criado"; else ko "wave-base: nenhum commit criado" ""; fi
+  if ! bash "$WS" "$(mktemp -d "$TMP_ALL/nogit.XXXXXX")" >/dev/null 2>&1; then ok "wave-base: fora de repo git sai com erro"; else ko "wave-base: fora de repo git sai com erro" ""; fi
+fi
+
 echo "checagens estaticas"
 if [ -z "$FILTER" ]; then
   stack_hits="$(grep -nE '(^|[^a-z_-])(dotnet|npm|npx|pnpm|yarn|pytest|uv run|pip|poetry|cargo|mvn|gradlew?|go (build|test|vet)|golangci-lint|ruff|prettier|eslint|tsc)([^a-z_-]|$)' "$SCRIPTS"/*.sh || true)"
