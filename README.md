@@ -2,7 +2,7 @@
 
 Plugin pessoal do Claude Code com o núcleo independente de stack: skills de fluxo, subagents e hooks. Cada projeto só declara os comandos do seu stack em `.claude/kit.json`; nada do núcleo muda entre .NET, Node, Python, Go ou outro.
 
-O desenho do kit (princípios, camadas, permissões, riscos, modo adotar e checks de domínio) está documentado fora deste repositório; este README cobre instalação, uso e o comportamento de cada peça.
+O desenho detalhado do kit está documentado fora deste repositório. [`docs/design.md`](docs/design.md) resume os princípios, as camadas e a versão mínima; este README cobre instalação, uso e o comportamento de cada peça.
 
 ## Estrutura
 
@@ -19,10 +19,12 @@ claude-kit/
 │   ├── scripts/{inventory.sh,merge-json.sh}   # apoio do /kit:init, não são hooks
 │   └── templates/{kit.example.json,project-settings.json,CLAUDE.project.md}
 ├── templates/user-settings.json        # camada 1, aplicada à mão em ~/.claude
+├── docs/design.md                      # princípios, camadas e versão mínima
 └── tests/
     ├── run-tests.sh                    # fixtures dos hooks + scripts de apoio + checagens estáticas
     ├── run-adopt-test.sh               # aceite ao vivo do modo adotar (usa claude -p)
-    ├── run-skills-live-test.sh         # aceite ao vivo do carregamento das skills (usa claude -p)
+    ├── run-skills-live-test.sh         # aceite ao vivo do carregamento das skills e do deny de skill/agent
+    ├── run-guards-live-test.sh         # aceite ao vivo do onFailure: guarda ausente bloqueia
     ├── fixtures/*.json
     ├── sample/                         # projeto mínimo com kit.json de comandos true/false
     └── adopt/repo/                     # repo com .claude/ próprio (guardado como _claude/, _CLAUDE.md, _mcp.json)
@@ -30,6 +32,17 @@ claude-kit/
 
 ## Requisitos
 
+- **Claude Code ≥ 2.1.295** (necessário para `onFailure: "block"` nos guardas). Em versões anteriores o campo é ignorado: se o script de um guarda faltar, falhar ou estourar o tempo, a ação passa. O `session-context` avisa no início da sessão quando `claude --version` é menor que 2.1.295. O `plugin.json` não tem campo de versão mínima do Claude Code, então a exigência fica só documentada aqui e no aviso.
+
+  | Recurso usado pelo kit | Desde | Efeito em versão anterior |
+  | --- | --- | --- |
+  | `onFailure: "block"` nos guardas | 2.1.295 | Guarda ausente ou quebrado deixa a ação passar |
+  | Skill `verify` do projeto rodada antes de cada commit | 2.1.286 | O commit não roda a receita do `/verify` sozinho |
+  | Auto mode como modo padrão | 2.1.283 (provedores terceiros ou sem telemetria); 2.1.284 (todos) | A sessão começa no modo default e pede mais confirmações |
+  | `/skill-doctor` | 2.1.261 | Não existe; a rotina de poda usa só o `/doctor` |
+  | `claude plugin validate` | 2.1.47 ou anterior (`/plugin validate` desde 2.0.12); 2.1.233 passou a checar `.claude/skills` | Sem validação de manifesto pela CLI |
+
+  Fonte: [changelog oficial](https://code.claude.com/docs/en/changelog) e [referência de hooks](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails).
 - `bash`, `jq` e `git` (no Windows, Git Bash + `jq` no PATH). Sem `jq`, os guardas (`guard-bash`, `guard-files`) bloqueiam toda chamada com "kit: jq não encontrado; instale o jq"; os hooks de qualidade (`format`, `verify-gate`, `session-context`) saem com 0 sem fazer nada.
 - **Windows nativo não tem sandbox.** O `templates/user-settings.json` usa `sandbox.failIfUnavailable: true`, e com isso o Claude Code se recusa a iniciar no Windows nativo. Escolha um dos dois:
   - usar o WSL2 (recomendado: mantém o sandbox); ou
@@ -182,7 +195,7 @@ Regras de escrita do init, inclusive em repo novo: mesclar JSON chave a chave, n
 
 Sem `jq`, os guardas bloqueiam e os demais hooks saem com 0 sem fazer nada.
 
-Os guardas devolvem `permissionDecision: "deny"` com o motivo; Claude recebe o motivo e ajusta. `onFailure: "block"` nos guardas só tem efeito no Claude Code v2.1.295+; em versões anteriores o campo é ignorado e os guardas continuam funcionando.
+Os guardas devolvem `permissionDecision: "deny"` com o motivo; Claude recebe o motivo e ajusta. Com `onFailure: "block"` (Claude Code 2.1.295+), um guarda que não consegue rodar também bloqueia: script ausente, saída com código diferente de 0 e 2, timeout ou JSON inválido. No `Stop` o campo não tem efeito, segundo a doc oficial.
 
 ## Testes
 
@@ -197,9 +210,12 @@ Cada caso monta um workspace novo a partir de `tests/sample/` (repo git com `kit
 ```bash
 bash tests/run-adopt-test.sh [--keep]   # aceite ao vivo do modo adotar
 bash tests/run-skills-live-test.sh      # skills carregam sem commits e fora de repo git; deny de skill/agent do kit
+bash tests/run-guards-live-test.sh      # guarda ausente bloqueia (onFailure), com controle e contraprova
 ```
 
 Copia `tests/adopt/repo/` (que tem hooks, skills, agent, rule, CLAUDE.md e MCP próprios) para uma pasta temporária, roda `/kit:init` com respostas pré-aprovadas via `claude -p --plugin-dir` e confere: nenhum arquivo removido, nenhum commit criado, JSON existentes só com adições (`merge-json.sh --check`), demais arquivos sem linhas removidas, `docs/claude-adoption.md` cobrindo todas as peças e recomendando `Skill(kit:fix)` em deny (com o motivo), aviso mudo e falha aberta marcados, `kit.json` com `key_parity`, `coupled_changes` e a lista de bloqueio convertida em `protected_paths` com mensagem, plugin habilitado e hook original ainda registrado. Leva alguns minutos e consome uma sessão do Claude Code. Roda com `--setting-sources project,local` para não disparar hooks pessoais do `~/.claude`.
+
+O `run-guards-live-test.sh` exige Claude Code ≥ 2.1.295. Ele apaga o script de um guarda numa cópia do plugin e confere no disco que o comando (Bash) ou a escrita (Write) que criaria um arquivo-sonda não aconteceu. O controle, com o script presente, cria a sonda. A contraprova, com o script ausente e sem `onFailure`, também cria, o que mostra que o bloqueio vem do campo.
 
 A fixture guarda a configuração como `_claude/`, `_CLAUDE.md` e `_mcp.json` para o próprio Claude Code não carregar as skills e o CLAUDE.md de teste quando você trabalha no repo do kit.
 

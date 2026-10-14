@@ -31,9 +31,34 @@ if [ "${1:-}" = "--plan-only" ]; then
   exit 0
 fi
 
-[ "${#REPOS[@]}" -gt 0 ] || exit 0
+# Versao minima para onFailure: "block" nos guardas. Sem o comando ou sem versao legivel: nao avisa.
+KIT_MIN_CLAUDE="2.1.295"
+version_lt() {
+  local IFS=.
+  local -a a=($1) b=($2)
+  local i
+  for i in 0 1 2; do
+    [ "${a[$i]:-0}" -lt "${b[$i]:-0}" ] && return 0
+    [ "${a[$i]:-0}" -gt "${b[$i]:-0}" ] && return 1
+  done
+  return 1
+}
+VERSION_NOTE=""
+if command -v claude >/dev/null 2>&1; then
+  if command -v timeout >/dev/null 2>&1; then CV="$(timeout 5 claude --version 2>/dev/null)"; else CV="$(claude --version 2>/dev/null)"; fi
+  CV="$(printf '%s' "$CV" | tr -d '\r' | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"
+  if [ -n "$CV" ] && version_lt "$CV" "$KIT_MIN_CLAUDE"; then
+    VERSION_NOTE="kit: Claude Code < $KIT_MIN_CLAUDE, guardas sem onFailure:block — rode claude update (versão atual: $CV)"
+  fi
+fi
+
+if [ "${#REPOS[@]}" -eq 0 ]; then
+  [ -n "$VERSION_NOTE" ] && echo "$VERSION_NOTE"
+  exit 0
+fi
 
 echo "## Contexto do kit"
+[ -n "$VERSION_NOTE" ] && echo "$VERSION_NOTE"
 if [ "${#REPOS[@]}" -eq 1 ]; then
   BRANCH="$(git -C "${REPOS[0]}" branch --show-current 2>/dev/null | tr -d '\r')"
   echo "Branch: ${BRANCH:-(detached)}"

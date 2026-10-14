@@ -29,6 +29,43 @@ native_join() {
 
 git_q() { git -c user.name=kit-test -c user.email=kit@test -c init.defaultBranch=main -c core.autocrlf=false "$@" >/dev/null 2>&1; }
 
+# PATH sem nenhum diretorio que tenha o comando $1. Se ele estiver junto das ferramentas basicas
+# (ex.: /usr/bin no Linux), o diretorio e trocado por um espelho com links para tudo menos ele.
+path_without() {
+  local IFS=: dir out="" shim f name="$1"
+  for dir in $PATH; do
+    [ -n "$dir" ] || continue
+    if [ -e "$dir/$name" ] || [ -e "$dir/$name.exe" ] || [ -e "$dir/$name.cmd" ]; then
+      if [ -e "$dir/bash" ] || [ -e "$dir/bash.exe" ] || [ -e "$dir/dirname" ] || [ -e "$dir/dirname.exe" ]; then
+        shim="$(mktemp -d "$TMP_ALL/sem-$name.XXXXXX")"
+        for f in "$dir"/*; do
+          case "${f##*/}" in "$name" | "$name.exe" | "$name.cmd" | "$name.ps1") continue ;; esac
+          ln -s "$f" "$shim/${f##*/}" 2>/dev/null
+        done
+        out="${out:+$out:}$shim"
+      fi
+      continue
+    fi
+    out="${out:+$out:}$dir"
+  done
+  printf '%s' "$out"
+}
+
+# PATH dos scripts em cada caso: um "claude" falso responde a versao pedida em fake_claude
+# (padrao 9.9.9). fake_claude "ilegivel" responde sem versao; "ausente" tira o claude do PATH.
+NOCLAUDE_PATH="$(path_without claude)"
+case_path() {
+  local ws="$1" fake="$2"
+  mkdir -p "$ws/bin"
+  case "$fake" in
+    ausente) printf '%s' "$NOCLAUDE_PATH"; return 0 ;;
+    ilegivel) printf '#!/usr/bin/env bash\necho "versao desconhecida"\n' >"$ws/bin/claude" ;;
+    *) printf '#!/usr/bin/env bash\necho "%s (Claude Code)"\n' "${fake:-9.9.9}" >"$ws/bin/claude" ;;
+  esac
+  chmod +x "$ws/bin/claude"
+  printf '%s' "$ws/bin:$NOCLAUDE_PATH"
+}
+
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); FAILED+=("$1: $2"); printf '  FALHA %s -- %s\n' "$1" "$2"; }
 
@@ -168,10 +205,12 @@ run_case() {
 
   out="$ws/stdout"
   err="$ws/stderr"
-  (cd "$ws" && TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR bash "$SCRIPTS/$script" "${args[@]}" <<<"$input" >"$out" 2>"$err")
+  local cpath
+  cpath="$(case_path "$ws" "$(jq -r '.fake_claude // empty' <<<"$case_json" | tr -d '\r')")"
+  (cd "$ws" && PATH="$cpath" TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR bash "$SCRIPTS/$script" "${args[@]}" <<<"$input" >"$out" 2>"$err")
   code=$?
   if [ "$(jq -r '.repeat_empty // false' <<<"$case_json")" = "true" ]; then
-    (cd "$ws" && TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR bash "$SCRIPTS/$script" "${args[@]}" <<<"$input" >"$ws/stdout2" 2>/dev/null)
+    (cd "$ws" && PATH="$cpath" TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR bash "$SCRIPTS/$script" "${args[@]}" <<<"$input" >"$ws/stdout2" 2>/dev/null)
   fi
 
   local expect exp_exit why=""
@@ -261,31 +300,9 @@ for fx in "$HERE"/fixtures/*.json; do
   done < <(jq -c '(.defaults // {}) as $d | .cases[] | $d * .' "$fx" | tr -d '\r')
 done
 
-# PATH sem nenhum diretorio que tenha jq. Se o jq estiver junto das ferramentas basicas
-# (ex.: /usr/bin no Linux), o diretorio e trocado por um espelho com links para tudo menos o jq.
-path_without_jq() {
-  local IFS=: dir out="" shim f
-  for dir in $PATH; do
-    [ -n "$dir" ] || continue
-    if [ -e "$dir/jq" ] || [ -e "$dir/jq.exe" ]; then
-      if [ -e "$dir/bash" ] || [ -e "$dir/bash.exe" ] || [ -e "$dir/dirname" ] || [ -e "$dir/dirname.exe" ]; then
-        shim="$(mktemp -d "$TMP_ALL/nojq.XXXXXX")"
-        for f in "$dir"/*; do
-          case "${f##*/}" in jq | jq.exe) continue ;; esac
-          ln -s "$f" "$shim/${f##*/}" 2>/dev/null
-        done
-        out="${out:+$out:}$shim"
-      fi
-      continue
-    fi
-    out="${out:+$out:}$dir"
-  done
-  printf '%s' "$out"
-}
-
 echo "sem jq no PATH"
 if [ -z "$FILTER" ] || [[ "sem jq" == *"$FILTER"* ]]; then
-  NOJQ_PATH="$(path_without_jq)"
+  NOJQ_PATH="$(path_without jq)"
   BASH_BIN="$(command -v bash)"
   if PATH="$NOJQ_PATH" command -v jq >/dev/null 2>&1; then
     ko "PATH de teste sem jq" "jq ainda encontrado em $(PATH="$NOJQ_PATH" command -v jq)"
