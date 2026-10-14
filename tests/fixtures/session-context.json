@@ -1,0 +1,9 @@
+{
+  "script": "session-context.sh",
+  "cases": [
+    { "name": "mostra branch, alterados e tarefas pendentes", "change": "src/App.cs",
+      "plan": "# Plano\n- [x] 1. feito\n- [ ] 2. tarefa pendente\n", "exit": 0,
+      "stdout": ["Branch: main", "src/App.cs", "- [ ] 2. tarefa pendente"], "stdout_not": ["1. feito"] },
+    { "name": "sem git sai 0 sem saida", "cwd": "__NOGIT__", "exit": 0, "stdout_empty": true }
+  ]
+}

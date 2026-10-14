@@ -1,0 +1,88 @@
+{
+  "script": "verify-gate.sh",
+  "defaults": {
+    "kit": {
+      "coupled_changes": [
+        {
+          "when": ["src/views/**", "src/widgets/**"],
+          "require": ["manual/**"],
+          "message": "Telas mudaram; atualize o manual para refletir as telas atuais."
+        }
+      ],
+      "key_parity": [
+        {
+          "files": ["strings/pt.json", "strings/en.json", "strings/es.json"],
+          "message": "Textos precisam existir nas 3 línguas."
+        }
+      ]
+    },
+    "files": {
+      "src/views/home.ts": "export const home = 1;\n",
+      "manual/intro.md": "# Manual\n",
+      "strings/pt.json": { "home": { "title": "Início" } },
+      "strings/en.json": { "home": { "title": "Home" } },
+      "strings/es.json": { "home": { "title": "Inicio" } }
+    }
+  },
+  "cases": [
+    { "name": "coupled: tela alterada sem manual sai 2", "change": "src/views/home.ts",
+      "exit": 2, "stderr": ["[coupled_changes] Telas mudaram; atualize o manual", "disparado por: src/views/home.ts", "manual/**", ".claude/kit-skip"] },
+    { "name": "coupled: componente novo sem manual sai 2", "edit": { "src/widgets/button.ts": "export const b = 1;\n" },
+      "exit": 2, "stderr": "disparado por: src/widgets/button.ts" },
+    { "name": "coupled: tela com manual alterado junto sai 0", "change": ["src/views/home.ts", "manual/intro.md"], "exit": 0 },
+    { "name": "coupled: manual novo nao rastreado satisfaz", "change": "src/views/home.ts",
+      "edit": { "manual/telas/home.md": "# Home\n" }, "exit": 0 },
+    { "name": "coupled: kit-skip libera, e apagado e registrado em kit-skip.log", "change": "src/views/home.ts",
+      "edit": { ".claude/kit-skip": "refactor interno sem mudança visível\n" }, "exit": 0,
+      "after": { "absent": [".claude/kit-skip"],
+        "contains": { ".claude/kit-skip.log": "refactor interno sem mudança visível — liberado: Telas mudaram" } } },
+    { "name": "coupled: kit-skip registrado em docs/claude-adoption.md quando existe", "change": "src/views/home.ts",
+      "files": { "docs/claude-adoption.md": "# Adoção do kit\n" },
+      "edit": { ".claude/kit-skip": "só renomeei uma variável\n" }, "exit": 0,
+      "after": { "absent": [".claude/kit-skip", ".claude/kit-skip.log"],
+        "contains": { "docs/claude-adoption.md": "só renomeei uma variável" } } },
+    { "name": "coupled: kit-skip vazio nao libera", "change": "src/views/home.ts",
+      "edit": { ".claude/kit-skip": "\n" }, "exit": 2, "stderr": "kit-skip está vazio",
+      "after": { "exists": [".claude/kit-skip"] } },
+    { "name": "coupled: kit-skip mantido quando outra checagem falha", "change": ["src/views/home.ts", "src/App.cs"],
+      "kit": { "commands": { "test_related": "echo 1 teste falhou; false" } },
+      "edit": { ".claude/kit-skip": "refactor interno\n" }, "exit": 2,
+      "stderr": "1 teste falhou", "stderr_not": "Telas mudaram",
+      "after": { "exists": [".claude/kit-skip"], "absent": [".claude/kit-skip.log"] } },
+    { "name": "key_parity: chave nova so em pt.json sai 2 listando en.json e es.json",
+      "edit": { "strings/pt.json": { "home": { "title": "Início", "welcome": "Bem-vindo" } } },
+      "exit": 2, "stderr": ["[key_parity] Textos precisam existir nas 3 línguas.", "home.welcome falta em en.json, es.json"] },
+    { "name": "key_parity: chave so em en.json lista pt.json e es.json",
+      "edit": { "strings/en.json": { "home": { "title": "Home" }, "menu": { "exit": "Exit" } } },
+      "exit": 2, "stderr": "menu.exit falta em pt.json, es.json" },
+    { "name": "key_parity: chaves iguais sai 0",
+      "edit": {
+        "strings/pt.json": { "home": { "title": "Início", "welcome": "Bem-vindo" } },
+        "strings/en.json": { "home": { "title": "Home", "welcome": "Welcome" } },
+        "strings/es.json": { "home": { "title": "Inicio", "welcome": "Bienvenido" } }
+      }, "exit": 0 },
+    { "name": "key_parity: nenhum i18n alterado, nao roda", "change": "README.md",
+      "files": { "strings/pt.json": { "home": { "title": "Início", "sobra": "x" } } }, "exit": 0 },
+    { "name": "key_parity: arquivo listado ausente e falha",
+      "files": { "strings/es.json": null },
+      "edit": { "strings/pt.json": { "home": { "title": "Início!" } } },
+      "exit": 2, "stderr": "strings/es.json não existe" },
+    { "name": "key_parity: JSON invalido e falha",
+      "edit": { "strings/en.json": "{ invalido" },
+      "exit": 2, "stderr": "strings/en.json não é JSON válido" },
+    { "name": "key_parity: nomes repetidos usam o caminho como rotulo",
+      "kit": { "key_parity": [ { "files": ["locales/pt/common.json", "locales/en/common.json"], "message": "Paridade de locales." } ] },
+      "files": { "locales/pt/common.json": { "a": 1 }, "locales/en/common.json": { "a": 1 } },
+      "edit": { "locales/pt/common.json": { "a": 1, "b": { "c": 2 } } },
+      "exit": 2, "stderr": "b.c falta em locales/en/common.json" },
+    { "name": "teste, paridade e acoplamento no mesmo turno saem numa unica mensagem, em ordem",
+      "kit": { "commands": { "test_related": "echo 1 teste falhou; false" } },
+      "change": ["src/App.cs", "src/views/home.ts"],
+      "edit": { "strings/pt.json": { "home": { "title": "Início", "welcome": "Bem-vindo" } } },
+      "exit": 2, "stderr": "3 problema(s) neste turno",
+      "stderr_order": ["'test_related' falhou", "1 teste falhou", "[key_parity]", "home.welcome falta em en.json, es.json", "[coupled_changes]"] },
+    { "name": "checks de dominio rodam mesmo sem mudanca em source_globs",
+      "edit": { "strings/pt.json": { "home": { "title": "Início", "x": "y" } } },
+      "kit": { "commands": { "build": "false" } }, "exit": 2, "stderr": "home.x falta", "stderr_not": "'build' falhou" }
+  ]
+}

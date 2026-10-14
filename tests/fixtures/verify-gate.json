@@ -1,0 +1,29 @@
+{
+  "script": "verify-gate.sh",
+  "cases": [
+    { "name": "stop_hook_active true sai 0", "stop_hook_active": true, "change": "src/App.cs",
+      "kit": { "commands": { "build": "false" } }, "exit": 0 },
+    { "name": "sem kit.json sai 0", "cwd": "__NOKIT__", "exit": 0 },
+    { "name": "sem mudanca em source_globs sai 0", "change": "README.md",
+      "kit": { "commands": { "test_related": "false" } }, "exit": 0 },
+    { "name": "mudanca com verificacao verde sai 0", "change": "src/App.cs", "exit": 0 },
+    { "name": "teste falhando sai 2", "change": "src/App.cs",
+      "kit": { "commands": { "test_related": "echo 1 teste falhou; false" } }, "exit": 2, "stderr": "1 teste falhou" },
+    { "name": "build falhando bloqueia antes do teste", "change": "src/App.cs",
+      "kit": { "commands": { "build": "echo build quebrou; false" } }, "exit": 2, "stderr": "'build' falhou" },
+    { "name": "arquivo novo nao rastreado dispara o gate", "change": "src/Novo.cs",
+      "kit": { "commands": { "test_related": "false" } }, "exit": 2 },
+    { "name": "test_related recebe os arquivos alterados", "change": "src/App.cs",
+      "kit": { "commands": { "test_related": "for f in {files}; do test -f \"$f\" || exit 1; done; test {files} = src/App.cs" } }, "exit": 0 },
+    { "name": "chave ausente em commands e pulada", "change": "src/App.cs",
+      "kit": { "verify_on_stop": ["build", "nao_existe"] }, "exit": 0 },
+    { "name": "sem coupled_changes nem key_parity: tela e i18n alterados nao afetam o gate",
+      "files": { "src/views/home.ts": "x\n", "strings/pt.json": { "a": 1 }, "strings/en.json": { "a": 1 } },
+      "change": "src/views/home.ts", "edit": { "strings/pt.json": { "a": 1, "b": 2 } }, "exit": 0 },
+    { "name": "sem coupled_changes nem key_parity: falha de teste identica a versao anterior", "change": "src/App.cs",
+      "kit": { "commands": { "test_related": "echo 1 teste falhou; false" } }, "exit": 2,
+      "stderr": ["kit verify-gate: 1 problema(s) neste turno.", "'test_related' falhou", "1 teste falhou"], "stderr_not": ["[key_parity]", "[coupled_changes]"] },
+    { "name": "coupled_changes e key_parity vazios nao afetam o gate", "change": ["src/App.cs", "README.md"],
+      "kit": { "coupled_changes": [], "key_parity": [] }, "exit": 0 }
+  ]
+}

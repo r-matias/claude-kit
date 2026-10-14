@@ -1,0 +1,12 @@
+{
+  "script": "format.sh",
+  "cases": [
+    { "name": "formatter que casa e passa sai 0", "tool": "Edit", "file": "src/App.cs", "exit": 0 },
+    { "name": "arquivo sem glob de format sai 0", "tool": "Edit", "file": "README.md", "exit": 0 },
+    { "name": "formatter recebe o arquivo em {files}", "tool": "Edit", "file": "src/App.cs",
+      "kit": { "format": { "**/*.cs": "test -f {files}" } }, "exit": 0 },
+    { "name": "formatter que falha sai 2", "tool": "Edit", "file": "src/App.cs",
+      "kit": { "format": { "**/*.cs": "echo erro de formatacao; false" } }, "exit": 2, "stderr": "erro de formatacao" },
+    { "name": "sem kit.json sai 0", "tool": "Edit", "file": "__NOKIT__/notes.md", "exit": 0 }
+  ]
+}

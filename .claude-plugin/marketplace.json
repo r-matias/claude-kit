@@ -1,0 +1,14 @@
+{
+  "name": "claude-kit",
+  "owner": {
+    "name": "Rafael"
+  },
+  "description": "Kit pessoal portável multi-stack para Claude Code",
+  "plugins": [
+    {
+      "name": "kit",
+      "source": "./plugins/kit",
+      "description": "Fluxos, revisores e guardas independentes de stack"
+    }
+  ]
+}

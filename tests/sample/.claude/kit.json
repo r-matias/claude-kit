@@ -1,0 +1,13 @@
+{
+  "commands": {
+    "build": "true",
+    "test": "true",
+    "test_related": "true"
+  },
+  "format": {
+    "**/*.cs": "true {files}"
+  },
+  "protected_paths": ["**/Migrations/**"],
+  "verify_on_stop": ["build", "test_related"],
+  "source_globs": ["**/*.cs"]
+}

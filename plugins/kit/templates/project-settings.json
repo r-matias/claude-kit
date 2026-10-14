@@ -1,0 +1,11 @@
+{
+  "extraKnownMarketplaces": {
+    "claude-kit": { "source": { "source": "github", "repo": "<seu-usuario>/claude-kit" } }
+  },
+  "enabledPlugins": { "kit@claude-kit": true },
+  "permissions": {
+    "allow": ["Bash(dotnet build *)", "Bash(dotnet test *)", "Bash(dotnet format *)", "Bash(npm run *)"],
+    "ask": ["Bash(dotnet add package *)", "Bash(npm install *)", "Bash(dotnet ef database update *)"]
+  },
+  "sandbox": { "network": { "allowedDomains": ["api.nuget.org", "registry.npmjs.org"] } }
+}

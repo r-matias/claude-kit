@@ -1,0 +1,47 @@
+{
+  "commands": {
+    "build": "dotnet build --nologo -v q",
+    "test": "dotnet test --nologo",
+    "test_related": "dotnet test --nologo --filter {files}",
+    "lint": "npm run lint --prefix frontend",
+    "typecheck": "npx tsc --noEmit -p frontend"
+  },
+  "format": {
+    "**/*.cs": "dotnet format --include {files}",
+    "**/*.{ts,html,scss}": "npx prettier --write {files}"
+  },
+  "protected_paths": [
+    "**/Migrations/**",
+    "**/*.generated.*"
+  ],
+  "verify_on_stop": [
+    "build",
+    "test_related"
+  ],
+  "source_globs": [
+    "**/*.cs",
+    "**/*.ts"
+  ],
+  "coupled_changes": [
+    {
+      "when": [
+        "src/views/**",
+        "src/widgets/**"
+      ],
+      "require": [
+        "manual/**"
+      ],
+      "message": "Telas mudaram; atualize o manual para refletir as telas atuais."
+    }
+  ],
+  "key_parity": [
+    {
+      "files": [
+        "strings/pt.json",
+        "strings/en.json",
+        "strings/es.json"
+      ],
+      "message": "Textos precisam existir nas 3 línguas."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "adopt-sample",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "lint": "node --check src/views/home.js && node --check src/api/users.js"
+  }
+}

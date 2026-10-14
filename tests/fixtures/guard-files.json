@@ -1,0 +1,16 @@
+{
+  "script": "guard-files.sh",
+  "cases": [
+    { "name": "Edit em .env negado", "tool": "Edit", "file": ".env", "expect": "deny" },
+    { "name": "Write em .env.production negado", "tool": "Write", "file": "config/.env.production", "expect": "deny" },
+    { "name": "Edit em .env.example liberado", "tool": "Edit", "file": ".env.example", "expect": "allow" },
+    { "name": "Write em *.pem negado", "tool": "Write", "file": "certs/server.pem", "expect": "deny" },
+    { "name": "Write em *.key negado", "tool": "Write", "file": "server.key", "expect": "deny" },
+    { "name": "Edit em secrets/ negado", "tool": "Edit", "file": "deploy/secrets/db.yaml", "expect": "deny" },
+    { "name": "Edit em Migrations/x.cs negado por protected_paths", "tool": "Edit", "file": "Migrations/001_Init.cs", "expect": "deny" },
+    { "name": "Write sobre migration existente negado", "tool": "Write", "file": "Migrations/001_Init.cs", "expect": "deny" },
+    { "name": "Write de migration nova liberado", "tool": "Write", "file": "Migrations/002_AddUsers.cs", "expect": "allow" },
+    { "name": "Edit em codigo comum liberado", "tool": "Edit", "file": "src/App.cs", "expect": "allow" },
+    { "name": "Edit fora de projeto com kit liberado", "tool": "Edit", "file": "__NOKIT__/notes.md", "expect": "allow" }
+  ]
+}
