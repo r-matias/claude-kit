@@ -1,6 +1,6 @@
 {
   "extraKnownMarketplaces": {
-    "claude-kit": { "source": { "source": "github", "repo": "<seu-usuario>/claude-kit" } }
+    "claude-kit": { "source": { "source": "github", "repo": "r-matias/claude-kit" } }
   },
   "enabledPlugins": { "kit@claude-kit": true },
   "permissions": {

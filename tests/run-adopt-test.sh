@@ -35,7 +35,7 @@ git -C "$P" ls-files | tr -d '\r' >"$W/tracked-before"
 PROMPT='/kit:init Respostas pré-aprovadas (execução não interativa; não há como perguntar):
 - Classificação das peças: aceite os destinos que você propuser.
 - Gravação: sim, grave todas as adições propostas (.claude/kit.json, merge do .claude/settings.json, seções novas do CLAUDE.md e docs/claude-adoption.md).
-- Marketplace do kit: rafael/claude-kit.
+- Marketplace do kit: r-matias/claude-kit.
 - i18n: sim; strings/pt.json, en.json e es.json precisam ter as mesmas chaves.
 - Arquivos acoplados: sim; mudanças em src/views/** exigem atualização em manual/**.
 - Monorepo: não.'

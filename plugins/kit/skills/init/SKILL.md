@@ -38,7 +38,7 @@ allowed-tools: Bash(git rev-parse *) Bash(git ls-files *) Read(${CLAUDE_PLUGIN_R
    - **arquivos acoplados**: pares que precisam mudar juntos (telas ↔ manual, schema ↔ migração, contrato de API ↔ cliente gerado, código ↔ doc de referência). Se houver, proponha `coupled_changes` com `when`, `require` e `message` dizendo o que atualizar.
    - Sem resposta ou "não": não inclua as chaves.
 5. **Propor `.claude/settings.json`** a partir de `templates/project-settings.json`:
-   - `extraKnownMarketplaces` e `enabledPlugins` para `kit@claude-kit`. Pergunte o `<usuario>/claude-kit` do GitHub se não souber.
+   - `extraKnownMarketplaces` e `enabledPlugins` para `kit@claude-kit`. O marketplace é o repositório GitHub `r-matias/claude-kit`.
    - `permissions.allow`: um `Bash(<prefixo> *)` por comando do `kit.json`.
    - `permissions.ask`: instalação de dependência e migração de banco do stack.
    - `sandbox.network.allowedDomains`: registry do stack (ver [stacks.md](stacks.md)).

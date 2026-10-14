@@ -2,7 +2,7 @@
 
 Plugin pessoal do Claude Code com o núcleo independente de stack: skills de fluxo, subagents e hooks. Cada projeto só declara os comandos do seu stack em `.claude/kit.json`; nada do núcleo muda entre .NET, Node, Python, Go ou outro.
 
-O desenho completo (princípios, camadas, permissões, riscos, modo adotar e checks de domínio) vem dos documentos de especificação do kit (guia e Aditivo 01), mantidos fora deste repositório.
+O desenho do kit (princípios, camadas, permissões, riscos, modo adotar e checks de domínio) está documentado fora deste repositório; este README cobre instalação, uso e o comportamento de cada peça.
 
 ## Estrutura
 
@@ -22,6 +22,7 @@ claude-kit/
 └── tests/
     ├── run-tests.sh                    # fixtures dos hooks + scripts de apoio + checagens estáticas
     ├── run-adopt-test.sh               # aceite ao vivo do modo adotar (usa claude -p)
+    ├── run-skills-live-test.sh         # aceite ao vivo do carregamento das skills (usa claude -p)
     ├── fixtures/*.json
     ├── sample/                         # projeto mínimo com kit.json de comandos true/false
     └── adopt/repo/                     # repo com .claude/ próprio (guardado como _claude/, _CLAUDE.md, _mcp.json)
@@ -38,19 +39,15 @@ claude-kit/
 
 O plugin é instalado uma vez por máquina; em cada repositório ele só é ligado por uma linha versionada no `.claude/settings.json`, e o único arquivo de stack é o `kit.json`.
 
-**Uma vez só**
-
-1. Criar o repositório privado `claude-kit` no GitHub com este conteúdo.
-
 **Uma vez por máquina**
 
-2. `/plugin marketplace add <seu-usuario>/claude-kit` e `/plugin install kit@claude-kit` (repositório privado: o `git` da máquina precisa ter acesso ao GitHub).
-3. Copiar `templates/user-settings.json` para `~/.claude/settings.json` (mesclando com o que já existir).
+1. `/plugin marketplace add r-matias/claude-kit` e `/plugin install kit@claude-kit`.
+2. Copiar `templates/user-settings.json` para `~/.claude/settings.json` (mesclando com o que já existir).
 
 **Em cada repositório novo**
 
-4. Abrir o Claude Code no repo e rodar `/kit:init`. Ele detecta o stack e propõe `kit.json`, `.claude/settings.json` (liga o plugin, allow-list, domínios) e um CLAUDE.md curto. Se o repo já tem `.claude/`, `CLAUDE.md` ou `.mcp.json`, entra no [modo adotar](#modo-adotar).
-5. Revisar, ajustar e commitar. Quem clonar o repo, ou você em outra máquina, recebe a indicação do marketplace e do plugin pelo settings versionado.
+3. Abrir o Claude Code no repo e rodar `/kit:init`. Ele detecta o stack e propõe `kit.json`, `.claude/settings.json` (liga o plugin, allow-list, domínios) e um CLAUDE.md curto. Se o repo já tem `.claude/`, `CLAUDE.md` ou `.mcp.json`, entra no [modo adotar](#modo-adotar).
+4. Revisar, ajustar e commitar. Quem clonar o repo, ou você em outra máquina, recebe a indicação do marketplace e do plugin pelo settings versionado.
 
 **No dia a dia**
 
