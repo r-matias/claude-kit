@@ -1,5 +1,7 @@
 # claude-kit
 
+[![testes](https://github.com/r-matias/claude-kit/actions/workflows/tests.yml/badge.svg)](https://github.com/r-matias/claude-kit/actions/workflows/tests.yml)
+
 Plugin do Claude Code que serve para qualquer stack (.NET, Node, Python, Go ou outro). Traz comandos de fluxo (spec, plano, execução, correção de bug), revisores independentes e guardas automáticos.
 Cada projeto só declara os comandos do seu stack em `.claude/kit.json`; o resto é igual em todos.
 

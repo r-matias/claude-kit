@@ -1,0 +1,27 @@
+name: testes
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  suite:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ferramentas
+        run: |
+          jq --version
+          git --version
+          bash --version | head -n 1
+      - name: Suite inteira
+        run: bash tests/run-tests.sh

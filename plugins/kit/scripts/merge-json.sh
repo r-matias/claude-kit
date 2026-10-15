@@ -174,7 +174,7 @@ fi
 # Fora de --prefer, o resultado so pode acrescentar.
 jq --argjson pf "$PREFER" 'reduce $pf[] as $p (.; delpaths([$p]))' "$EXIST" | tr -d '\r' >"$TMPM.a"
 jq --argjson pf "$PREFER" 'reduce $pf[] as $p (.; delpaths([$p]))' "$TMPM" | tr -d '\r' >"$TMPM.b"
-if ! bash "$(dirname "${BASH_SOURCE[0]}")/merge-json.sh" --check "$TMPM.a" "$TMPM.b"; then
+if ! "${BASH:-bash}" "$(dirname "${BASH_SOURCE[0]}")/merge-json.sh" --check "$TMPM.a" "$TMPM.b"; then
   echo "merge-json: o resultado perderia algo de $EXIST; nada foi gravado" >&2
   exit 1
 fi

@@ -134,8 +134,8 @@ cmd_status() {
     missing=1
   else
     # Falta o que o merge aditivo acrescentaria; deny que sombrearia allow/ask do usuario nao conta.
-    bash "$HERE/merge-json.sh" "$SETTINGS" "$tmp" >"$tmp.m" 2>/dev/null
-    lost="$(bash "$HERE/merge-json.sh" --check "$tmp.m" "$SETTINGS" 2>&1 >/dev/null | grep -E ': removido$|item removido' || true)"
+    "${BASH:-bash}" "$HERE/merge-json.sh" "$SETTINGS" "$tmp" >"$tmp.m" 2>/dev/null
+    lost="$("${BASH:-bash}" "$HERE/merge-json.sh" --check "$tmp.m" "$SETTINGS" 2>&1 >/dev/null | grep -E ': removido$|item removido' || true)"
     rm -f "$tmp.m"
     n="$(printf '%s' "$lost" | grep -c . || true)"
     if [ "$n" -eq 0 ]; then
@@ -173,7 +173,7 @@ cmd_propose() {
   template_for_platform "$tmp"
   jq --arg k "$PLUGIN_KEY" --argjson e "$enabled" '.enabledPlugins[$k] = $e' "$tmp" | tr -d '\r' >"$PROPOSAL"
   rm -f "$tmp"
-  bash "$HERE/merge-json.sh" --preview --prefer "$PLUGIN_PATH" "$SETTINGS" "$PROPOSAL"
+  "${BASH:-bash}" "$HERE/merge-json.sh" --preview --prefer "$PLUGIN_PATH" "$SETTINGS" "$PROPOSAL"
   echo "proposta: $PROPOSAL"
   return 0
 }
@@ -182,7 +182,7 @@ cmd_apply() {
   local code
   [ -f "$PROPOSAL" ] || { echo "setup: sem proposta; rode setup.sh propose" >&2; return 2; }
   jq empty "$PROPOSAL" >/dev/null 2>&1 || { echo "setup: proposta inválida" >&2; return 2; }
-  bash "$HERE/merge-json.sh" --apply --prefer "$PLUGIN_PATH" "$SETTINGS" "$PROPOSAL"
+  "${BASH:-bash}" "$HERE/merge-json.sh" --apply --prefer "$PLUGIN_PATH" "$SETTINGS" "$PROPOSAL"
   code=$?
   [ "$code" -eq 0 ] && rm -f "$PROPOSAL"
   return "$code"

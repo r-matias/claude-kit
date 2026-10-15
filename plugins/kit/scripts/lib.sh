@@ -406,7 +406,7 @@ kit_subst_files() {
 
 # Executa um comando do manifesto na raiz do kit. Saida combinada vai para o arquivo $2.
 kit_run() {
-  (cd "$KIT_ROOT" && bash -c "$1") >"$2" 2>&1
+  (cd "$KIT_ROOT" && "${BASH:-bash}" -c "$1") >"$2" 2>&1
 }
 
 kit_deny_pretool() {

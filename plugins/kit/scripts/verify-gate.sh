@@ -11,6 +11,15 @@ kit_read_input
 command -v git >/dev/null 2>&1 || exit 0
 
 CWD="$(kit_cwd)"
+# cwd na forma que o git devolve (nome longo no lugar do 8.3 do Windows, symlink resolvido): as
+# raizes comparadas com ele vem do git. Fora de repositorio, fica como veio.
+if top_pfx="$(git -C "$CWD" rev-parse --show-toplevel --show-prefix 2>/dev/null | tr -d '\r')" && [ -n "$top_pfx" ]; then
+  top="${top_pfx%%$'\n'*}"
+  pfx="${top_pfx#*$'\n'}"
+  [ "$pfx" = "$top_pfx" ] && pfx=""
+  pfx="${pfx%/}"
+  CWD="$(kit_norm_path "$top")${pfx:+/$pfx}"
+fi
 KIT_CEILING="$CWD"
 SID="$(kit_field '.session_id')"
 

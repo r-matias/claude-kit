@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Passa as fixtures de tests/fixtures pelos scripts do kit e confere decisao, exit code e saidas.
-# Uso: tests/run-tests.sh [--awk <mawk|gawk|busybox>] [--bash <caminho>] [filtro]
+# Uso: tests/run-tests.sh [--awk <mawk|gawk|busybox>] [--bash <caminho>] [--jobs N] [--changed] [filtro]
 # --awk roda tudo com aquele awk no lugar do padrao (ex.: mawk, o awk do Debian/Ubuntu).
 # --bash roda os scripts com outro bash (ex.: /bin/bash 3.2 do macOS). Se o awk ou o bash pedido
 # nao existir, a execucao e pulada com aviso. O filtro casa o nome do caso ou do script.
+# --jobs N roda os grupos em paralelo (padrao: numero de CPUs, no maximo 8); --jobs 1 e serial.
+# --changed roda so os grupos afetados pelos arquivos alterados desde HEAD, mais as estaticas.
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,14 +13,23 @@ REPO="$(cd "$HERE/.." && pwd)"
 SCRIPTS="$REPO/plugins/kit/scripts"
 AWK_IMPL=""
 BASH_IMPL=""
+JOBS=""
+CHANGED=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --awk) AWK_IMPL="${2:-}"; [ -n "$AWK_IMPL" ] || { echo "uso: --awk <mawk|gawk|busybox>" >&2; exit 2; }; shift 2 ;;
     --bash) BASH_IMPL="${2:-}"; [ -n "$BASH_IMPL" ] || { echo "uso: --bash <caminho>" >&2; exit 2; }; shift 2 ;;
+    --jobs) JOBS="${2:-}"; case "$JOBS" in '' | *[!0-9]* | 0) echo "uso: --jobs N (N >= 1)" >&2; exit 2 ;; esac; shift 2 ;;
+    --changed) CHANGED=1; shift ;;
     *) break ;;
   esac
 done
 FILTER="${1:-}"
+if [ -z "$JOBS" ]; then
+  JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 1)"
+  case "$JOBS" in '' | *[!0-9]* | 0) JOBS=1 ;; esac
+  [ "$JOBS" -le 8 ] || JOBS=8
+fi
 
 command -v jq >/dev/null 2>&1 || { echo "jq nao encontrado" >&2; exit 1; }
 command -v git >/dev/null 2>&1 || { echo "git nao encontrado" >&2; exit 1; }
@@ -28,6 +39,26 @@ FAIL=0
 FAILED=()
 TMP_ALL="$(mktemp -d)"
 trap 'rm -rf "$TMP_ALL"' EXIT
+
+# Git dos repositorios de teste sem a config do sistema (credential helper, fsmonitor e autocrlf do
+# Git for Windows) nem a do usuario: cada processo git fica mais barato e o resultado nao depende da maquina.
+mkdir -p "$TMP_ALL/git-template"
+cat >"$TMP_ALL/gitconfig" <<EOF
+[user]
+	name = kit-test
+	email = kit@test
+[init]
+	defaultBranch = main
+	templateDir = $TMP_ALL/git-template
+[core]
+	autocrlf = false
+	fsmonitor = false
+	fscache = true
+[gc]
+	auto = 0
+EOF
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_CONFIG_GLOBAL="$TMP_ALL/gitconfig"
 
 # Troca um comando do PATH por outro executavel: shim_cmd <nome> <executavel> [argumento fixo]
 shim_cmd() {
@@ -47,6 +78,10 @@ if [ -n "$BASH_IMPL" ]; then
   shim_cmd bash "$BASH_IMPL"
   echo "bash: $("$BASH_IMPL" -c 'echo $BASH_VERSION') ($BASH_IMPL)"
 fi
+# Bash que roda os scripts, resolvido uma vez (o shim do --bash, se houver): nunca o primeiro do PATH
+# de cada caso, que no Windows pode ser o bash.exe do WSL em System32.
+TBASH="$BASH"
+[ -z "$BASH_IMPL" ] || TBASH="$TMP_ALL/shim-bin/bash"
 
 # Caminho no formato que o Claude Code envia na plataforma atual.
 native_path() {
@@ -59,6 +94,18 @@ native_join() {
 }
 
 git_q() { git -c user.name=kit-test -c user.email=kit@test -c init.defaultBranch=main -c core.autocrlf=false "$@" >/dev/null 2>&1; }
+
+# Repositorios-modelo, criados uma vez: sample commitado e nokit (git sem kit.json). Cada caso copia.
+TPL_REPOS="$TMP_ALL/modelo"
+mkdir -p "$TPL_REPOS/nokit/src"
+cp -r "$HERE/sample" "$TPL_REPOS/sample"
+git_q init "$TPL_REPOS/sample"
+git_q -C "$TPL_REPOS/sample" add -A
+git_q -C "$TPL_REPOS/sample" commit -m init
+printf 'x\n' >"$TPL_REPOS/nokit/notes.md"
+git_q init "$TPL_REPOS/nokit"
+git_q -C "$TPL_REPOS/nokit" add -A
+git_q -C "$TPL_REPOS/nokit" commit -m init
 
 # PATH sem nenhum diretorio que tenha o comando $1. Se ele estiver junto das ferramentas basicas
 # (ex.: /usr/bin no Linux), o diretorio e trocado por um espelho com links para tudo menos ele.
@@ -106,95 +153,87 @@ esac
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); FAILED+=("$1: $2"); printf '  FALHA %s -- %s\n' "$1" "$2"; }
 
-# Monta um workspace novo: sample (git, commitado), nokit (git sem kit.json) e nogit.
-setup_ws() {
-  local case_json="$1" ws kit_patch change plan
-  ws="$(mktemp -d "$TMP_ALL/ws.XXXXXX")"
-  cp -r "$HERE/sample" "$ws/sample"
-  mkdir -p "$ws/nokit/src" "$ws/nogit"
-  printf 'x\n' >"$ws/nokit/notes.md"
+# Comandos de shell que gravam {caminho: valor} sob $root (string vira conteudo sem \r, objeto/array
+# vira JSON indentado, null apaga). Uma chamada de jq por mapa; eval do resultado.
+JQ_WRITE_MAP='def write_map($root):
+  to_entries
+  | ([.[] | select(.value != null) | .key | split("/") | .[:-1] | select(length > 0) | $root + "/" + join("/")] | unique) as $dirs
+  | (if ($dirs | length) > 0 then "mkdir -p " + ($dirs | map(@sh) | join(" ")) else empty end),
+    (.[] | ($root + "/" + .key | @sh) as $dest
+      | if .value == null then "rm -f " + $dest
+        elif (.value | type) == "string" then "printf %s " + (.value | gsub("\r"; "") | @sh) + " >" + $dest
+        else "jq . <<<" + (.value | tojson | @sh) + " | tr -d '"'"'\\r'"'"' >" + $dest end);'
 
-  kit_patch="$(jq -c '.kit // empty' <<<"$case_json")"
+# Monta um workspace novo em $WS: sample (git, commitado), nokit (git sem kit.json) e nogit. A base
+# do caso (sample ou mroot) fica em $CASE_BASE.
+setup_ws() {
+  local case_json="$1" ws kit_patch plan has_ws has_head0 n_extra files_cmds repos_cmds late_cmds
+  ws="$(mktemp -d "$TMP_ALL/ws.XXXXXX")"
+  cp -r "$TPL_REPOS/sample" "$ws/sample"
+  cp -r "$TPL_REPOS/nokit" "$ws/nokit"
+  mkdir -p "$ws/nogit"
+
+  eval "$(jq -r --arg ws "$ws" "$JQ_WRITE_MAP"'
+    (.workspace != null) as $mr
+    | (if $mr then $ws + "/mroot" else $ws + "/sample" end) as $base
+    | @sh "kit_patch=\(.kit // "" | if type == "string" then . else tojson end)",
+      @sh "plan=\(.plan // "")",
+      @sh "has_ws=\(if $mr then 1 else 0 end)",
+      @sh "has_head0=\(if tostring | contains("__HEAD0__") then 1 else 0 end)",
+      @sh "n_extra=\(.commits // 0)",
+      @sh "files_cmds=\(if $mr then "" else [(.files // {}) | write_map($ws + "/sample")] | join("\n") end)",
+      @sh "repos_cmds=\(if $mr then [(.workspace.repos // {}) | to_entries[] | .key as $r
+          | "mkdir -p " + ($ws + "/mroot/" + $r | @sh),
+            (.value | write_map($ws + "/mroot/" + $r)),
+            "git_q init " + ($ws + "/mroot/" + $r | @sh),
+            "git_q -C " + ($ws + "/mroot/" + $r | @sh) + " add -A",
+            "git_q -C " + ($ws + "/mroot/" + $r | @sh) + " commit -m init"]
+          + [(.files // {}) | write_map($ws + "/mroot")] | join("\n") else "" end)",
+      @sh "late_cmds=\([(.change // empty | if type == "array" then .[] else . end | ($base + "/" + .) as $p
+          | "mkdir -p \"$(dirname " + ($p | @sh) + ")\"; printf '"'"'// alterado\\n'"'"' >>" + ($p | @sh)),
+        ((.edit // {}) | write_map($base)),
+        ((.touch // {}) | to_entries[] | "touch -d \"@$(($(date +%s) - " + (.value | tostring) + " * 60))\" " + ($base + "/" + .key | @sh))]
+        | join("\n"))"
+  ' <<<"$case_json" | tr -d '\r')"
+
+  local dirty=0
   if [ -n "$kit_patch" ]; then
     jq --argjson p "$kit_patch" '. * $p' "$ws/sample/.claude/kit.json" >"$ws/kit.tmp" && mv "$ws/kit.tmp" "$ws/sample/.claude/kit.json"
+    dirty=1
   fi
-  plan="$(jq -r '.plan // empty' <<<"$case_json")"
   if [ -n "$plan" ]; then
     mkdir -p "$ws/sample/docs/specs/feat"
     printf '%b' "$plan" >"$ws/sample/docs/specs/feat/PLAN.md"
+    dirty=1
   fi
-  local base
-  base="$(case_base "$ws" "$case_json")"
-  [ "$base" = "$ws/sample" ] && write_map "$ws/sample" "$(jq -c '.files // {}' <<<"$case_json")"
-
-  git_q init "$ws/sample"
-  git_q -C "$ws/sample" add -A
-  git_q -C "$ws/sample" commit -m init
+  if [ -n "$files_cmds" ]; then eval "$files_cmds"; dirty=1; fi
+  # O commit do modelo e refeito com o conteudo do caso: continua um unico commit inicial.
+  if [ "$dirty" = "1" ]; then
+    git_q -C "$ws/sample" add -A
+    git_q -C "$ws/sample" commit --amend -m init
+  fi
   # __HEAD0__ nos arquivos vira o hash do commit inicial; commits: N cria N commits vazios depois dele.
-  local h0 n_extra i f0
-  h0="$(git -C "$ws/sample" rev-parse HEAD 2>/dev/null | tr -d '\r')"
-  while IFS= read -r f0; do [ -n "$f0" ] && sed -i "s/__HEAD0__/$h0/g" "$f0"; done < <(grep -rlF __HEAD0__ "$ws/sample" --exclude-dir=.git 2>/dev/null)
-  n_extra="$(jq -r '.commits // 0' <<<"$case_json" | tr -d '\r')"
+  if [ "$has_head0" = "1" ]; then
+    local h0 f0
+    h0="$(git -C "$ws/sample" rev-parse HEAD 2>/dev/null | tr -d '\r')"
+    while IFS= read -r f0; do [ -n "$f0" ] && sed -i "s/__HEAD0__/$h0/g" "$f0"; done < <(grep -rlF __HEAD0__ "$ws/sample" --exclude-dir=.git 2>/dev/null)
+  fi
+  local i
   for ((i = 1; i <= n_extra; i++)); do git_q -C "$ws/sample" commit --allow-empty -m "extra $i"; done
-  git_q init "$ws/nokit"
-  git_q -C "$ws/nokit" add -A
-  git_q -C "$ws/nokit" commit -m init
   printf 'class X {}\n' >"$ws/nokit/src/X.cs"
 
   # Pasta-mae sem git com repositorios filhos: workspace.repos = {nome: {caminho: conteudo}}.
-  if [ "$base" = "$ws/mroot" ]; then
+  if [ "$has_ws" = "1" ]; then
     mkdir -p "$ws/mroot"
-    local repo
-    while IFS= read -r repo; do
-      [ -n "$repo" ] || continue
-      mkdir -p "$ws/mroot/$repo"
-      write_map "$ws/mroot/$repo" "$(jq -c --arg r "$repo" '.workspace.repos[$r]' <<<"$case_json")"
-      git_q init "$ws/mroot/$repo"
-      git_q -C "$ws/mroot/$repo" add -A
-      git_q -C "$ws/mroot/$repo" commit -m init
-    done < <(jq -r '.workspace.repos // {} | keys_unsorted[]' <<<"$case_json" | tr -d '\r')
-    write_map "$ws/mroot" "$(jq -c '.files // {}' <<<"$case_json")"
+    eval "$repos_cmds"
+    CASE_BASE="$ws/mroot"
+  else
+    CASE_BASE="$ws/sample"
   fi
 
-  while IFS= read -r change; do
-    [ -n "$change" ] || continue
-    mkdir -p "$(dirname "$base/$change")"
-    printf '// alterado\n' >>"$base/$change"
-  done < <(jq -r '.change // empty | if type == "array" then .[] else . end' <<<"$case_json" | tr -d '\r')
-  write_map "$base" "$(jq -c '.edit // {}' <<<"$case_json")"
-
-  # touch: {caminho: minutos atras} para simular arquivos antigos.
-  local k mins
-  while IFS=$'\t' read -r k mins; do
-    [ -n "$k" ] || continue
-    touch -d "@$(($(date +%s) - mins * 60))" "$base/$k"
-  done < <(jq -r '(.touch // {}) | to_entries[] | "\(.key)\t\(.value)"' <<<"$case_json" | tr -d '\r')
-  printf '%s' "$ws"
-}
-
-case_base() {
-  if jq -e '.workspace' <<<"$2" >/dev/null 2>&1; then printf '%s' "$1/mroot"; else printf '%s' "$1/sample"; fi
-}
-
-# Grava {caminho: valor} sob a raiz dada: string vira conteudo, objeto/array vira JSON, null apaga.
-write_map() {
-  local root="$1" map="$2" k v t dest
-  while IFS= read -r k; do
-    [ -n "$k" ] || continue
-    v="$(jq -c --arg k "$k" '.[$k]' <<<"$map")"
-    t="$(jq -r 'type' <<<"$v" | tr -d '\r')"
-    dest="$root/$k"
-    case "$t" in
-      null) rm -f "$dest" ;;
-      string) mkdir -p "$(dirname "$dest")"; jq -j '.' <<<"$v" | tr -d '\r' >"$dest" ;;
-      *) mkdir -p "$(dirname "$dest")"; jq '.' <<<"$v" | tr -d '\r' >"$dest" ;;
-    esac
-  done < <(jq -r 'keys_unsorted[]' <<<"$map" | tr -d '\r')
-}
-
-# Lista de strings de um campo do caso (string unica ou array).
-case_list() {
-  jq -r --arg f "$1" '.[$f] // empty | if type == "array" then .[] else . end' <<<"$2" | tr -d '\r'
+  # change, edit e touch ({caminho: minutos atras}, para simular arquivos antigos).
+  [ -z "$late_cmds" ] || eval "$late_cmds"
+  WS="$ws"
 }
 
 resolve_token() {
@@ -207,73 +246,97 @@ resolve_token() {
 }
 
 run_case() {
-  local script="$1" case_json="$2" name ws base input out err code cwd file tool sid
-  name="$(jq -r '.name' <<<"$case_json")"
+  local script="$1" case_json="$2" ws base input out err code cwd file sid
+  local name skip c_cwd c_command c_tool has_raw c_raw c_file c_stop c_source c_args c_fake repeat expect exp_exit \
+    l_stderr l_stderr_not l_stderr_order l_absent l_exists l_contains l_stdout l_stdout_not stdout_empty has_out_expect reason json_check
+  # Uma chamada de jq le todos os campos do caso; listas viram linhas.
+  eval "$(jq -r --arg p "$TEST_PLATFORM" '
+    def lines(f): [f | if type == "array" then .[] else . end | tostring] | join("\n");
+    @sh "name=\(.name)",
+    @sh "skip=\(if has("platforms") and (.platforms | index($p)) == null then 1 else 0 end)",
+    @sh "c_cwd=\(.cwd // "")",
+    @sh "c_command=\(.command | tostring)",
+    @sh "c_tool=\(.tool | tostring)",
+    @sh "has_raw=\(has("raw_file"))",
+    @sh "c_raw=\(.raw_file | tostring)",
+    @sh "c_file=\(.file | tostring)",
+    @sh "c_stop=\(.stop_hook_active // false | tojson)",
+    @sh "c_source=\(.source // "startup")",
+    @sh "c_args=\(lines((.args // [])[]))",
+    @sh "c_fake=\(.fake_claude // "")",
+    @sh "repeat=\(.repeat_empty // false)",
+    @sh "expect=\(.expect // "")",
+    @sh "exp_exit=\(if has("exit") then .exit else 0 end)",
+    @sh "l_stderr=\(lines(.stderr // empty))",
+    @sh "l_stderr_not=\(lines(.stderr_not // empty))",
+    @sh "l_stderr_order=\(lines(.stderr_order // empty))",
+    @sh "l_absent=\(lines((.after.absent // [])[]))",
+    @sh "l_exists=\(lines((.after.exists // [])[]))",
+    @sh "l_contains=\([(.after.contains // {}) | to_entries[] | .key as $k | .value | if type == "array" then .[] else . end | $k + "\t" + tostring] | join("\n"))",
+    @sh "l_stdout=\(lines((.stdout // [])[]))",
+    @sh "l_stdout_not=\(lines((.stdout_not // [])[]))",
+    @sh "stdout_empty=\(.stdout_empty // false)",
+    @sh "has_out_expect=\(has("stdout") or has("json_check"))",
+    @sh "reason=\(.reason // "")",
+    @sh "json_check=\(.json_check // "")"
+  ' <<<"$case_json" | tr -d '\r')"
   # platforms: o caso so roda nas plataformas listadas (windows, macos, linux, wsl).
-  if jq -e 'has("platforms")' <<<"$case_json" >/dev/null 2>&1 &&
-    ! jq -e --arg p "$TEST_PLATFORM" '.platforms | index($p) != null' <<<"$case_json" >/dev/null 2>&1; then
-    return
-  fi
+  [ "$skip" = "0" ] || return
   if [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]] && [[ "$script" != *"$FILTER"* ]]; then return; fi
 
-  ws="$(setup_ws "$case_json")"
-  base="$(case_base "$ws" "$case_json")"
-  cwd="$(jq -r '.cwd // empty' <<<"$case_json")"
-  case "$cwd" in
+  setup_ws "$case_json"
+  ws="$WS"
+  base="$CASE_BASE"
+  case "$c_cwd" in
     __NOKIT__) cwd="$(native_path "$ws/nokit")" ;;
     __NOGIT__) cwd="$(native_path "$ws/nogit")" ;;
     "") cwd="$(native_path "$base")" ;;
-    *) cwd="$(native_join "$(native_path "$base")" "$cwd")" ;;
+    *) cwd="$(native_join "$(native_path "$base")" "$c_cwd")" ;;
   esac
   sid="teste-${ws##*.}"
   mkdir -p "$ws/tmp"
 
   case "$script" in
     guard-bash.sh)
-      local gcmd
-      gcmd="$(jq -r '.command' <<<"$case_json" | tr -d '\r')"
+      local gcmd="$c_command"
       gcmd="${gcmd//__PROJ__/$(native_path "$base")}"
       input="$(jq -cn --arg c "$gcmd" --arg d "$cwd" \
         '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: $c}, cwd: $d}')" ;;
     guard-files.sh | format.sh | advise.sh)
-      tool="$(jq -r '.tool' <<<"$case_json")"
       # raw_file vai como esta (relativo, com .., //); file e juntado ao caminho do projeto.
-      if jq -e 'has("raw_file")' <<<"$case_json" >/dev/null; then
-        file="$(jq -r '.raw_file' <<<"$case_json" | tr -d '\r')"
+      if [ "$has_raw" = "true" ]; then
+        file="$c_raw"
       else
-        file="$(resolve_token "$(jq -r '.file' <<<"$case_json")" "$ws" "$base")"
+        file="$(resolve_token "$c_file" "$ws" "$base")"
       fi
       local ev="PreToolUse" fkey="file_path"; [ "$script" != "guard-files.sh" ] && ev="PostToolUse"
-      [ "$tool" = "NotebookEdit" ] && fkey="notebook_path"
-      input="$(jq -cn --arg t "$tool" --arg f "$file" --arg d "$cwd" --arg e "$ev" --arg s "$sid" --arg k "$fkey" \
+      [ "$c_tool" = "NotebookEdit" ] && fkey="notebook_path"
+      input="$(jq -cn --arg t "$c_tool" --arg f "$file" --arg d "$cwd" --arg e "$ev" --arg s "$sid" --arg k "$fkey" \
         '{hook_event_name: $e, session_id: $s, tool_name: $t, tool_input: {($k): $f}, cwd: $d}')" ;;
     verify-gate.sh)
-      input="$(jq -cn --arg d "$cwd" --arg s "$sid" --argjson a "$(jq '.stop_hook_active // false' <<<"$case_json")" \
+      input="$(jq -cn --arg d "$cwd" --arg s "$sid" --argjson a "$c_stop" \
         '{hook_event_name: "Stop", session_id: $s, stop_hook_active: $a, cwd: $d}')" ;;
     session-context.sh)
-      input="$(jq -cn --arg d "$cwd" --arg s "$sid" --arg o "$(jq -r '.source // "startup"' <<<"$case_json")" \
+      input="$(jq -cn --arg d "$cwd" --arg s "$sid" --arg o "$c_source" \
         '{hook_event_name: "SessionStart", session_id: $s, source: $o, cwd: $d}')" ;;
     pre-compact.sh)
       input="$(jq -cn --arg d "$cwd" --arg s "$sid" '{hook_event_name: "PreCompact", session_id: $s, trigger: "auto", cwd: $d}')" ;;
   esac
 
   local -a args=()
-  while IFS= read -r s; do [ -n "$s" ] && args+=("$s"); done < <(jq -r '(.args // [])[]' <<<"$case_json" | tr -d '\r')
+  while IFS= read -r s; do [ -n "$s" ] && args+=("$s"); done <<<"$c_args"
 
   out="$ws/stdout"
   err="$ws/stderr"
   local cpath
-  cpath="$(case_path "$ws" "$(jq -r '.fake_claude // empty' <<<"$case_json" | tr -d '\r')")"
-  (cd "$ws" && PATH="$cpath" TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR bash "$SCRIPTS/$script" "${args[@]}" <<<"$input" >"$out" 2>"$err")
+  cpath="$(case_path "$ws" "$c_fake")"
+  (cd "$ws" && PATH="$cpath" TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR "$TBASH" "$SCRIPTS/$script" ${args[@]+"${args[@]}"} <<<"$input" >"$out" 2>"$err")
   code=$?
-  if [ "$(jq -r '.repeat_empty // false' <<<"$case_json")" = "true" ]; then
-    (cd "$ws" && PATH="$cpath" TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR bash "$SCRIPTS/$script" "${args[@]}" <<<"$input" >"$ws/stdout2" 2>/dev/null)
+  if [ "$repeat" = "true" ]; then
+    (cd "$ws" && PATH="$cpath" TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR "$TBASH" "$SCRIPTS/$script" ${args[@]+"${args[@]}"} <<<"$input" >"$ws/stdout2" 2>/dev/null)
   fi
 
-  local expect exp_exit why=""
-  expect="$(jq -r '.expect // empty' <<<"$case_json")"
-  exp_exit="$(jq -r 'if has("exit") then .exit else 0 end' <<<"$case_json")"
-
+  local why=""
   [ "$code" = "$exp_exit" ] || why="exit $code, esperado $exp_exit"
   case "$expect" in
     deny)
@@ -281,64 +344,56 @@ run_case() {
     allow)
       [ ! -s "$out" ] || why="${why:+$why; }esperava liberar, stdout='$(head -c 200 "$out")'" ;;
   esac
-  local s pos last=0
+  local s pos last=0 k want
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     grep -qF -- "$s" "$err" || why="${why:+$why; }stderr sem '$s'"
-  done < <(case_list stderr "$case_json")
+  done <<<"$l_stderr"
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     ! grep -qF -- "$s" "$err" || why="${why:+$why; }stderr contem '$s'"
-  done < <(case_list stderr_not "$case_json")
+  done <<<"$l_stderr_not"
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     pos="$(grep -nF -- "$s" "$err" | head -n 1 | cut -d: -f1)"
     if [ -z "$pos" ] || [ "$pos" -lt "$last" ]; then why="${why:+$why; }ordem do stderr: '$s' fora de ordem"; else last="$pos"; fi
-  done < <(case_list stderr_order "$case_json")
+  done <<<"$l_stderr_order"
   if [ "$script" = "verify-gate.sh" ] && [ "$code" = "2" ]; then
     [ "$(grep -c '^kit verify-gate:' "$err")" = "1" ] || why="${why:+$why; }esperava uma unica mensagem do gate"
   fi
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     [ ! -e "$base/$s" ] || why="${why:+$why; }deveria nao existir: $s"
-  done < <(jq -r '(.after.absent // [])[]' <<<"$case_json" | tr -d '\r')
+  done <<<"$l_absent"
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     [ -e "$base/$s" ] || why="${why:+$why; }deveria existir: $s"
-  done < <(jq -r '(.after.exists // [])[]' <<<"$case_json" | tr -d '\r')
-  while IFS= read -r s; do
-    [ -n "$s" ] || continue
-    local want
-    while IFS= read -r want; do
-      [ -n "$want" ] || continue
-      grep -qF -- "$want" "$base/$s" 2>/dev/null || why="${why:+$why; }$s sem '$want'"
-    done < <(jq -r --arg k "$s" '.after.contains[$k] | if type == "array" then .[] else . end' <<<"$case_json" | tr -d '\r')
-  done < <(jq -r '(.after.contains // {}) | keys_unsorted[]' <<<"$case_json" | tr -d '\r')
+  done <<<"$l_exists"
+  while IFS=$'\t' read -r k want; do
+    [ -n "$k" ] && [ -n "$want" ] || continue
+    grep -qF -- "$want" "$base/$k" 2>/dev/null || why="${why:+$why; }$k sem '$want'"
+  done <<<"$l_contains"
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     grep -qF -- "$s" "$out" || why="${why:+$why; }stdout sem '$s'"
-  done < <(jq -r '(.stdout // [])[]' <<<"$case_json" | tr -d '\r')
+  done <<<"$l_stdout"
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     ! grep -qF -- "$s" "$out" || why="${why:+$why; }stdout contem '$s'"
-  done < <(jq -r '(.stdout_not // [])[]' <<<"$case_json" | tr -d '\r')
-  if [ "$(jq -r '.stdout_empty // false' <<<"$case_json")" = "true" ] && [ -s "$out" ]; then
+  done <<<"$l_stdout_not"
+  if [ "$stdout_empty" = "true" ] && [ -s "$out" ]; then
     why="${why:+$why; }stdout deveria ser vazio"
   fi
-  local has_out_expect
-  has_out_expect="$(jq -r 'has("stdout") or has("json_check")' <<<"$case_json")"
   if [ "$expect" != "deny" ] && [ "$script" != "session-context.sh" ] && [ "$has_out_expect" != "true" ] && [ -s "$out" ]; then
     why="${why:+$why; }stdout deveria ser vazio"
   fi
-  s="$(jq -r '.reason // empty' <<<"$case_json" | tr -d '\r')"
-  if [ -n "$s" ] && ! jq -r '.hookSpecificOutput.permissionDecisionReason // empty' "$out" 2>/dev/null | grep -qF -- "$s"; then
-    why="${why:+$why; }motivo sem '$s': $(head -c 300 "$out")"
+  if [ -n "$reason" ] && ! jq -r '.hookSpecificOutput.permissionDecisionReason // empty' "$out" 2>/dev/null | grep -qF -- "$reason"; then
+    why="${why:+$why; }motivo sem '$reason': $(head -c 300 "$out")"
   fi
-  s="$(jq -r '.json_check // empty' <<<"$case_json" | tr -d '\r')"
-  if [ -n "$s" ] && ! jq -e "$s" "$out" >/dev/null 2>&1; then
-    why="${why:+$why; }json_check falhou ($s): $(head -c 300 "$out")"
+  if [ -n "$json_check" ] && ! jq -e "$json_check" "$out" >/dev/null 2>&1; then
+    why="${why:+$why; }json_check falhou ($json_check): $(head -c 300 "$out")"
   fi
-  if [ "$(jq -r '.repeat_empty // false' <<<"$case_json")" = "true" ] && [ -s "$ws/stdout2" ]; then
+  if [ "$repeat" = "true" ] && [ -s "$ws/stdout2" ]; then
     why="${why:+$why; }segunda execucao deveria ter saida vazia: $(head -c 200 "$ws/stdout2")"
   fi
 
@@ -349,14 +404,18 @@ run_case() {
   fi
 }
 
-for fx in "$HERE"/fixtures/*.json; do
-  script="$(jq -r '.script' "$fx")"
-  echo "$script"
+# Casos de uma fixture, do indice $2 ao $3 (exclusivo). Cabecalho so na primeira fatia.
+FX_SHARD=15
+g_fixture() {
+  local fx="$1" from="$2" to="$3" script c
+  script="$(jq -r '.script' "$fx" | tr -d '\r')"
+  [ "$from" != "0" ] || echo "$script"
   while IFS= read -r c; do
     run_case "$script" "$c"
-  done < <(jq -c '(.defaults // {}) as $d | .cases[] | $d * .' "$fx" | tr -d '\r')
-done
+  done < <(jq -c --argjson a "$from" --argjson b "$to" '(.defaults // {}) as $d | .cases[$a:$b][] | $d * .' "$fx" | tr -d '\r')
+}
 
+g_semjq() {
 echo "sem jq no PATH"
 if [ -z "$FILTER" ] || [[ "sem jq" == *"$FILTER"* ]]; then
   NOJQ_PATH="$(path_without jq)"
@@ -413,7 +472,9 @@ if [ -z "$FILTER" ] || [[ "sem jq" == *"$FILTER"* ]]; then
     else ko "session-context.sh sem git avisa com o comando de instalação e /kit:setup" "exit $code, stdout='$out', stderr='$(cat "$TMP_ALL/nogit.err")'"; fi
   fi
 fi
+}
 
+g_forma_shell() {
 echo "hooks em forma shell"
 if [ -z "$FILTER" ] || [[ "forma shell" == *"$FILTER"* ]]; then
   HOOKS="$REPO/plugins/kit/hooks/hooks.json"
@@ -428,12 +489,15 @@ if [ -z "$FILTER" ] || [[ "forma shell" == *"$FILTER"* ]]; then
     SIM_PATH="$(dirname "$(command -v jq)"):$(dirname "$(command -v git)"):$(cygpath -u "$SYSTEMROOT")/System32"
     PLUGIN_NATIVE="$(native_path "$REPO/plugins/kit")"
     SIM_CWD="$(native_path "$(mktemp -d "$TMP_ALL/shell.XXXXXX")")"
+    # O System32 pode ter o bash.exe do WSL (componente antigo): bash de fora do Git nao conta.
+    sim_bash="$(PATH="$SIM_PATH" command -v bash 2>/dev/null)"
+    [ -z "$sim_bash" ] || sim_bash="$(cygpath -m "$sim_bash")"
     if [ ! -x "$GIT_BASH" ]; then
       ko "simulacao de PATH sem bash" "Git Bash nao encontrado em $GIT_BASH"
-    elif PATH="$SIM_PATH" command -v bash >/dev/null 2>&1; then
-      ko "simulacao de PATH sem bash" "bash ainda encontrado em $(PATH="$SIM_PATH" command -v bash)"
+    elif [ -n "$sim_bash" ] && [[ "$sim_bash" == "$(cygpath -m /)"* ]]; then
+      ko "simulacao de PATH sem bash" "bash do Git ainda encontrado em $sim_bash"
     else
-      ok "forma exec falharia: bash fora do PATH simulado"
+      ok "forma exec falharia: bash do Git fora do PATH simulado"
       while IFS=$'\t' read -r ev cmd; do
         [ -n "$cmd" ] || continue
         cmd="${cmd//\$\{CLAUDE_PLUGIN_ROOT\}/$PLUGIN_NATIVE}"
@@ -456,27 +520,49 @@ if [ -z "$FILTER" ] || [[ "forma shell" == *"$FILTER"* ]]; then
       if jq -e '.hookSpecificOutput.permissionDecision == "deny"' <<<"$out" >/dev/null 2>&1; then
         ok "PreToolUse: guard-bash.sh nega push --force sem bash no PATH"
       else ko "PreToolUse: guard-bash.sh nega push --force sem bash no PATH" "stdout='$out', stderr='$(head -c 300 "$TMP_ALL/shell.err")'"; fi
+
+      # bash.exe do WSL antes no PATH: o hook roda pelo bash do Git e os guardas continuam negando.
+      mkdir -p "$TMP_ALL/wsl-bin"
+      printf '#!/bin/sh\necho "bash do WSL chamado" >&2\nexit 1\n' >"$TMP_ALL/wsl-bin/bash"
+      chmod +x "$TMP_ALL/wsl-bin/bash"
+      WSL_PATH="$TMP_ALL/wsl-bin:$SIM_PATH"
+      if [ "$(PATH="$WSL_PATH" command -v bash)" = "$TMP_ALL/wsl-bin/bash" ]; then
+        out="$(cd "$SIM_CWD" && jq -cn --arg d "$SIM_CWD" '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: "rm -rf /"}, cwd: $d}' |
+          env PATH="$WSL_PATH" TMPDIR="$TMP_ALL" "$GIT_BASH" -c "$cmd" 2>"$TMP_ALL/shell.err")"
+        if jq -e '.hookSpecificOutput.permissionDecision == "deny"' <<<"$out" >/dev/null 2>&1 && ! grep -q 'bash do WSL' "$TMP_ALL/shell.err"; then
+          ok "PreToolUse: guard-bash.sh nega rm -rf / com o bash do WSL antes no PATH"
+        else ko "PreToolUse: guard-bash.sh nega rm -rf / com o bash do WSL antes no PATH" "stdout='$out', stderr='$(head -c 300 "$TMP_ALL/shell.err")'"; fi
+        fcmd="$(jq -r '.hooks.PreToolUse[] | select(.matcher | test("Edit")) | .hooks[0].command' "$HOOKS" | tr -d '\r')"
+        fcmd="${fcmd//\$\{CLAUDE_PLUGIN_ROOT\}/$PLUGIN_NATIVE}"
+        out="$(cd "$SIM_CWD" && jq -cn --arg d "$SIM_CWD" --arg f "$SIM_CWD\.env" '{hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: {file_path: $f}, cwd: $d}' |
+          env PATH="$WSL_PATH" TMPDIR="$TMP_ALL" "$GIT_BASH" -c "$fcmd" 2>"$TMP_ALL/shell.err")"
+        if jq -e '.hookSpecificOutput.permissionDecision == "deny"' <<<"$out" >/dev/null 2>&1 && ! grep -q 'bash do WSL' "$TMP_ALL/shell.err"; then
+          ok "PreToolUse: guard-files.sh nega Edit em .env com o bash do WSL antes no PATH"
+        else ko "PreToolUse: guard-files.sh nega Edit em .env com o bash do WSL antes no PATH" "stdout='$out', stderr='$(head -c 300 "$TMP_ALL/shell.err")'"; fi
+      else ko "simulacao do bash do WSL no PATH" "$(PATH="$WSL_PATH" command -v bash)"; fi
     fi
   else
     echo "  pulado simulacao de PATH sem bash (so no Windows)"
   fi
 fi
+}
 
+g_apoio_init() {
 echo "scripts de apoio do init"
 if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   U="$(mktemp -d "$TMP_ALL/unit.XXXXXX")"
   M="$SCRIPTS/merge-json.sh"
   printf '%s' '{"permissions":{"allow":["A","B"],"deny":["X"]},"model":"opus"}' >"$U/old.json"
   printf '%s' '{"permissions":{"allow":["B","C"],"ask":["Q"]},"model":"sonnet","enabledPlugins":{"kit@claude-kit":true}}' >"$U/new.json"
-  bash "$M" "$U/old.json" "$U/new.json" >"$U/merged.json" 2>"$U/conflicts"
+  "$TBASH" "$M" "$U/old.json" "$U/new.json" >"$U/merged.json" 2>"$U/conflicts"
   if jq -e '.permissions.allow == ["A","B","C"] and .permissions.deny == ["X"] and .permissions.ask == ["Q"] and .model == "opus" and .enabledPlugins["kit@claude-kit"] == true' "$U/merged.json" >/dev/null 2>&1; then
     ok "merge-json: chave a chave, arrays por uniao, existente vence"
   else ko "merge-json: chave a chave, arrays por uniao, existente vence" "$(tr '\n' ' ' <"$U/merged.json")"; fi
   if grep -qF 'conflito: .model mantido "opus"' "$U/conflicts"; then ok "merge-json: conflito reportado no stderr"; else ko "merge-json: conflito reportado no stderr" "$(cat "$U/conflicts")"; fi
-  if bash "$M" "$U/nao-existe.json" "$U/new.json" | jq -e '.model == "sonnet"' >/dev/null 2>&1; then ok "merge-json: existente ausente usa a proposta"; else ko "merge-json: existente ausente usa a proposta" ""; fi
+  if "$TBASH" "$M" "$U/nao-existe.json" "$U/new.json" | jq -e '.model == "sonnet"' >/dev/null 2>&1; then ok "merge-json: existente ausente usa a proposta"; else ko "merge-json: existente ausente usa a proposta" ""; fi
   # --preview: diff e conflitos, nada gravado.
   cp "$U/old.json" "$U/pv.json"
-  out="$(bash "$M" --preview "$U/pv.json" "$U/new.json" 2>&1)"
+  out="$("$TBASH" "$M" --preview "$U/pv.json" "$U/new.json" 2>&1)"
   if cmp -s "$U/old.json" "$U/pv.json" && grep -qF '+      "C"' <<<"$out" && grep -qF 'conflito: .model mantido "opus" (o kit propunha "sonnet")' <<<"$out" &&
     ! ls "$U"/pv.json.bak-kit-* >/dev/null 2>&1; then
     ok "merge-json --preview: diff e conflito, nada gravado"
@@ -485,20 +571,20 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   printf '%s' '{"model":"opus","permissions":{"allow":["A"],"deny":["X"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"meu.sh"}]}]},"enabledPlugins":{"kit@claude-kit":true}}' >"$U/ap.json"
   printf '%s' '{"model":"sonnet","permissions":{"allow":["B"],"ask":["Q"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"kit.sh"}]}],"PreToolUse":[]},"enabledPlugins":{"kit@claude-kit":false,"lsp@x":true}}' >"$U/ap-prop.json"
   cp "$U/ap.json" "$U/ap.orig"
-  out="$(bash "$M" --apply "$U/ap.json" "$U/ap-prop.json" 2>&1)"; code=$?
+  out="$("$TBASH" "$M" --apply "$U/ap.json" "$U/ap-prop.json" 2>&1)"; code=$?
   bak="$(ls "$U"/ap.json.bak-kit-* 2>/dev/null | head -n 1)"
-  if [ "$code" = "0" ] && [ -n "$bak" ] && cmp -s "$U/ap.orig" "$bak" && bash "$M" --check "$U/ap.orig" "$U/ap.json" 2>/dev/null &&
+  if [ "$code" = "0" ] && [ -n "$bak" ] && cmp -s "$U/ap.orig" "$bak" && "$TBASH" "$M" --check "$U/ap.orig" "$U/ap.json" 2>/dev/null &&
     jq -e '.permissions.allow == ["A","B"] and .permissions.ask == ["Q"] and .model == "opus" and .enabledPlugins == {"kit@claude-kit":true,"lsp@x":true}
       and .hooks == {"Stop":[{"hooks":[{"type":"command","command":"meu.sh"}]}]}' "$U/ap.json" >/dev/null 2>&1 &&
     grep -qF "gravado: $U/ap.json (backup em $bak)" <<<"$out" && grep -qF 'conflito: .model mantido' <<<"$out" && grep -qF 'conflito: .enabledPlugins."kit@claude-kit"' <<<"$out"; then
     ok "merge-json --apply: backup, só adições, hooks e valores existentes intocados"
   else ko "merge-json --apply: backup, só adições, hooks e valores existentes intocados" "exit $code, $out, $(tr -d '\n ' <"$U/ap.json")"; fi
-  out="$(bash "$M" --apply "$U/ap.json" "$U/ap-prop.json" 2>&1)"
+  out="$("$TBASH" "$M" --apply "$U/ap.json" "$U/ap-prop.json" 2>&1)"
   if grep -qF 'sem mudança' <<<"$out" && [ "$(ls "$U"/ap.json.bak-kit-* | wc -l | tr -d ' ')" = "1" ]; then
     ok "merge-json --apply: nada a somar não grava nem cria backup"
   else ko "merge-json --apply: nada a somar não grava nem cria backup" "$out"; fi
   # --prefer: so o caminho indicado troca de valor.
-  out="$(bash "$M" --apply --prefer '["enabledPlugins","kit@claude-kit"]' "$U/ap.json" "$U/ap-prop.json" 2>&1)"; code=$?
+  out="$("$TBASH" "$M" --apply --prefer '["enabledPlugins","kit@claude-kit"]' "$U/ap.json" "$U/ap-prop.json" 2>&1)"; code=$?
   if [ "$code" = "0" ] && jq -e '.enabledPlugins["kit@claude-kit"] == false and .model == "opus"' "$U/ap.json" >/dev/null 2>&1 &&
     grep -qF 'troca: .enabledPlugins."kit@claude-kit" true -> false' <<<"$out" && [ "$(ls "$U"/ap.json.bak-kit-* | wc -l | tr -d ' ')" = "2" ]; then
     ok "merge-json --apply --prefer: troca só a chave do kit, com novo backup"
@@ -507,19 +593,19 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   mkdir -p "$U/loc/.claude"
   printf '{"permissions":{"allow":["Z"]}}\n' >"$U/loc/.claude/settings.local.json"
   cp "$U/loc/.claude/settings.local.json" "$U/loc.orig"
-  bash "$M" --apply "$U/loc/.claude/settings.local.json" "$U/new.json" >/dev/null 2>&1; code=$?
+  "$TBASH" "$M" --apply "$U/loc/.claude/settings.local.json" "$U/new.json" >/dev/null 2>&1; code=$?
   if [ "$code" = "2" ] && cmp -s "$U/loc.orig" "$U/loc/.claude/settings.local.json" && ! ls "$U"/loc/.claude/*.bak-kit-* >/dev/null 2>&1; then
     ok "merge-json --apply: settings.local.json recusado e intacto"
   else ko "merge-json --apply: settings.local.json recusado e intacto" "exit $code"; fi
   printf '{"a":' >"$U/bad.json"
-  bash "$M" --apply "$U/bad.json" "$U/new.json" >/dev/null 2>&1; code=$?
+  "$TBASH" "$M" --apply "$U/bad.json" "$U/new.json" >/dev/null 2>&1; code=$?
   if [ "$code" = "2" ] && [ "$(cat "$U/bad.json")" = '{"a":' ]; then ok "merge-json --apply: JSON inválido não é tocado"; else ko "merge-json --apply: JSON inválido não é tocado" "exit $code"; fi
-  out="$(bash "$M" --apply "$U/novo/settings.json" "$U/ap-prop.json" 2>&1)"
+  out="$("$TBASH" "$M" --apply "$U/novo/settings.json" "$U/ap-prop.json" 2>&1)"
   if grep -qF 'criado:' <<<"$out" && jq -e '(has("hooks") | not) and .model == "sonnet"' "$U/novo/settings.json" >/dev/null 2>&1; then
     ok "merge-json --apply: arquivo ausente é criado com a proposta, sem hooks"
   else ko "merge-json --apply: arquivo ausente é criado com a proposta, sem hooks" "$out"; fi
-  if bash "$M" --check "$U/old.json" "$U/merged.json" 2>/dev/null; then ok "merge-json --check: so adicoes passa"; else ko "merge-json --check: so adicoes passa" ""; fi
-  if ! bash "$M" --check "$U/merged.json" "$U/old.json" 2>"$U/lost" && grep -qF '$.enabledPlugins: removido' "$U/lost"; then
+  if "$TBASH" "$M" --check "$U/old.json" "$U/merged.json" 2>/dev/null; then ok "merge-json --check: so adicoes passa"; else ko "merge-json --check: so adicoes passa" ""; fi
+  if ! "$TBASH" "$M" --check "$U/merged.json" "$U/old.json" 2>"$U/lost" && grep -qF '$.enabledPlugins: removido' "$U/lost"; then
     ok "merge-json --check: remocao falha e e listada"
   else ko "merge-json --check: remocao falha e e listada" "$(cat "$U/lost")"; fi
 
@@ -531,7 +617,7 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   git_q -C "$U/adopt" add -A
   git_q -C "$U/adopt" add -f .claude/settings.local.json
   git_q -C "$U/adopt" commit -m init
-  bash "$SCRIPTS/inventory.sh" "$U/adopt" >"$U/inv" 2>&1
+  "$TBASH" "$SCRIPTS/inventory.sh" "$U/adopt" >"$U/inv" 2>&1
   inv_miss=""
   for s in 'PreToolUse [Bash] command: bash "$CLAUDE_PROJECT_DIR/.claude/hooks/no-rm-rf.sh"' \
     'PostToolUse [Edit|Write]' '`.claude/hooks/manual-check.sh`' '`review`' '`manual-sync`' \
@@ -555,7 +641,7 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   if [ -z "$risk_miss" ]; then ok "inventory: sobreposicoes, aviso mudo, falha aberta e riscos de configuracao"; else ko "inventory: sobreposicoes, aviso mudo, falha aberta e riscos de configuracao" "$risk_miss"; fi
 
   # curl/wget usados pelo projeto: o init deixa o deny de fora.
-  out="$(HOME="$U/home" bash "$SCRIPTS/inventory.sh" --net "$U/adopt" 2>&1)"
+  out="$(HOME="$U/home" "$TBASH" "$SCRIPTS/inventory.sh" --net "$U/adopt" 2>&1)"
   if [ "$out" = ".claude/skills/status-api/SKILL.md" ] && grep -qF -- '- usados por 1 arquivos' "$U/inv" && grep -qF -- '`.claude/skills/status-api/SKILL.md`' "$U/inv"; then
     ok "inventory --net: skill da fixture de adoção que usa curl"
   else ko "inventory --net: skill da fixture de adoção que usa curl" "$out"; fi
@@ -571,18 +657,18 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   printf '%s\n' '---' 'name: leitor' '---' 'Leia os arquivos.' >"$N/.claude/agents/leitor.md"
   printf '%s' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/scripts-hook.sh\""}]}],"PostToolUse":[{"hooks":[{"type":"command","command":"curl -s localhost:9/notify"},{"type":"command","command":"bash .claude/hooks/quieto.sh"}]}]}}' >"$N/.claude/settings.json"
   git_q init "$N"
-  out="$(HOME="$U/home" bash "$SCRIPTS/inventory.sh" --net "$N" 2>&1 | LC_ALL=C sort | paste -sd' ' -)"
+  out="$(HOME="$U/home" "$TBASH" "$SCRIPTS/inventory.sh" --net "$N" 2>&1 | LC_ALL=C sort | paste -sd' ' -)"
   if [ "$out" = ".claude/commands/baixa.md .claude/settings.json Makefile package.json scripts-hook.sh" ]; then
     ok "inventory --net: commands, comando e script de hook, package.json scripts e Makefile; sem falso positivo"
   else ko "inventory --net: commands, comando e script de hook, package.json scripts e Makefile; sem falso positivo" "$out"; fi
-  out="$(HOME="$U/home" bash "$SCRIPTS/inventory.sh" --net "$HERE/sample" 2>&1)"
+  out="$(HOME="$U/home" "$TBASH" "$SCRIPTS/inventory.sh" --net "$HERE/sample" 2>&1)"
   if [ -z "$out" ]; then ok "inventory --net: projeto sem curl/wget não lista nada (o deny entra)"; else ko "inventory --net: projeto sem curl/wget não lista nada (o deny entra)" "$out"; fi
   NR="$U/netrules"
   mkdir -p "$NR/.claude" "$U/home/.claude"
   printf '%s' '{"permissions":{"ask":["Bash(curl *rubinot.com.br*)"]}}' >"$NR/.claude/settings.json"
   printf '%s' '{"permissions":{"allow":["Bash(wget -q *)"]}}' >"$NR/.claude/settings.local.json"
   printf '%s' '{"permissions":{"allow":["Bash(curl https://api.x/*)"]}}' >"$U/home/.claude/settings.json"
-  out="$(HOME="$U/home" bash "$SCRIPTS/inventory.sh" --net "$NR" 2>&1 | paste -sd' ' -)"
+  out="$(HOME="$U/home" "$TBASH" "$SCRIPTS/inventory.sh" --net "$NR" 2>&1 | paste -sd' ' -)"
   if [ "$out" = ".claude/settings.json .claude/settings.local.json ~/.claude/settings.json" ]; then
     ok "inventory --net: regras de allow/ask com curl/wget (projeto, local e usuário) contam como uso"
   else ko "inventory --net: regras de allow/ask com curl/wget (projeto, local e usuário) contam como uso" "$out"; fi
@@ -597,11 +683,11 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
     local f="$SH/s.json" out want miss=""
     printf '%s' "$2" >"$f"
     rm -f "$f".bak-kit-*
-    out="$(bash "$M" --apply "$f" "$SH/prop.json" 2>&1)"
+    out="$("$TBASH" "$M" --apply "$f" "$SH/prop.json" 2>&1)"
     if [ -n "$4" ]; then
       while IFS= read -r want; do grep -qxF -- "$want" <<<"$out" || miss+="[$want] "; done <<<"$(tr '|' '\n' <<<"$4")"
     elif grep -qF 'não aplicado' <<<"$out"; then miss="conflito inesperado"; fi
-    if [ -z "$miss" ] && jq -e "$3" "$f" >/dev/null 2>&1 && bash "$M" --check "$SH/s.json".bak-kit-* "$f" 2>/dev/null; then ok "$1"
+    if [ -z "$miss" ] && jq -e "$3" "$f" >/dev/null 2>&1 && "$TBASH" "$M" --check "$SH/s.json".bak-kit-* "$f" 2>/dev/null; then ok "$1"
     else ko "$1" "${miss:-arquivo: $(jq -c . "$f")}; saída: $out"; fi
   }
   shadow_case "merge-json: deny Bash(curl *) não entra sobre ask Bash(curl *x.com*); wget entra" \
@@ -614,16 +700,18 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
     '{"permissions":{"ask":["Bash(git push *)"],"allow":["Read"]}}' '.permissions.deny == ["Bash(curl *)","Bash(wget *)"]' ''
   shadow_case "merge-json: deny já presente não vira conflito" \
     '{"permissions":{"ask":["Bash(curl *x.com*)"],"deny":["Bash(curl *)"]}}' '.permissions.deny == ["Bash(curl *)","Bash(wget *)"]' ''
-  out="$(printf '%s' '{"permissions":{"ask":["Bash(curl *x.com*)"]}}' >"$SH/s.json"; bash "$M" --preview "$SH/s.json" "$SH/prop.json" 2>&1)"
+  out="$(printf '%s' '{"permissions":{"ask":["Bash(curl *x.com*)"]}}' >"$SH/s.json"; "$TBASH" "$M" --preview "$SH/s.json" "$SH/prop.json" 2>&1)"
   if grep -qxF 'conflito: deny Bash(curl *) não aplicado — sombrearia Bash(curl *x.com*) em ask' <<<"$out" && ! grep -q '^+.*Bash(curl \*)' <<<"$out" && grep -q '^+.*Bash(wget \*)' <<<"$out"; then
     ok "merge-json --preview: diff sem o deny sombreado e linha de não aplicado"
   else ko "merge-json --preview: diff sem o deny sombreado e linha de não aplicado" "$out"; fi
   printf '%s' '{"permissions":{"ask":["Bash(curl *x.com*)"],"deny":["Bash(curl *)"]}}' >"$SH/after.json"
-  if ! bash "$M" --check "$SH/s.json" "$SH/after.json" 2>"$SH/err" && grep -qF '"Bash(curl *)" sombreia "Bash(curl *x.com*)" em ask' "$SH/err"; then
+  if ! "$TBASH" "$M" --check "$SH/s.json" "$SH/after.json" 2>"$SH/err" && grep -qF '"Bash(curl *)" sombreia "Bash(curl *x.com*)" em ask' "$SH/err"; then
     ok "merge-json --check: deny novo que sombreia ask é mudança de comportamento"
   else ko "merge-json --check: deny novo que sombreia ask é mudança de comportamento" "$(cat "$SH/err")"; fi
 fi
+}
 
+g_wave_base() {
 echo "wave-base"
 if [ -z "$FILTER" ] || [[ "wave-base" == *"$FILTER"* ]]; then
   WB="$(mktemp -d "$TMP_ALL/wave.XXXXXX")"
@@ -635,18 +723,20 @@ if [ -z "$FILTER" ] || [[ "wave-base" == *"$FILTER"* ]]; then
   git_q -C "$WB" commit -m init
   printf 'staged\n' >"$WB/s.txt"
   git_q -C "$WB" add s.txt
-  base="$(bash "$WS" "$WB" 2>/dev/null)"
+  base="$("$TBASH" "$WS" "$WB" 2>/dev/null)"
   printf 'b\n' >>"$WB/a.txt"
   printf 'novo\n' >"$WB/n.txt"
   printf 'x\n' >"$WB/ign.txt"
-  now="$(bash "$WS" "$WB" 2>/dev/null)"
+  now="$("$TBASH" "$WS" "$WB" 2>/dev/null)"
   wdiff="$(git -C "$WB" diff --name-status "$base" "$now" 2>/dev/null | tr -d '\r' | paste -sd' ' -)"
   if [ "$wdiff" = "$(printf 'M\ta.txt A\tn.txt')" ]; then ok "wave-base: diff da wave tem alterado e novo, sem ignorado nem o que já existia"; else ko "wave-base: diff da wave tem alterado e novo, sem ignorado nem o que já existia" "$wdiff"; fi
   if [ "$(git -C "$WB" diff --cached --name-only | tr -d '\r')" = "s.txt" ]; then ok "wave-base: index do usuário intacto"; else ko "wave-base: index do usuário intacto" "$(git -C "$WB" diff --cached --name-only | tr '\n' ' ')"; fi
   if [ "$(git -C "$WB" rev-list --count HEAD | tr -d '\r')" = "1" ]; then ok "wave-base: nenhum commit criado"; else ko "wave-base: nenhum commit criado" ""; fi
-  if ! bash "$WS" "$(mktemp -d "$TMP_ALL/nogit.XXXXXX")" >/dev/null 2>&1; then ok "wave-base: fora de repo git sai com erro"; else ko "wave-base: fora de repo git sai com erro" ""; fi
+  if ! "$TBASH" "$WS" "$(mktemp -d "$TMP_ALL/nogit.XXXXXX")" >/dev/null 2>&1; then ok "wave-base: fora de repo git sai com erro"; else ko "wave-base: fora de repo git sai com erro" ""; fi
 fi
+}
 
+g_map_partition() {
 echo "map-partition"
 if [ -z "$FILTER" ] || [[ "map-partition" == *"$FILTER"* ]]; then
   MP="$SCRIPTS/map-partition.sh"
@@ -662,7 +752,7 @@ if [ -z "$FILTER" ] || [[ "map-partition" == *"$FILTER"* ]]; then
   R="$(mktemp -d "$TMP_ALL/mp.XXXXXX")"
   mp_files "$R" README.md src/a.js src/b.js lib/c.js
   mp_commit "$R"
-  out="$(bash "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
+  out="$("$TBASH" "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
   if jq -e '.totals.units == 1 and .totals.files == 4 and .totals.loc == 12 and .units[0].paths == ["**"] and .totals.agents == 4
       and (.repos | length) == 1 and (.repos[0].commit | length) == 40 and .primary == "."' <<<"$out" >/dev/null 2>&1; then
     ok "map-partition: repo pequeno vira uma unidade com o repo inteiro"
@@ -680,7 +770,7 @@ if [ -z "$FILTER" ] || [[ "map-partition" == *"$FILTER"* ]]; then
   done
   mp_files "$R" tools/build.ts
   mp_commit "$R"
-  out="$(bash "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
+  out="$("$TBASH" "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
   if jq -e '
       def owner($m): [.units[] | select(.manifests | index($m))];
       (owner("packages/core/package.json") | length == 1) and (owner("packages/ui/package.json") | length == 1)
@@ -700,7 +790,7 @@ if [ -z "$FILTER" ] || [[ "map-partition" == *"$FILTER"* ]]; then
   mp_files "$R/web" src/home.ts
   mp_files "$R/fora" x.js
   mp_commit "$R/app"; mp_commit "$R/web"; mp_commit "$R/fora"
-  out="$(bash "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
+  out="$("$TBASH" "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
   if jq -e '([.repos[].repo] == ["app", "web"]) and .primary == "app" and ([.units[].repo] | unique) == ["app", "web"]
       and all(.units[]; .unit | test("^(app|web)-")) and .totals.files == 3
       and ([.units[] | select(.repo == "app") | .file_count] | add) == 2' <<<"$out" >/dev/null 2>&1; then
@@ -717,7 +807,7 @@ if [ -z "$FILTER" ] || [[ "map-partition" == *"$FILTER"* ]]; then
   done
   for i in $(seq 1 40); do printf 'x\n' >"$R/api/flat/g$i.cs"; done
   mp_commit "$R"
-  out="$(bash "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
+  out="$("$TBASH" "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
   if jq -e '.totals.files == 401 and .totals.units >= 3 and all(.units[]; .file_count <= 150)
       and ([.units[].paths[]] | length) == ([.units[].paths[]] | unique | length)
       and all(.units[]; .manifests == ["api/Api.csproj"])' <<<"$out" >/dev/null 2>&1; then
@@ -728,7 +818,7 @@ if [ -z "$FILTER" ] || [[ "map-partition" == *"$FILTER"* ]]; then
   mkdir -p "$R2/big"
   for i in $(seq 1 320); do printf 'x\n' >"$R2/big/f$i.py"; done
   mp_commit "$R2"
-  out="$(bash "$MP" --root "$R2" 2>"$TMP_ALL/mp.err")"
+  out="$("$TBASH" "$MP" --root "$R2" 2>"$TMP_ALL/mp.err")"
   if jq -e '.totals.files == 320 and .totals.units == 3 and all(.units[]; .file_count <= 150) and ([.units[].unit] == ["big-1", "big-2", "big-3"])' <<<"$out" >/dev/null 2>&1; then
     ok "map-partition: pasta só com arquivos diretos é fatiada"
   else ko "map-partition: pasta só com arquivos diretos é fatiada" "$(jq -c '[.units[] | {unit, file_count}]' <<<"$out" 2>&1 | head -c 400)"; fi
@@ -743,7 +833,7 @@ if [ -z "$FILTER" ] || [[ "map-partition" == *"$FILTER"* ]]; then
   printf 'lock\n' >"$R/yarn.lock"
   printf '{}\n' >"$R/package-lock.json"
   mp_commit "$R"
-  out="$(bash "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
+  out="$("$TBASH" "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
   if jq -e '.totals.files == 2' <<<"$out" >/dev/null 2>&1 && ! grep -qE 'Migrations|gen/|vendor|dist|build/|secrets|keys|\.env|Designer|generated|readme|notes|min\.js|blob|lock' <<<"$(jq -c '.units' <<<"$out")"; then
     ok "map-partition: protegidos, segredos, gerados, lockfiles, binários e fora de source_globs ignorados"
   else ko "map-partition: protegidos, segredos, gerados, lockfiles, binários e fora de source_globs ignorados" "$(jq -c '[.units[] | {paths, file_count}]' <<<"$out" 2>&1 | head -c 500)"; fi
@@ -756,28 +846,30 @@ if [ -z "$FILTER" ] || [[ "map-partition" == *"$FILTER"* ]]; then
   mp_commit "$R"
   c0="$(git -C "$R" rev-parse HEAD | tr -d '\r')"
   printf 'novo\n' >>"$R/b/2.js"
-  out="$(bash "$MP" --root "$R" --since "$c0" 2>"$TMP_ALL/mp.err")"
+  out="$("$TBASH" "$MP" --root "$R" --since "$c0" 2>"$TMP_ALL/mp.err")"
   if jq -e '.totals.changed == 1 and ([.units[] | select(.changed) | .paths[]] == ["b/**"]) and ([.units[] | select(.changed) | .changed_files] == [1])' <<<"$out" >/dev/null 2>&1; then
     ok "map-partition: --since marca só a unidade com arquivo alterado"
   else ko "map-partition: --since marca só a unidade com arquivo alterado" "$(jq -c '[.units[] | {paths, changed}]' <<<"$out" 2>&1 | head -c 400)"; fi
-  out="$(bash "$MP" --root "$R" --path a 2>"$TMP_ALL/mp.err")"
+  out="$("$TBASH" "$MP" --root "$R" --path a 2>"$TMP_ALL/mp.err")"
   if jq -e '.totals.files == 3 and ([.units[].paths[]] == ["a/**"])' <<<"$out" >/dev/null 2>&1; then
     ok "map-partition: --path limita a uma área"
   else ko "map-partition: --path limita a uma área" "$(jq -c '.units' <<<"$out" 2>&1 | head -c 400)"; fi
   # --status: ausente, em dia e desatualizado (limite do kit.json).
-  st1="$(bash "$MP" --root "$R" --status 2>&1)"; c1=$?
+  st1="$("$TBASH" "$MP" --root "$R" --status 2>&1)"; c1=$?
   mkdir -p "$R/docs"
   printf '<!-- kit:map v1 · 2026-10-14 · %s -->\n# Mapa\n' "$c0" >"$R/docs/codemap.md"
-  st2="$(bash "$MP" --root "$R" --status 2>&1)"; c2=$?
+  st2="$("$TBASH" "$MP" --root "$R" --status 2>&1)"; c2=$?
   printf '{"map":{"unit_max_files":3,"stale_after_commits":1}}\n' >"$R/.claude/kit.json"
   git_q -C "$R" commit --allow-empty -m a; git_q -C "$R" commit --allow-empty -m b
-  st3="$(bash "$MP" --root "$R" --status 2>&1)"; c3=$?
+  st3="$("$TBASH" "$MP" --root "$R" --status 2>&1)"; c3=$?
   if [ "$c1:$st1" = "1:codemap: ausente" ] && [ "$c2:$st2" = "0:codemap: em dia" ] && [ "$c3" = "1" ] && grep -qF '2 commits atrás (limite 1); rode /kit:map --update' <<<"$st3"; then
     ok "map-partition --status: ausente, em dia e desatualizado"
   else ko "map-partition --status: ausente, em dia e desatualizado" "$c1:$st1 | $c2:$st2 | $c3:$st3"; fi
-  if ! bash "$MP" --root "$(mktemp -d "$TMP_ALL/nogit.XXXXXX")" >/dev/null 2>&1; then ok "map-partition: sem repositório git sai com erro"; else ko "map-partition: sem repositório git sai com erro" ""; fi
+  if ! "$TBASH" "$MP" --root "$(mktemp -d "$TMP_ALL/nogit.XXXXXX")" >/dev/null 2>&1; then ok "map-partition: sem repositório git sai com erro"; else ko "map-partition: sem repositório git sai com erro" ""; fi
 fi
+}
 
+g_setup() {
 echo "setup"
 if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   SU="$SCRIPTS/setup.sh"
@@ -808,7 +900,7 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   run_setup() {
     local cfg="$1" path="$2"
     shift 2
-    env -u WSL_DISTRO_NAME CLAUDE_CONFIG_DIR="$cfg" PATH="$path" bash "$SU" "$@"
+    env -u WSL_DISTRO_NAME CLAUDE_CONFIG_DIR="$cfg" PATH="$path" "$TBASH" "$SU" "$@"
   }
   NOJQ_PATH="${NOJQ_PATH:-$(path_without jq)}"
 
@@ -863,7 +955,7 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   jq 'del(.enabledPlugins["kit@claude-kit"])' "$TMP_ALL/su.before" >"$TMP_ALL/su.before.nokit"
   jq 'del(.enabledPlugins["kit@claude-kit"])' "$C2/settings.json" >"$TMP_ALL/su.after.nokit" 2>/dev/null
   if [ "$code" = "0" ] && [ -n "$bak" ] && cmp -s "$TMP_ALL/su.before" "$bak" && [ ! -e "$C2/settings.kit-proposta.json" ] &&
-    bash "$SCRIPTS/merge-json.sh" --check "$TMP_ALL/su.before.nokit" "$TMP_ALL/su.after.nokit" 2>/dev/null &&
+    "$TBASH" "$SCRIPTS/merge-json.sh" --check "$TMP_ALL/su.before.nokit" "$TMP_ALL/su.after.nokit" 2>/dev/null &&
     jq -e --slurpfile t "$TPL_USER" '(.permissions.deny as $d | all($t[0].permissions.deny[]; . as $x | $d | index($x) != null))
       and (.permissions.deny | index("Bash(curl *)") != null) and .model == "opus" and .sandbox.failIfUnavailable == false
       and .enabledPlugins == {"kit@claude-kit": false, "outro@mkt": true} and (.hooks.Stop | length) == 1' "$C2/settings.json" >/dev/null 2>&1 &&
@@ -903,8 +995,8 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
     ok "setup propose: Windows nativo simulado nega PowerShell e não tem bloco sandbox"
   else ko "setup propose: Windows nativo simulado nega PowerShell e não tem bloco sandbox" "$(head -c 300 "$C3/settings.kit-proposta.json" 2>&1)"; fi
   C4="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
-  out="$(WSL_DISTRO_NAME=Ubuntu CLAUDE_CONFIG_DIR="$C4" PATH="$LINUX_BIN:$NOCLAUDE_PATH" bash "$SU" check 2>&1)"
-  WSL_DISTRO_NAME=Ubuntu CLAUDE_CONFIG_DIR="$C4" PATH="$LINUX_BIN:$NOCLAUDE_PATH" bash "$SU" propose todos >/dev/null 2>&1
+  out="$(WSL_DISTRO_NAME=Ubuntu CLAUDE_CONFIG_DIR="$C4" PATH="$LINUX_BIN:$NOCLAUDE_PATH" "$TBASH" "$SU" check 2>&1)"
+  WSL_DISTRO_NAME=Ubuntu CLAUDE_CONFIG_DIR="$C4" PATH="$LINUX_BIN:$NOCLAUDE_PATH" "$TBASH" "$SU" propose todos >/dev/null 2>&1
   if grep -qF 'plataforma: wsl2' <<<"$out" && jq -e '.sandbox.failIfUnavailable == true and (.permissions.deny | index("PowerShell") == null)' "$C4/settings.kit-proposta.json" >/dev/null 2>&1; then
     ok "setup: WSL2 simulado mantém failIfUnavailable true"
   else ko "setup: WSL2 simulado mantém failIfUnavailable true" "$out"; fi
@@ -1020,14 +1112,16 @@ exit 0
     ok "setup check: Claude Code antigo falha com claude update"
   else ko "setup check: Claude Code antigo falha com claude update" "exit $code, $out"; fi
 fi
+}
 
+g_guardas() {
 echo "guardas e gate: casos de sistema de arquivos"
 if [ -z "$FILTER" ] || [[ "guardas" == *"$FILTER"* ]]; then
   # Erro inesperado num guarda bloqueia (exit 2), nunca libera.
-  out="$(bash -c '. "$1/lib.sh"; kit_guard_fail_closed; set -u; echo "$KIT_VARIAVEL_INEXISTENTE"' _ "$SCRIPTS" 2>"$TMP_ALL/fc.err")"; code=$?
+  out="$("$TBASH" -c '. "$1/lib.sh"; kit_guard_fail_closed; set -u; echo "$KIT_VARIAVEL_INEXISTENTE"' _ "$SCRIPTS" 2>"$TMP_ALL/fc.err")"; code=$?
   if [ "$code" = "2" ] && grep -q 'erro interno no guarda' "$TMP_ALL/fc.err"; then ok "guardas: variavel nao definida bloqueia com exit 2"
   else ko "guardas: variavel nao definida bloqueia com exit 2" "exit $code, stderr=$(head -c 200 "$TMP_ALL/fc.err")"; fi
-  out="$(bash -c '. "$1/lib.sh"; kit_guard_fail_closed; false; exit 1' _ "$SCRIPTS" 2>/dev/null)"; code=$?
+  out="$("$TBASH" -c '. "$1/lib.sh"; kit_guard_fail_closed; false; exit 1' _ "$SCRIPTS" 2>/dev/null)"; code=$?
   [ "$code" = "2" ] && ok "guardas: exit 1 inesperado vira exit 2" || ko "guardas: exit 1 inesperado vira exit 2" "exit $code"
 
   # Symlink: o alvo final tambem e checado.
@@ -1038,12 +1132,42 @@ if [ -z "$FILTER" ] || [[ "guardas" == *"$FILTER"* ]]; then
   git_q init "$G/p"
   if MSYS=winsymlinks:nativestrict ln -s "$G/p/.env" "$G/p/src/config.txt" 2>/dev/null && [ -L "$G/p/src/config.txt" ]; then
     out="$(jq -cn --arg f "$(native_path "$G/p/src/config.txt")" --arg d "$(native_path "$G/p")" \
-      '{tool_name: "Edit", tool_input: {file_path: $f}, cwd: $d}' | bash "$SCRIPTS/guard-files.sh" 2>&1)"
+      '{tool_name: "Edit", tool_input: {file_path: $f}, cwd: $d}' | "$TBASH" "$SCRIPTS/guard-files.sh" 2>&1)"
     if jq -e '.hookSpecificOutput.permissionDecision == "deny"' <<<"$out" >/dev/null 2>&1; then ok "guard-files: symlink para .env negado"
     else ko "guard-files: symlink para .env negado" "$out"; fi
   else
     echo "  pulado guard-files: symlink (sistema sem symlink de verdade)"
   fi
+
+  # cwd em nome curto 8.3 (TEMP do runner do GitHub: C:\Users\RUNNER~1): a raiz do kit e a mesma pasta.
+  if command -v cygpath >/dev/null 2>&1; then
+    G="$TMP_ALL/pasta com nome longo do kit"
+    mkdir -p "$G/.claude" "$G/src/views"
+    printf '%s\n' '{"source_globs":["src/**"],"coupled_changes":[{"when":["src/views/**"],"require":["manual/**"],"level":"block","message":"Telas mudaram."}]}' >"$G/.claude/kit.json"
+    git_q init "$G"; git_q -C "$G" add -A; git_q -C "$G" commit -m init
+    printf 'x\n' >"$G/src/views/home.ts"
+    short="$(cygpath -w -s "$G")"
+    if [ "$short" != "$(cygpath -w "$G")" ]; then
+      jq -cn --arg d "$short" '{cwd: $d, session_id: "curto"}' | TMPDIR="$G" "$TBASH" "$SCRIPTS/verify-gate.sh" >/dev/null 2>"$TMP_ALL/curto.err"; code=$?
+      if [ "$code" = "2" ] && grep -qF '1) [coupled_changes] Telas mudaram.' "$TMP_ALL/curto.err"; then ok "verify-gate: cwd em nome curto 8.3 é a mesma raiz do kit"
+      else ko "verify-gate: cwd em nome curto 8.3 é a mesma raiz do kit" "exit $code, $(head -c 300 "$TMP_ALL/curto.err")"; fi
+    else
+      echo "  pulado verify-gate com cwd 8.3 (volume sem nomes curtos)"
+    fi
+  fi
+
+  # TEMP com espaco e ~ (usuario "Joao Silva", C:\Users\RUNNER~1): o advise avisa uma vez so, sem erro.
+  G="$TMP_ALL/adv"
+  mkdir -p "$G/.claude" "$G/src/api" "$TMP_ALL/temp de Joao~1"
+  printf '%s\n' '{"coupled_changes":[{"when":["src/api/**"],"require":["web/**"],"level":"warn","message":"Ajuste o site."}]}' >"$G/.claude/kit.json"
+  printf 'x\n' >"$G/src/api/a.ts"
+  git_q init "$G"
+  adv_in="$(jq -cn --arg f "$(native_path "$G/src/api/a.ts")" --arg d "$(native_path "$G")" \
+    '{hook_event_name: "PostToolUse", session_id: "temp-espaco", tool_name: "Edit", tool_input: {file_path: $f}, cwd: $d}')"
+  out1="$(TMPDIR="$TMP_ALL/temp de Joao~1" "$TBASH" "$SCRIPTS/advise.sh" <<<"$adv_in" 2>"$TMP_ALL/adv.err")"
+  out2="$(TMPDIR="$TMP_ALL/temp de Joao~1" "$TBASH" "$SCRIPTS/advise.sh" <<<"$adv_in" 2>>"$TMP_ALL/adv.err")"
+  if grep -qF 'Ajuste o site.' <<<"$out1" && [ -z "$out2" ] && [ ! -s "$TMP_ALL/adv.err" ]; then ok "advise: TEMP com espaço e ~ avisa uma vez só, sem erro"
+  else ko "advise: TEMP com espaço e ~ avisa uma vez só, sem erro" "1='$out1' 2='$out2' err='$(head -c 300 "$TMP_ALL/adv.err")'"; fi
 
   # verify-gate com 2000 arquivos nao rastreados: uma chamada de kit_kit_roots por pasta e
   # source_globs lido uma vez. Nome com & e apostrofo chega intacto no {files}.
@@ -1054,14 +1178,16 @@ if [ -z "$FILTER" ] || [[ "guardas" == *"$FILTER"* ]]; then
   for d in $(seq 1 40); do mkdir -p "$G/src/m$d"; for f in $(seq 1 50); do : >"$G/src/m$d/f$f.ts"; done; done
   mkdir -p "$G/src/a&b"; : >"$G/src/a&b/x&y.ts"; : >"$G/src/it's.ts"
   t0="$(date +%s)"
-  jq -cn --arg d "$(native_path "$G")" '{cwd: $d, session_id: "grande"}' | TMPDIR="$G" bash "$SCRIPTS/verify-gate.sh" >/dev/null 2>"$TMP_ALL/big.err"; code=$?
+  jq -cn --arg d "$(native_path "$G")" '{cwd: $d, session_id: "grande"}' | TMPDIR="$G" "$TBASH" "$SCRIPTS/verify-gate.sh" >/dev/null 2>"$TMP_ALL/big.err"; code=$?
   t1="$(date +%s)"
   if [ "$code" = "0" ] && [ "$(wc -l <"$G/out.txt" | tr -d ' ')" = "2002" ] && grep -qxF 'src/a&b/x&y.ts' "$G/out.txt" && grep -qxF "src/it's.ts" "$G/out.txt"; then
     ok "verify-gate: 2002 arquivos, & e apostrofo no {files} ($((t1 - t0))s)"
   else ko "verify-gate: 2002 arquivos, & e apostrofo no {files}" "exit $code, $(wc -l <"$G/out.txt" 2>/dev/null) linhas, $(head -c 300 "$TMP_ALL/big.err")"; fi
   [ "$((t1 - t0))" -le 30 ] && ok "verify-gate: 2002 arquivos em ate 30s ($((t1 - t0))s)" || ko "verify-gate: 2002 arquivos em ate 30s" "$((t1 - t0))s"
 fi
+}
 
+g_estaticas() {
 echo "checagens estaticas"
 if [ -z "$FILTER" ]; then
   stack_hits="$(grep -nE '(^|[^a-z_.-])(dotnet|npm|npx|pnpm|yarn|pytest|uv run|pip|poetry|cargo|mvn|gradlew?|go (build|test|vet)|golangci-lint|ruff|prettier|eslint|tsc)([^a-z_-]|$)' "$SCRIPTS"/*.sh || true)"
@@ -1172,11 +1298,104 @@ if [ -z "$FILTER" ]; then
     echo "  pulado claude plugin validate (CLI nao encontrada)"
   fi
 fi
+}
+
+# Grupos na ordem da saida: fixtures em fatias de FX_SHARD casos, depois os blocos de unidade.
+# Grupos sao independentes: cada um roda num subshell com o proprio diretorio temporario.
+ALL_GROUPS=()
+for fx in "$HERE"/fixtures/*.json; do
+  n="$(jq '.cases | length' "$fx" | tr -d '\r')"
+  for ((i = 0; i < n; i += FX_SHARD)); do ALL_GROUPS+=("fx:${fx##*/}:$i:$((i + FX_SHARD))"); done
+done
+ALL_GROUPS+=(semjq forma_shell apoio_init wave_base map_partition setup guardas estaticas)
+
+# Grupos afetados por um arquivo alterado (padroes casados contra "fx:<fixture>" ou o nome do grupo).
+# "*" e a suite inteira; arquivo sem script nem fixture (docs, skills, agents) so roda as estaticas.
+groups_for_file() {
+  local hooks="semjq forma_shell"
+  case "$1" in
+    plugins/kit/scripts/lib.sh | tests/run-tests.sh | tests/sample/*) echo "*" ;;
+    plugins/kit/scripts/guard-bash.sh) echo "fx:guard-bash.json $hooks" ;;
+    plugins/kit/scripts/guard-files.sh) echo "fx:guard-files*.json $hooks guardas" ;;
+    plugins/kit/scripts/verify-gate.sh) echo "fx:verify-gate*.json $hooks guardas" ;;
+    plugins/kit/scripts/format.sh | plugins/kit/scripts/advise.sh | plugins/kit/scripts/pre-compact.sh | plugins/kit/scripts/session-context.sh)
+      local b="${1##*/}"; echo "fx:${b%.sh}.json $hooks" ;;
+    plugins/kit/scripts/merge-json.sh) echo "apoio_init setup" ;;
+    plugins/kit/scripts/inventory.sh) echo "apoio_init" ;;
+    plugins/kit/scripts/map-partition.sh) echo "map_partition" ;;
+    plugins/kit/scripts/setup.sh | plugins/kit/templates/*) echo "setup" ;;
+    plugins/kit/scripts/wave-base.sh) echo "wave_base" ;;
+    plugins/kit/scripts/*) echo "*" ;;
+    plugins/kit/hooks/hooks.json) echo "forma_shell" ;;
+    tests/fixtures/*.json) echo "fx:${1##*/}" ;;
+    tests/adopt/*) echo "apoio_init" ;;
+  esac
+}
+
+SELECTED=("${ALL_GROUPS[@]}")
+if [ "$CHANGED" = "1" ]; then
+  pats="estaticas"
+  while IFS= read -r f; do
+    [ -n "$f" ] && pats="$pats $(groups_for_file "$f")"
+  done < <({ git -C "$REPO" diff --name-only HEAD; git -C "$REPO" ls-files --others --exclude-standard; } 2>/dev/null | tr -d '\r' | sort -u)
+  SELECTED=()
+  set -f
+  for g in "${ALL_GROUPS[@]}"; do
+    key="$g"
+    case "$g" in fx:*) key="${g%:*:*}" ;; esac
+    for p in $pats; do
+      # shellcheck disable=SC2254
+      case "$key" in $p) SELECTED+=("$g"); break ;; esac
+    done
+  done
+  set +f
+  echo "--changed: $(printf '%s\n' "${SELECTED[@]}" | sed 's/:[0-9]*:[0-9]*$//' | awk '!seen[$0]++' | paste -sd' ' -)"
+fi
+
+run_group() {
+  local g="$1" f from to
+  TMP_ALL="$TMP_ALL/g$2"
+  mkdir -p "$TMP_ALL"
+  case "$g" in
+    fx:*)
+      f="${g#fx:}"; to="${f##*:}"; f="${f%:*}"; from="${f##*:}"; f="${f%:*}"
+      g_fixture "$HERE/fixtures/$f" "$from" "$to" ;;
+    *) "g_$g" ;;
+  esac
+}
+
+OUTD="$TMP_ALL/saida"
+mkdir -p "$OUTD"
+t_start="$(date +%s)"
+idx=0
+for g in "${SELECTED[@]}"; do
+  idx=$((idx + 1))
+  if [ "$JOBS" = "1" ]; then
+    (run_group "$g" "$idx") 2>&1 | tee "$OUTD/$idx.log"
+  else
+    while [ "$(jobs -pr | wc -l)" -ge "$JOBS" ]; do sleep 0.2; done
+    (run_group "$g" "$idx") >"$OUTD/$idx.log" 2>&1 &
+  fi
+done
+wait
+if [ "$JOBS" != "1" ]; then
+  i=0
+  while [ "$i" -lt "$idx" ]; do i=$((i + 1)); cat "$OUTD/$i.log"; done
+fi
+
+# Contagem pelas linhas de resultado de todos os grupos.
+i=0
+while [ "$i" -lt "$idx" ]; do
+  i=$((i + 1))
+  PASS=$((PASS + $(grep -c '^  ok    ' "$OUTD/$i.log")))
+  FAIL=$((FAIL + $(grep -c '^  FALHA ' "$OUTD/$i.log")))
+done
 
 echo
-echo "$PASS passaram, $FAIL falharam"
+echo "$PASS passaram, $FAIL falharam ($(($(date +%s) - t_start))s, --jobs $JOBS)"
 if [ "$FAIL" -gt 0 ]; then
-  printf ' - %s\n' "${FAILED[@]}"
+  i=0
+  while [ "$i" -lt "$idx" ]; do i=$((i + 1)); grep '^  FALHA ' "$OUTD/$i.log" | sed 's/^  FALHA / - /'; done
   exit 1
 fi
 exit 0

@@ -11,8 +11,9 @@ FILE="$(kit_norm_path "$(kit_field '.tool_input.file_path')")"
 KIT_CEILING="$(kit_cwd)"
 SID="$(kit_field '.session_id')"
 TMPBASE="${TMPDIR:-${TMP:-/tmp}}"
-SEEN="$TMPBASE/kit-advise-${SID:-sem-sessao}"
-SEEN="${SEEN//[^A-Za-z0-9_.\/:-]/_}"
+SEEN_ID="${SID:-sem-sessao}"
+# So o id da sessao e saneado: o TEMP pode ter espaco ou ~ (C:\Users\RUNNER~1) e precisa ficar intacto.
+SEEN="$TMPBASE/kit-advise-${SEEN_ID//[^A-Za-z0-9_.-]/_}"
 
 NOTES=()
 while IFS= read -r root; do
