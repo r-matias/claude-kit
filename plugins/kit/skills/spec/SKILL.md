@@ -15,7 +15,7 @@ allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
 2. Explore o código afetado (delegue ao `kit:investigator` se a área for grande) para saber o que já existe.
 3. Entreviste com `AskUserQuestion`, em rodadas de até 4 perguntas, oferecendo opções concretas e marcando a recomendada. Pare quando escopo, bordas e verificação estiverem claros.
 4. **Tamanho**, antes de gravar. Conte os itens de Escopo, os arquivos e áreas afetados (peça a contagem ao `kit:investigator`, com a lista) e os repositórios tocados. Limites: `spec.max_scope_items` (padrão 8) e `spec.max_files` (padrão 25) do `.claude/kit.json`, e no máximo 2 repositórios. Se passar de qualquer um, não grave uma SPEC única: faça uma pergunta, uma vez só, com `AskUserQuestion` (decisão de escopo é do usuário), citando os números e o limite:
-   - **Quebrar em fatias via /kit:epic (Recomendado):** liste na descrição as fatias já sugeridas (nome e itens de Escopo de cada uma), seguindo as regras de fatia do `/kit:epic`.
+   - **Quebrar em fatias agora (Recomendado):** a descrição diz que esta sessão grava `EPIC.md` e uma SPEC por fatia, sem precisar rodar outro comando, e lista as fatias já sugeridas (nome e itens de Escopo de cada uma), seguindo as regras de fatia do `/kit:epic`.
    - **Manter numa spec só:** grava a SPEC.md inteira, com a linha `- <data de hoje> · usuário · tamanho: manter numa spec só (<N> itens de Escopo, ~<M> arquivos, <R> repositórios) — acima do limite` em Decisões.
    - **Reduzir escopo:** descreva o corte proposto (o que fica, normalmente a primeira fatia, e o que vai para Fora de escopo); grava a SPEC.md reduzida.
 

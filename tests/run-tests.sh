@@ -1123,11 +1123,11 @@ if [ -z "$FILTER" ]; then
   PLAN_MD="$REPO/plugins/kit/skills/plan/SKILL.md"
   size_bad=""
   for want in 'spec.max_scope_items` (padrão 8)' 'spec.max_files` (padrão 25)' 'no máximo 2 repositórios' 'uma vez só' \
-    'Quebrar em fatias via /kit:epic (Recomendado)' 'Manter numa spec só' 'Reduzir escopo' 'skills/epic/SKILL.md' 'tamanho: manter'; do
+    'Quebrar em fatias agora (Recomendado)' 'sem precisar rodar outro comando' 'Manter numa spec só' 'Reduzir escopo' 'skills/epic/SKILL.md' 'tamanho: manter'; do
     grep -qF -- "$want" "$SPEC_MD" || size_bad+="spec:'$want' "
   done
   for want in 'plan.max_tasks` (padrão 15)' 'plan.max_waves` (padrão 6)' 'não grave o PLAN.md' 'uma vez só' \
-    'Quebrar em fatias via /kit:epic (Recomendado)' 'Manter num plano só' 'Reduzir escopo' 'skills/epic/SKILL.md' '· usuário · tamanho: manter'; do
+    'Quebrar em fatias agora (Recomendado)' 'sem precisar rodar outro comando' 'Manter num plano só' 'Reduzir escopo' 'skills/epic/SKILL.md' '· usuário · tamanho: manter'; do
     grep -qF -- "$want" "$PLAN_MD" || size_bad+="plan:'$want' "
   done
   for f in "$SPEC_MD" "$PLAN_MD"; do
@@ -1137,6 +1137,9 @@ if [ -z "$FILTER" ]; then
   jq -e '.spec.max_scope_items == 8 and .spec.max_files == 25 and .plan.max_tasks == 15 and .plan.max_waves == 6' \
     "$REPO/plugins/kit/templates/kit.example.json" >/dev/null 2>&1 || size_bad+="kit.example.json "
   grep -qF '**`/kit:epic` ou `/kit:spec`?**' "$REPO/README.md" || size_bad+="README "
+  # "via /kit:epic" fazia parecer que o usuario precisa rodar o /kit:epic depois de escolher quebrar.
+  via_epic="$(grep -rnF 'via /kit:epic' "$REPO/README.md" "$REPO/docs" "$REPO/plugins/kit" || true)"
+  [ -z "$via_epic" ] || size_bad+="'via /kit:epic': $via_epic "
   if [ -z "$size_bad" ]; then ok "spec e plano grandes: limites, pergunta única de quebra, M8 e README"
   else ko "spec e plano grandes: limites, pergunta única de quebra, M8 e README" "$size_bad"; fi
 

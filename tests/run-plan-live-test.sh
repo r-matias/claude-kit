@@ -129,8 +129,8 @@ d="$(run_plan grande)"
 calls="$(tools_called "$d.jsonl")"
 q="$(question_text "$d.jsonl")"
 if grep -qx 'AskUserQuestion' <<<"$calls" || grep -q '?' <<<"$q"; then ok "pergunta ao usuário"; else ko "pergunta ao usuário" "$(tail -n 10 <<<"$q")"; fi
-if grep -qi 'fatia' <<<"$q" && grep -qiE 'kit:epic|épico' <<<"$q" && grep -qi 'manter' <<<"$q"; then ok "pergunta propõe quebra em fatias via /kit:epic, com manter"
-else ko "pergunta propõe quebra em fatias via /kit:epic, com manter" "$(tail -n 10 <<<"$q")"; fi
+if grep -qi 'fatia' <<<"$q" && grep -qiE 'EPIC\.md|épico' <<<"$q" && grep -qi 'manter' <<<"$q"; then ok "pergunta propõe quebra em fatias, com manter"
+else ko "pergunta propõe quebra em fatias, com manter" "$(tail -n 10 <<<"$q")"; fi
 if [ ! -f "$d/docs/specs/grande/PLAN.md" ]; then ok "PLAN.md não gravado"; else ko "PLAN.md não gravado" "$(grep -cE '^- \[ \] [0-9]+\. ' "$d/docs/specs/grande/PLAN.md") tarefas"; fi
 if [ -z "$(find "$d/docs/specs" -name EPIC.md)" ]; then ok "EPIC.md não gravado antes da resposta"; else ko "EPIC.md não gravado antes da resposta" "$(find "$d/docs/specs" -name EPIC.md)"; fi
 
@@ -154,9 +154,9 @@ run_claude "$d" "/kit:spec painel administrativo de usuários descrito em briefi
 calls="$(tools_called "$d.jsonl")"
 q="$(question_text "$d.jsonl")"
 if grep -qx 'AskUserQuestion' <<<"$calls" || grep -q '?' <<<"$q"; then ok "pergunta ao usuário"; else ko "pergunta ao usuário" "$(tail -n 10 <<<"$q")"; fi
-if grep -qi 'fatia' <<<"$q" && grep -qiE 'kit:epic|épico' <<<"$q" && grep -qi 'manter' <<<"$q" && grep -qi 'reduzir' <<<"$q"; then
-  ok "pergunta propõe quebra em fatias via /kit:epic, manter ou reduzir"
-else ko "pergunta propõe quebra em fatias via /kit:epic, manter ou reduzir" "$(tail -n 10 <<<"$q")"; fi
+if grep -qi 'fatia' <<<"$q" && grep -qiE 'EPIC\.md|épico' <<<"$q" && grep -qi 'manter' <<<"$q" && grep -qi 'reduzir' <<<"$q"; then
+  ok "pergunta propõe quebra em fatias, manter ou reduzir"
+else ko "pergunta propõe quebra em fatias, manter ou reduzir" "$(tail -n 10 <<<"$q")"; fi
 written="$(find "$d/docs" \( -name SPEC.md -o -name EPIC.md \) 2>/dev/null)"
 if [ -z "$written" ]; then ok "nenhuma SPEC.md ou EPIC.md gravada antes da resposta"; else ko "nenhuma SPEC.md ou EPIC.md gravada antes da resposta" "$written"; fi
 

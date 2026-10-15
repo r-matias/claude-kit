@@ -102,7 +102,7 @@ Limites de tamanho, todos opcionais:
 | `plan.max_tasks` | 15 | Tarefas numeradas acima disso: o `/kit:plan` não grava e pergunta |
 | `plan.max_waves` | 6 | Waves (sem a wave final) acima disso: idem |
 
-Mais de 2 repositórios tocados também conta como acima do limite no `/kit:spec`. A pergunta é única, com três opções: quebrar em fatias via `/kit:epic` (recomendada, com as fatias já sugeridas), manter numa só ou reduzir escopo. Na quebra, a skill segue os passos de gravação do `/kit:epic` (`EPIC.md` e uma SPEC por fatia) sem nova entrevista. Manter grava e registra em Decisões `- <data> · usuário · tamanho: manter ... — acima do limite`; o `/kit:plan` e o `kit:plan-reviewer` (regra M8) aceitam essa linha na SPEC.md ou no PLAN.md.
+Mais de 2 repositórios tocados também conta como acima do limite no `/kit:spec`. A pergunta é única, com três opções: quebrar em fatias agora (recomendada, com as fatias já sugeridas), manter numa só ou reduzir escopo. Na quebra, você não roda o `/kit:epic`: a própria skill lê o `SKILL.md` dele e segue os passos de gravação (`EPIC.md` e uma SPEC por fatia) na mesma sessão, sem nova entrevista. Manter grava e registra em Decisões `- <data> · usuário · tamanho: manter ... — acima do limite`; o `/kit:plan` e o `kit:plan-reviewer` (regra M8) aceitam essa linha na SPEC.md ou no PLAN.md.
 
 ### `map`
 
