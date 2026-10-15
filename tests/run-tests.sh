@@ -1106,6 +1106,18 @@ if [ -z "$FILTER" ]; then
   tpl_bad="$(grep -E '\[[ xX]\]' "$TPL" | grep -vE '^- \[ \] ([0-9]+\.|Checkpoint wave [0-9]+:|F[0-9]+\.) ' || true)"
   if [ -z "$tpl_bad" ]; then ok "template do PLAN.md: caixa so em tarefa, checkpoint e wave final"; else ko "template do PLAN.md: caixa so em tarefa, checkpoint e wave final" "$tpl_bad"; fi
 
+  # Agent com Bash le arquivo com Read: cat/cd pelo Bash cai em regra ask do projeto e pede aprovacao.
+  bash_agents=0
+  read_bad=""
+  for f in "$REPO"/plugins/kit/agents/*.md; do
+    tr -d '\r' <"$f" | grep -qE '^tools:.*\bBash\b' || continue
+    bash_agents=$((bash_agents + 1))
+    grep -qF 'Para ler arquivo use Read; para buscar, Grep/Glob.' "$f" && grep -qF 'Bash só para git (`log`, `blame`, `show`, `diff`, `status`)' "$f" &&
+      grep -qF 'Nunca `cat`/`head`/`tail`/`sed`/`grep`/`find` via Bash, nem `cd <repo>;` no início do comando' "$f" || read_bad+="$(basename "$f") "
+  done
+  if [ "$bash_agents" -ge 3 ] && [ -z "$read_bad" ]; then ok "agents com Bash: leitura por Read, busca por Grep/Glob, sem cat nem cd <repo>; ($bash_agents agents)"
+  else ko "agents com Bash: leitura por Read, busca por Grep/Glob, sem cat nem cd <repo>;" "agents=$bash_agents sem instrução: $read_bad"; fi
+
   bad_json=""
   while IFS= read -r f; do
     jq empty "$f" >/dev/null 2>&1 || bad_json+="$f "
