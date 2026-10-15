@@ -9,12 +9,56 @@ kit_require_jq() {
   command -v jq >/dev/null 2>&1 || exit 0
 }
 
+# Mensagem unica de jq ausente: guardas e SessionStart.
+kit_jq_missing_msg() {
+  echo "kit: jq não encontrado — instale com $(kit_install_hint jq "$(kit_platform)") e reabra o Claude Code"
+}
+
+# Comandos exatos de instalacao do jq liberados pelo guard-bash sem jq, por plataforma.
+kit_jq_install_cmds() {
+  case "$(kit_platform)" in
+    windows) echo "winget install jqlang.jq" ;;
+    macos) echo "brew install jq" ;;
+    *) printf '%s\n' "sudo apt install jq" "sudo apt-get install jq" "sudo dnf install jq" "sudo pacman -S jq" ;;
+  esac
+}
+
+# 0 se o JSON cru de um PreToolUse/Bash tem como comando exatamente um dos comandos de instalacao
+# do jq. Sem jq: a chave "command" precisa aparecer uma vez so, sem barra antes (fora de string),
+# e o valor fecha logo depois do comando, entao nada pode vir junto.
+kit_raw_is_jq_install() {
+  local raw="$1" c re n
+  raw="$(printf '%s' "$raw" | tr -d '\r\n')"
+  n="$(printf '%s' "$raw" | grep -o '"command"' | wc -l | tr -d ' ')"
+  [ "$n" = "1" ] || return 1
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    re="(^|[^\\])\"command\"[[:space:]]*:[[:space:]]*\"${c//./\\.}\""
+    printf '%s' "$raw" | grep -Eq -- "$re" && return 0
+  done < <(kit_jq_install_cmds)
+  return 1
+}
+
 # Guardas de seguranca nao podem liberar por falta de dependencia: sem jq, bloqueiam.
+# Com --allow-jq-install (guard-bash), le o stdin cru e libera so o comando de instalacao do jq.
 kit_require_jq_strict() {
-  if ! command -v jq >/dev/null 2>&1; then
-    echo "kit: jq não encontrado; instale o jq" >&2
-    exit 2
+  command -v jq >/dev/null 2>&1 && return 0
+  if [ "${1:-}" = "--allow-jq-install" ] && kit_raw_is_jq_install "$(cat)"; then
+    exit 0
   fi
+  kit_jq_missing_msg >&2
+  exit 2
+}
+
+# Texto como string JSON, sem jq: escapa barra, aspas, tab, CR e quebra de linha.
+kit_json_str() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\t'/\\t}"
+  s="${s//$'\r'/}"
+  s="${s//$'\n'/\\n}"
+  printf '"%s"' "$s"
 }
 
 kit_read_input() {
@@ -424,7 +468,7 @@ kit_install_hint() {
 kit_dependency_notes() {
   local p v
   p="$(kit_platform)"
-  command -v jq >/dev/null 2>&1 || echo "kit: jq não encontrado; os guardas bloqueiam toda chamada. Instale com \`$(kit_install_hint jq "$p")\` e rode /kit:setup"
+  command -v jq >/dev/null 2>&1 || kit_jq_missing_msg
   command -v git >/dev/null 2>&1 || echo "kit: git não encontrado; contexto e verificação desligados. Instale com \`$(kit_install_hint git "$p")\` e rode /kit:setup"
   v="$(kit_claude_version)"
   if [ -n "$v" ] && kit_version_lt "$v" "$KIT_MIN_CLAUDE"; then

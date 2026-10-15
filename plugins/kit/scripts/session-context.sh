@@ -10,8 +10,11 @@ if [ "${1:-}" = "--plan-only" ]; then
   NOTES=""
 else
   NOTES="$(kit_dependency_notes)"
+  # Sem jq os guardas bloqueiam tudo, menos a instalacao do jq: o aviso vai ao usuario
+  # (systemMessage) e ao Claude (additionalContext), em JSON montado sem jq.
   if ! command -v jq >/dev/null 2>&1; then
-    printf '%s\n' "$NOTES"
+    printf '{"systemMessage":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' \
+      "$(kit_json_str "$(kit_jq_missing_msg)")" "$(kit_json_str "$NOTES")"
     exit 0
   fi
 fi

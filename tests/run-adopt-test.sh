@@ -2,8 +2,9 @@
 # Teste de aceite ao vivo do modo adotar: roda /kit:init via `claude -p` num repo com CLAUDE.md, settings,
 # skill, agent, rule e hooks proprios e confere por hash que CLAUDE.md, skills, agents, hooks, rules,
 # MCP e settings.local.json nao mudaram, que o settings.json so ganhou itens (com backup identico ao
-# original) e que docs/claude-adoption.md foi gerado.
-# Custa uma sessao do Claude Code (alguns minutos). Uso: tests/run-adopt-test.sh [--keep]
+# original), que docs/claude-adoption.md foi gerado e que o deny de curl/wget fica de fora (a fixture
+# tem uma skill que usa curl). Depois roda /kit:init num repositorio novo sem curl/wget: o deny entra.
+# Custa duas sessoes do Claude Code (alguns minutos cada). Uso: tests/run-adopt-test.sh [--keep]
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -78,7 +79,7 @@ A="$P/docs/claude-adoption.md"
 if [ -f "$A" ]; then
   ok "docs/claude-adoption.md gerado"
   miss=""
-  for piece in no-rm-rf manual-check lint-hint block-generated review manual-sync fix publicar-previa i18n-checker docs-search; do
+  for piece in no-rm-rf manual-check lint-hint block-generated review manual-sync fix publicar-previa status-api i18n-checker docs-search; do
     grep -qi -- "$piece" "$A" || miss+="$piece "
   done
   [ -z "$miss" ] && ok "relatorio cobre todas as pecas do inventario" || ko "relatorio cobre todas as pecas do inventario" "faltam: $miss"
@@ -107,9 +108,36 @@ if jq -e --slurpfile b "$W/settings.before" '.hooks == $b[0].hooks' "$S" >/dev/n
 if jq -e '.enabledPlugins["kit@claude-kit"] == true and (.extraKnownMarketplaces["claude-kit"] != null)' "$S" >/dev/null 2>&1; then ok "settings.json habilita kit@claude-kit"; else ko "settings.json habilita kit@claude-kit" "$(jq -c '{enabledPlugins, extraKnownMarketplaces}' "$S" 2>&1)"; fi
 if jq -e '(.permissions.deny // []) | index("Skill(kit:fix)") != null' "$S" >/dev/null 2>&1; then ok "settings.json traz Skill(kit:fix) em deny"; else ko "settings.json traz Skill(kit:fix) em deny" "$(jq -c '.permissions' "$S" 2>&1)"; fi
 if jq -e '.enabledPlugins["typescript-lsp@claude-plugins-official"] == true' "$S" >/dev/null 2>&1; then ok "settings.json liga o plugin LSP oficial da linguagem"; else ko "settings.json liga o plugin LSP oficial da linguagem" "$(jq -c '.enabledPlugins' "$S" 2>&1)"; fi
+if jq -e '[(.permissions.deny // [])[] | select(test("^Bash\\((curl|wget)"))] == []' "$S" >/dev/null 2>&1; then ok "settings.json sem deny de curl/wget (a skill status-api usa curl)"
+else ko "settings.json sem deny de curl/wget (a skill status-api usa curl)" "$(jq -c '.permissions.deny' "$S" 2>&1)"; fi
+if grep -qE 'curl/wget usados por [0-9]+ arquivos? do projeto[^;]*; deny não aplicado' "$W/claude.out"; then ok "relatório registra curl/wget usados e deny não aplicado"
+else ko "relatório registra curl/wget usados e deny não aplicado" "$(tail -n 12 "$W/claude.out")"; fi
 [ ! -e "$P/.claude/kit-settings.suggested.json" ] && ok "nenhum arquivo de sugestão gerado" || ko "nenhum arquivo de sugestão gerado" "kit-settings.suggested.json existe"
 if grep -qF 'Próximo: /kit:spec' "$W/claude.out" && ! grep -qE 'run-skill-generator|/verify\b' "$W/claude.out"; then ok "relatório termina no /kit:spec, sem /run-skill-generator nem /verify"
 else ko "relatório termina no /kit:spec, sem /run-skill-generator nem /verify" "$(tail -n 12 "$W/claude.out")"; fi
+
+# Repositorio novo, sem .claude e sem curl/wget em lugar nenhum: o deny entra.
+N="$W/novo"
+cp -r "$HERE/plan/repo" "$N"
+rm -rf "$N/.claude"
+gitn() { git -C "$N" -c user.name=kit-test -c user.email=kit@test -c init.defaultBranch=main -c core.autocrlf=false "$@" >/dev/null 2>&1; }
+gitn init
+gitn add -A
+gitn commit -m init
+PROMPT_NOVO='/kit:init Respostas pré-aprovadas (execução não interativa; não há como perguntar):
+- Máquina: pule a preparação da máquina; não grave nada em ~/.claude.
+- Gravação: sim, grave tudo o que propuser.
+- Instalação de language server: não instale nada.
+- Mapa: não rode o /kit:map.
+- Marketplace do kit: r-matias/claude-kit.
+- Monorepo: não.'
+echo "rodando /kit:init num repositório novo sem curl em $N..."
+(cd "$N" && timeout 1500 claude -p "$PROMPT_NOVO" --plugin-dir "$PLUGIN" --setting-sources project,local --permission-mode acceptEdits --allowedTools "Bash" "Write" "Edit" "Write(./.claude/**)" "Edit(./.claude/**)" --max-turns 80 </dev/null >"$W/novo.out" 2>&1)
+if jq -e '(.permissions.deny // []) | (index("Bash(curl *)") != null and index("Bash(wget *)") != null)' "$N/.claude/settings.json" >/dev/null 2>&1; then
+  ok "repositório novo sem curl/wget: settings.json com deny de curl e wget"
+else ko "repositório novo sem curl/wget: settings.json com deny de curl e wget" "$(jq -c '.permissions.deny' "$N/.claude/settings.json" 2>&1)"; fi
+if ! grep -qF 'deny não aplicado' "$W/novo.out"; then ok "repositório novo sem curl/wget: relatório sem aviso de deny não aplicado"
+else ko "repositório novo sem curl/wget: relatório sem aviso de deny não aplicado" "$(grep -F 'deny não aplicado' "$W/novo.out")"; fi
 
 echo
 echo "$PASS passaram, $FAIL falharam"

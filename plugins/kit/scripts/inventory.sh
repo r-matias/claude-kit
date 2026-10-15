@@ -1,11 +1,58 @@
 #!/usr/bin/env bash
 # Inventario da configuracao Claude Code de um repositorio, usado pelo modo adotar do /kit:init. Nao e hook.
 # Uso: inventory.sh [diretorio-do-projeto]
+#      inventory.sh --net [diretorio-do-projeto]   so os arquivos do projeto que usam curl/wget, um por linha
 set -u
 command -v jq >/dev/null 2>&1 || { echo "inventory: jq nao encontrado" >&2; exit 2; }
 
+NET_ONLY=0
+if [ "${1:-}" = "--net" ]; then NET_ONLY=1; shift; fi
 ROOT="${1:-.}"
 cd "$ROOT" || exit 2
+
+NET_RE='(^|[^A-Za-z0-9_.-])(curl|wget)([^A-Za-z0-9_-]|$)'
+
+# Script citado num comando de hook ($CLAUDE_PROJECT_DIR vira .), se existir no projeto.
+hook_script() {
+  local s
+  s="$(printf '%s' "$1" | sed -e 's/\${CLAUDE_PROJECT_DIR}/./g' -e 's/\$CLAUDE_PROJECT_DIR/./g' -e 's/"//g' |
+    grep -oE '[^ ]+\.(sh|bash|py|js|mjs|cjs|ts)' | head -n 1)"
+  [ -n "$s" ] && [ -f "$s" ] && printf '%s' "${s#./}"
+}
+
+# Arquivos do projeto que usam curl ou wget: skills, agents, commands e hooks do .claude, comandos
+# de hook nos settings e os scripts que eles chamam, scripts do package.json, Makefile e justfile.
+net_users() {
+  local f s cmd
+  {
+    find .claude/skills .claude/agents .claude/commands .claude/hooks -type f 2>/dev/null |
+      while IFS= read -r f; do grep -Eq -- "$NET_RE" "$f" 2>/dev/null && printf '%s\n' "${f#./}"; done
+    for s in .claude/settings.json .claude/settings.local.json; do
+      [ -f "$s" ] || continue
+      while IFS= read -r cmd; do
+        [ -n "$cmd" ] || continue
+        printf '%s' "$cmd" | grep -Eq -- "$NET_RE" && printf '%s\n' "$s"
+        f="$(hook_script "$cmd")"
+        [ -n "$f" ] && grep -Eq -- "$NET_RE" "$f" 2>/dev/null && printf '%s\n' "$f"
+      done < <(jq -r '(.hooks // {})[][]?.hooks[]? | "\(.command // "")\(if .args then " " + (.args | join(" ")) else "" end)"' "$s" 2>/dev/null | tr -d '\r')
+    done
+    {
+      git ls-files -co --exclude-standard -- package.json '*/package.json' Makefile '*/Makefile' justfile '*/justfile' 2>/dev/null
+      for f in package.json Makefile justfile; do [ -f "$f" ] && echo "$f"; done
+    } | grep -v 'node_modules/' | sort -u | while IFS= read -r f; do
+      [ -f "$f" ] || continue
+      case "${f##*/}" in
+        package.json) jq -r '(.scripts // {})[]?' "$f" 2>/dev/null | tr -d '\r' | grep -Eq -- "$NET_RE" && printf '%s\n' "$f" ;;
+        *) grep -Eq -- "$NET_RE" "$f" 2>/dev/null && printf '%s\n' "$f" ;;
+      esac
+    done
+  } | awk 'NF && !seen[$0]++'
+}
+
+if [ "$NET_ONLY" -eq 1 ]; then
+  net_users
+  exit 0
+fi
 
 frontmatter() {
   awk -v key="$2" '
@@ -237,6 +284,16 @@ if [ "$secret_deny" -eq 0 ]; then
   echo "- [sem deny de segredos] nenhuma regra \`Read(...)\` em \`permissions.deny\` cobre \`.env\`, chaves ou \`secrets/\` (projeto, local ou usuário)."
 fi
 [ "$found" -eq 1 ] || echo "- nenhum"
+
+echo
+echo "## curl/wget no projeto"
+NET="$(net_users)"
+if [ -n "$NET" ]; then
+  echo "- usados por $(printf '%s\n' "$NET" | wc -l | tr -d ' ') arquivos; o init não aplica o deny de \`Bash(curl *)\`/\`Bash(wget *)\`:"
+  printf '%s\n' "$NET" | sed 's/^/  - `/; s/$/`/'
+else
+  echo "- nenhum"
+fi
 
 echo
 echo "## Outros arquivos em .claude/"

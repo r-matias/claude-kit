@@ -42,5 +42,5 @@ A resposta entra em Decisões como `- <data> · usuário · <decisão> — <perg
 7. **Waves:** agrupe por dependência. Uma tarefa só usa o que waves anteriores criam. Na linha `Paralelo:` da wave, liste as tarefas que não compartilham arquivo com nenhuma outra da mesma wave. Termine cada wave com a caixa de checkpoint do template.
 8. **Wave final**, fixa, como no template. Remova o passo F4 se o `kit.json` não tiver `smoke`.
 9. Grave `PLAN.md` ao lado da SPEC.md.
-10. Chame o `kit:plan-reviewer` com os caminhos da SPEC.md e do PLAN.md. Corrija todo achado BLOCKER e MAJOR no PLAN.md e chame de novo, até "aprovado" ou só MINOR (no máximo 3 rodadas; se sobrar BLOCKER, diga qual).
+10. Chame o `kit:plan-reviewer` com os caminhos da SPEC.md e do PLAN.md. Cada achado vem com o id da regra e a severidade fixa dele. Corrija todo achado BLOCKER e MAJOR no PLAN.md e chame de novo, até a última linha ser `aprovado` (no máximo 3 rodadas; se sobrar BLOCKER, diga qual, com o id).
 11. A resposta final é só o resumo, no máximo 5 linhas não vazias, sem título, introdução nem fecho, uma linha por item: caminho do PLAN.md; número de waves e tarefas; decisões (quantas e a principal); resultado da revisão; próximo passo (`/kit:execute <caminho>`).

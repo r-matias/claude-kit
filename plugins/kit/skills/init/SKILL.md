@@ -3,7 +3,7 @@ name: init
 description: Porta de entrada do kit. Prepara a máquina, cria o adaptador do projeto (.claude/kit.json e, se faltarem, .claude/settings.json e CLAUDE.md), soma ao settings existente só o que falta (com backup), liga o plugin LSP da linguagem e, em projeto grande ou com vários repositórios, mapeia o código. Tudo numa confirmação só. Rodado de novo, entra em modo reparo.
 argument-hint: "[respostas pré-aprovadas, opcional]"
 disable-model-invocation: true
-allowed-tools: Bash(git rev-parse *) Bash(git ls-files *) Read(${CLAUDE_PLUGIN_ROOT}/**) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/inventory.sh") Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" *) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/map-partition.sh" *) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-json.sh" *) Bash(npm install -g typescript-language-server typescript) Bash(npm install -g pyright) Bash(npm install -g intelephense) Bash(go install golang.org/x/tools/gopls@latest) Bash(rustup component add rust-analyzer) Bash(dotnet tool install --global csharp-ls) Bash(gem install ruby-lsp) Bash(brew install jdtls) Bash(brew install JetBrains/utils/kotlin-lsp)
+allowed-tools: Bash(git rev-parse *) Bash(git ls-files *) Read(${CLAUDE_PLUGIN_ROOT}/**) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/inventory.sh") Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/inventory.sh" --net) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" *) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/map-partition.sh" *) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-json.sh" *) Bash(npm install -g typescript-language-server typescript) Bash(npm install -g pyright) Bash(npm install -g intelephense) Bash(go install golang.org/x/tools/gopls@latest) Bash(rustup component add rust-analyzer) Bash(dotnet tool install --global csharp-ls) Bash(gem install ruby-lsp) Bash(brew install jdtls) Bash(brew install JetBrains/utils/kotlin-lsp)
 ---
 
 ## Estado atual
@@ -34,7 +34,7 @@ O usuário não precisa conhecer `/kit:setup` nem `/kit:map`. Faça nesta ordem,
 ## Modo reparo
 Projeto já configurado pelo kit. Não refaça a entrevista; confira e proponha só o que falta, pelas mesmas regras de escrita:
 - `.claude/kit.json`: JSON válido (`jq . .claude/kit.json`), chaves conhecidas (as de `templates/kit.example.json`, inclusive as de `map`; `repos` e `map.primary` só fazem sentido no `kit.json` da pasta-mãe), cada chave de `verify_on_stop` presente em `commands`, cada comando ainda existente no projeto (script do manifesto, target, ferramenta configurada).
-- `.claude/settings.json`: plugin habilitado (`enabledPlugins` e `extraKnownMarketplaces` do kit), plugin LSP da linguagem (passo 8) e um `Bash(<prefixo> *)` em `permissions.allow` por comando. O que faltar entra pelo merge aditivo do passo 5.
+- `.claude/settings.json`: plugin habilitado (`enabledPlugins` e `extraKnownMarketplaces` do kit), plugin LSP da linguagem (passo 8), um `Bash(<prefixo> *)` em `permissions.allow` por comando e o deny de `curl`/`wget` pela mesma regra do passo 5 (com `--net` listando arquivos, ele não entra e o relatório diz por quê). O que faltar entra pelo merge aditivo do passo 5.
 - `.gitignore` com as linhas do passo 6.
 - Mapa: rode `bash "${CLAUDE_PLUGIN_ROOT}/scripts/map-partition.sh" --status`. Desatualizado: siga o `/kit:map` com `--update` (como no passo 11). Ausente: aplique a regra do passo 11.
 - Depois, confirmação única (passo 9), gravação (passo 10) e relatório (passo 12), no mesmo formato.
@@ -70,7 +70,7 @@ Projeto já configurado pelo kit. Não refaça a entrevista; confira e proponha 
    - `enabledPlugins` do plugin LSP oficial (passo 8).
    - `permissions.allow`: um `Bash(<prefixo> *)` por comando do `kit.json`.
    - `permissions.ask`: instalação de dependência e migração de banco do stack.
-   - `permissions.deny`: `Bash(curl *)` e `Bash(wget *)` (o registry do stack fica liberado em `allowedDomains`); se `commands.smoke` usar `curl` ou `wget`, deixe a regra correspondente de fora. Mais os `Skill(kit:<nome>)`/`Agent(kit:<nome>)` das sobreposições.
+   - `permissions.deny`: `Bash(curl *)` e `Bash(wget *)` (o registry do stack fica liberado em `allowedDomains`), só se o projeto não usa nenhum dos dois. Antes de propor, rode `bash "${CLAUDE_PLUGIN_ROOT}/scripts/inventory.sh" --net`: ele lista, um por linha, os arquivos que usam `curl`/`wget` em `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/hooks`, nos comandos de hook dos settings e nos scripts que eles chamam, nos scripts do `package.json`, no `Makefile` e no `justfile`. Com qualquer linha, ou se `commands.smoke` usar `curl`/`wget`, deixe as duas regras de fora e registre no relatório a linha exata `curl/wget usados por N arquivos do projeto; deny não aplicado` (N = linhas do `--net`, mais 1 pelo smoke). Mais os `Skill(kit:<nome>)`/`Agent(kit:<nome>)` das sobreposições.
    - `sandbox.network.allowedDomains`: registry do stack (ver [stacks.md](stacks.md)).
    - Testes de integração com banco/Docker: o sandbox os bloqueia; proponha `sandbox.excludedCommands` só com o comando exato da suíte mais uma regra `ask` para ele.
    - Grave a proposta num temporário e rode `bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-json.sh" --preview .claude/settings.json <proposta>`: mostra o arquivo novo ou o diff do merge aditivo e as linhas `conflito:`. Nada é gravado aqui.
@@ -90,7 +90,7 @@ Projeto já configurado pelo kit. Não refaça a entrevista; confira e proponha 
 12. **Relatório final**, no máximo ~10 linhas, também no modo reparo:
    - O que foi feito: arquivos criados e alterados, cada alterado com "backup em `<arquivo>.bak-kit-<data>`"; instalações feitas; mapa gerado, se houve. Modo adotar: "detalhes em `docs/claude-adoption.md`".
    - O que foi verificado: cada comando de `verify_on_stop` com `ok` ou `falhou` (e a primeira linha útil do erro).
-   - Avisos de verdade, uma linha cada: Windows nativo sem sandbox, LSP sem instalação automática, dependência que não instalou, conflito mantido (`<chave>: mantido <valor do usuário>`), decisão não respondida no modo não interativo.
+   - Avisos de verdade, uma linha cada: Windows nativo sem sandbox, LSP sem instalação automática, dependência que não instalou, conflito mantido (`<chave>: mantido <valor do usuário>`), `curl/wget usados por N arquivos do projeto; deny não aplicado` (passo 5), decisão não respondida no modo não interativo.
    - Planos parados: rode `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" plans` e, se houver saída, repita as linhas como estão, sem sugerir nada.
    - Última linha, sempre: `Pronto. Próximo: /kit:spec <ideia>`
    Nada de "rode", "instale", "aplique" ou "revise" fora da última linha.

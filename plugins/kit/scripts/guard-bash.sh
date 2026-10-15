@@ -4,7 +4,7 @@
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 kit_guard_fail_closed
-kit_require_jq_strict
+kit_require_jq_strict --allow-jq-install
 kit_read_input
 
 CMD="$(kit_field '.tool_input.command')"

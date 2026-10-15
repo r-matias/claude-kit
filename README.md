@@ -44,7 +44,7 @@ Na configuração do projeto:
 
 - **Repositório sem configuração do Claude Code:** o init detecta o stack (manifestos, Makefile, CI) e cria:
   - `.claude/kit.json` com os comandos reais do projeto;
-  - `.claude/settings.json`, que liga o plugin e o LSP, libera os comandos do `kit.json`, pergunta antes de instalar dependência e nega `curl`/`wget` (o registry do stack fica liberado no sandbox);
+  - `.claude/settings.json`, que liga o plugin e o LSP, libera os comandos do `kit.json`, pergunta antes de instalar dependência e nega `curl`/`wget` (o registry do stack fica liberado no sandbox). Se o projeto já usa `curl` ou `wget` (skills, agents, commands, hooks, scripts do `package.json`, `Makefile`, `justfile`), o deny fica de fora e o relatório diz quantos arquivos usam;
   - um `CLAUDE.md` curto;
   - as linhas `.claude/state/` e `.claude/*.bak-kit-*` no `.gitignore`.
 - **Repositório que já tem `.claude/`, `CLAUDE.md` ou `.mcp.json` (modo adotar):** o init faz o inventário de hooks, skills, agents e rules, aponta sobreposições com o kit, soma ao `.claude/settings.json` o que falta e grava o relatório em `docs/claude-adoption.md`.
@@ -68,7 +68,7 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
    - `/kit:spec exportar o relatório de vendas em CSV`
    - `/kit:spec usuário pode trocar o e-mail com confirmação por link`
 2. `/clear` limpa o contexto antes de planejar.
-3. `/kit:plan` transforma a SPEC num `PLAN.md` com tarefas testáveis agrupadas em etapas (waves). Decide sozinho os detalhes técnicos e registra cada decisão no plano; só pergunta o que é decisão de produto. Um revisor confere o plano contra a SPEC antes de entregar.
+3. `/kit:plan` transforma a SPEC num `PLAN.md` com tarefas testáveis agrupadas em etapas (waves). Decide sozinho os detalhes técnicos e registra cada decisão no plano; só pergunta o que é decisão de produto. Um revisor confere o plano contra a SPEC antes de entregar: cada achado cita uma regra com id e severidade fixa (por exemplo `BLOCKER [B1]`, tarefa que usa algo da mesma wave), e o plano só sai quando o revisor diz `aprovado`.
    - `/kit:plan docs/specs/export-csv/SPEC.md`
    - `/kit:plan` (sem argumento: usa a SPEC mais recente)
 4. `/kit:execute` implementa wave a wave, escreve os testes de cada tarefa e só marca uma tarefa como feita com evidência. Ao fim de cada wave revisa o diff; no fim do plano passa por revisão de código e de segurança. Para antes de qualquer ação irreversível (deploy, push, migração em banco real) e nunca commita sem você pedir.
@@ -176,7 +176,7 @@ Sem você chamar nada, em todo projeto com o kit ligado:
 
 **Regra de acoplamento que não se aplica a esta mudança.** Grave uma linha de justificativa em `.claude/kit-skip` (ex.: `só renomeei uma variável na tela, o manual não muda`). Isso libera só os acoplamentos (`coupled_changes`), não build, testes nem tradução. O arquivo é apagado quando o gate passa e a justificativa fica registrada em `docs/claude-adoption.md` (ou `.claude/kit-skip.log`). Arquivo vazio não libera.
 
-**"kit: jq não encontrado; instale o jq".** Sem `jq` os guardas bloqueiam toda chamada, de propósito: guarda que não consegue checar não deixa passar, e por isso nem o `/kit:init` consegue instalá-lo. Instale num terminal com `winget install jqlang.jq` (Windows), `brew install jq` (macOS) ou `sudo apt install jq` (Linux/WSL) e reabra o Claude Code.
+**"kit: jq não encontrado — instale com <comando> e reabra o Claude Code".** Sem `jq` os guardas bloqueiam toda chamada, de propósito: guarda que não consegue checar não deixa passar. A única exceção é o comando exato de instalação do `jq` da plataforma (`winget install jqlang.jq` no Windows, `brew install jq` no macOS, `sudo apt install jq`, `sudo apt-get install jq`, `sudo dnf install jq` ou `sudo pacman -S jq` no Linux/WSL), sozinho, sem nada junto. A mesma mensagem aparece ao abrir a sessão. Peça ao Claude para rodar o comando, ou rode num terminal, e reabra o Claude Code.
 
 **`Executable not found in $PATH: "bash"`.** Versões antigas do kit chamavam `bash` pelo PATH, o que falha no Windows quando o Git não está no PATH. Atualize o kit (veja [Atualizar e desinstalar](#atualizar-e-desinstalar)). Se persistir no Windows, instale o Git for Windows (`winget install Git.Git`) ou aponte a variável de ambiente `CLAUDE_CODE_GIT_BASH_PATH` para o `bash.exe` (ex.: `C:\Program Files\Git\bin\bash.exe`).
 

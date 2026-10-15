@@ -364,13 +364,26 @@ if [ -z "$FILTER" ] || [[ "sem jq" == *"$FILTER"* ]]; then
   if PATH="$NOJQ_PATH" command -v jq >/dev/null 2>&1; then
     ko "PATH de teste sem jq" "jq ainda encontrado em $(PATH="$NOJQ_PATH" command -v jq)"
   else
-    for s in guard-bash.sh guard-files.sh; do
-      out="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | PATH="$NOJQ_PATH" "$BASH_BIN" "$SCRIPTS/$s" 2>"$TMP_ALL/nojq.err")"
+    case "$TEST_PLATFORM" in windows) JQ_INSTALL="winget install jqlang.jq" ;; macos) JQ_INSTALL="brew install jq" ;; *) JQ_INSTALL="sudo apt install jq" ;; esac
+    JQ_MSG="kit: jq não encontrado — instale com $JQ_INSTALL e reabra o Claude Code"
+    # Uso: nojq_guard <rotulo> <script> <json> <exit esperado>. Bloqueio: exit 2 com a mensagem; liberacao: exit 0 calado.
+    nojq_guard() {
+      local out code
+      out="$(printf '%s' "$3" | PATH="$NOJQ_PATH" "$BASH_BIN" "$SCRIPTS/$2" 2>"$TMP_ALL/nojq.err")"
       code=$?
-      if [ "$code" = "2" ] && [ -z "$out" ] && grep -qF "kit: jq não encontrado; instale o jq" "$TMP_ALL/nojq.err"; then
-        ok "$s sem jq bloqueia com exit 2"
-      else ko "$s sem jq bloqueia com exit 2" "exit $code, stdout='$out', stderr='$(cat "$TMP_ALL/nojq.err")'"; fi
+      if [ "$4" = "2" ]; then
+        if [ "$code" = "2" ] && [ -z "$out" ] && [ "$(cat "$TMP_ALL/nojq.err")" = "$JQ_MSG" ]; then ok "$1"; else ko "$1" "exit $code, stdout='$out', stderr='$(cat "$TMP_ALL/nojq.err")'"; fi
+      else
+        if [ "$code" = "0" ] && [ -z "$out" ] && [ ! -s "$TMP_ALL/nojq.err" ]; then ok "$1"; else ko "$1" "exit $code, stdout='$out', stderr='$(cat "$TMP_ALL/nojq.err")'"; fi
+      fi
+    }
+    nojq_guard "guard-bash.sh sem jq bloqueia rm -rf / com a mensagem de instalação" guard-bash.sh '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' 2
+    nojq_guard "guard-files.sh sem jq bloqueia Edit em .env com a mensagem de instalação" guard-files.sh '{"tool_name":"Edit","tool_input":{"file_path":".env","old_string":"a","new_string":"b"}}' 2
+    nojq_guard "guard-bash.sh sem jq libera o comando exato de instalação ($JQ_INSTALL)" guard-bash.sh "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\": \"$JQ_INSTALL\",\"description\":\"x\"}}" 0
+    for c in "$JQ_INSTALL; rm -rf /" "$JQ_INSTALL && rm -rf ~" "echo $JQ_INSTALL" "$JQ_INSTALL\\\"; rm -rf /"; do
+      nojq_guard "guard-bash.sh sem jq bloqueia instalação com algo junto: $c" guard-bash.sh "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$c\"}}" 2
     done
+    nojq_guard "guard-bash.sh sem jq bloqueia a instalação citada só na descrição" guard-bash.sh "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"rm -rf /\",\"description\":\"\\\"command\\\":\\\"$JQ_INSTALL\\\"\"}}" 2
     for s in format.sh verify-gate.sh advise.sh pre-compact.sh; do
       out="$(printf '%s' '{"cwd":"."}' | PATH="$NOJQ_PATH" "$BASH_BIN" "$SCRIPTS/$s" 2>"$TMP_ALL/nojq.err")"
       code=$?
@@ -380,10 +393,10 @@ if [ -z "$FILTER" ] || [[ "sem jq" == *"$FILTER"* ]]; then
     done
     out="$(printf '%s' '{"cwd":"."}' | PATH="$NOJQ_PATH" "$BASH_BIN" "$SCRIPTS/session-context.sh" 2>"$TMP_ALL/nojq.err")"
     code=$?
-    if [ "$code" = "0" ] && grep -qF 'kit: jq não encontrado' <<<"$out" && grep -qE '`(winget install jqlang.jq|brew install jq|sudo apt install jq)`' <<<"$out" &&
-      grep -qF '/kit:setup' <<<"$out" && [ ! -s "$TMP_ALL/nojq.err" ]; then
-      ok "session-context.sh sem jq avisa com o comando de instalação e /kit:setup"
-    else ko "session-context.sh sem jq avisa com o comando de instalação e /kit:setup" "exit $code, stdout='$out', stderr='$(cat "$TMP_ALL/nojq.err")'"; fi
+    if [ "$code" = "0" ] && jq -e --arg m "$JQ_MSG" '.systemMessage == $m and .hookSpecificOutput.hookEventName == "SessionStart"
+      and (.hookSpecificOutput.additionalContext | contains($m))' <<<"$out" >/dev/null 2>&1 && [ ! -s "$TMP_ALL/nojq.err" ]; then
+      ok "session-context.sh sem jq avisa em systemMessage e additionalContext com o comando de instalação"
+    else ko "session-context.sh sem jq avisa em systemMessage e additionalContext com o comando de instalação" "exit $code, stdout='$out', stderr='$(cat "$TMP_ALL/nojq.err")'"; fi
     out="$(printf '%s' '{"cwd":"."}' | PATH="$NOJQ_PATH" "$BASH_BIN" "$SCRIPTS/session-context.sh" --plan-only 2>&1)"
     if [ "$?" = "0" ] && [ -z "$out" ]; then ok "session-context.sh --plan-only sem jq não avisa"; else ko "session-context.sh --plan-only sem jq não avisa" "stdout='$out'"; fi
   fi
@@ -540,6 +553,30 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
     ! grep -qF -- "$s" "$U/inv" || risk_miss+="[nao deveria: $s] "
   done
   if [ -z "$risk_miss" ]; then ok "inventory: sobreposicoes, aviso mudo, falha aberta e riscos de configuracao"; else ko "inventory: sobreposicoes, aviso mudo, falha aberta e riscos de configuracao" "$risk_miss"; fi
+
+  # curl/wget usados pelo projeto: o init deixa o deny de fora.
+  out="$(bash "$SCRIPTS/inventory.sh" --net "$U/adopt" 2>&1)"
+  if [ "$out" = ".claude/skills/status-api/SKILL.md" ] && grep -qF -- '- usados por 1 arquivos' "$U/inv" && grep -qF -- '`.claude/skills/status-api/SKILL.md`' "$U/inv"; then
+    ok "inventory --net: skill da fixture de adoção que usa curl"
+  else ko "inventory --net: skill da fixture de adoção que usa curl" "$out"; fi
+  N="$U/net"
+  mkdir -p "$N/.claude/hooks" "$N/.claude/agents" "$N/.claude/commands" "$N/pkg"
+  printf '%s' '{"scripts":{"build":"tsc","ping":"curl -fsS http://localhost/health"},"description":"usa curl no texto, fora de scripts"}' >"$N/package.json"
+  printf '%s' '{"scripts":{"x":"node libcurl-wrapper.js && echo curlew"}}' >"$N/pkg/package.json"
+  printf 'get:\n\twget -q https://example.com/a.tgz\n' >"$N/Makefile"
+  printf 'build:\n    cargo build\n' >"$N/justfile"
+  printf '#!/bin/sh\nwget -qO- "$URL" >/dev/null\n' >"$N/scripts-hook.sh"
+  printf '#!/bin/sh\necho ok\n' >"$N/.claude/hooks/quieto.sh"
+  printf '%s\n' '---' 'name: baixa' '---' 'Rode `curl -O $URL`.' >"$N/.claude/commands/baixa.md"
+  printf '%s\n' '---' 'name: leitor' '---' 'Leia os arquivos.' >"$N/.claude/agents/leitor.md"
+  printf '%s' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/scripts-hook.sh\""}]}],"PostToolUse":[{"hooks":[{"type":"command","command":"curl -s localhost:9/notify"},{"type":"command","command":"bash .claude/hooks/quieto.sh"}]}]}}' >"$N/.claude/settings.json"
+  git_q init "$N"
+  out="$(bash "$SCRIPTS/inventory.sh" --net "$N" 2>&1 | LC_ALL=C sort | paste -sd' ' -)"
+  if [ "$out" = ".claude/commands/baixa.md .claude/settings.json Makefile package.json scripts-hook.sh" ]; then
+    ok "inventory --net: commands, comando e script de hook, package.json scripts e Makefile; sem falso positivo"
+  else ko "inventory --net: commands, comando e script de hook, package.json scripts e Makefile; sem falso positivo" "$out"; fi
+  out="$(bash "$SCRIPTS/inventory.sh" --net "$HERE/sample" 2>&1)"
+  if [ -z "$out" ]; then ok "inventory --net: projeto sem curl/wget não lista nada (o deny entra)"; else ko "inventory --net: projeto sem curl/wget não lista nada (o deny entra)" "$out"; fi
 fi
 
 echo "wave-base"
