@@ -1,6 +1,6 @@
 # Modo adotar
 
-O repositório já tem configuração do Claude Code. O kit só soma: nenhum arquivo de Claude Code existente é editado, mesclado, desativado ou apagado (`CLAUDE.md`, `.claude/settings*.json`, `.mcp.json`, skills, agents, commands, rules e hooks). O kit cria só arquivos novos dele e, para o que mexeria na configuração do projeto, deixa uma sugestão que o usuário aplica se quiser.
+O repositório já tem configuração do Claude Code. O kit só soma: `CLAUDE.md`, `.claude/settings.local.json`, `.mcp.json`, skills, agents, commands, rules e hooks do projeto ficam intactos. O `.claude/settings.json` só recebe o merge aditivo do passo 5 do SKILL.md (com backup e dentro da confirmação única). O que o kit não pode fazer sozinho (desligar um hook do projeto, por exemplo) fica registrado em `docs/claude-adoption.md`.
 
 Siga estas etapas e, dentro da etapa 4, os passos do SKILL.md.
 
@@ -18,8 +18,8 @@ A seção "Riscos e sobreposições" do inventário já traz detecções prontas
 
 | Marca | O que significa | Sugestão padrão |
 | --- | --- | --- |
-| `[sobreposição] skill` | Skill do projeto com o mesmo propósito de uma skill do kit. Se a do projeto tem `disable-model-invocation: true` e a do kit não, o Claude escolhe sozinho a do kit para pedidos como "corrige esse bug". | A skill do projeto é a dona: sugerir `Skill(kit:<nome>)` em `permissions.deny` (vai para `.claude/kit-settings.suggested.json`), explicando o motivo. |
-| `[sobreposição] agent` | Agent do projeto com o mesmo papel de um agent do kit. | O agent do projeto é o dono: sugerir `Agent(kit:<nome>)` em `permissions.deny`. |
+| `[sobreposição] skill` | Skill do projeto com o mesmo propósito de uma skill do kit. Se a do projeto tem `disable-model-invocation: true` e a do kit não, o Claude escolhe sozinho a do kit para pedidos como "corrige esse bug". | A skill do projeto é a dona: `Skill(kit:<nome>)` em `permissions.deny` (entra no merge aditivo do `.claude/settings.json`), com o motivo no relatório de adoção. |
+| `[sobreposição] agent` | Agent do projeto com o mesmo papel de um agent do kit. | O agent do projeto é o dono: `Agent(kit:<nome>)` em `permissions.deny` (merge aditivo). |
 | `[aviso possivelmente mudo]` | Hook PreToolUse, PostToolUse ou Stop que imprime texto no stdout sem JSON `additionalContext`; com exit 0 o texto não chega ao Claude. | Declarar o acoplamento em `coupled_changes` com `level: "warn"` no `kit.json` e sugerir que o usuário desligue o hook, ou que troque a saída do script para JSON `additionalContext`. |
 | `[falha aberta]` | Hook PreToolUse que faz `jq ... \|\| exit 0`: sem jq, a guarda libera tudo. | Declarar os caminhos em `protected_paths` (mensagem por item) e sugerir que o usuário desligue o hook ou troque para exit 2. |
 | `[efeito colateral]` | Skill de deploy, release, backup, push, migração ou publicação sem `disable-model-invocation: true`. | Listar; sugerir o campo. |
@@ -29,13 +29,13 @@ Listas de bloqueio do projeto (hook que nega edição de caminhos com uma mensag
 
 ## 2. Classificação
 
-Cada peça recebe uma sugestão; nenhuma muda o arquivo da peça:
+Cada peça recebe um destino; nenhum muda o arquivo da peça:
 
 | Sugestão | Quando | Exemplo |
 | --- | --- | --- |
 | Manter no projeto | Regra de domínio que não dá para expressar de forma genérica | Checagem que exige ler o conteúdo do manual |
 | Desativar a do projeto | O kit faz o mesmo ou mais | Hook próprio que bloqueia `rm -rf` → `guard-bash`; o relatório diz qual entrada do settings o usuário remove |
-| Desativar a do kit | A peça do projeto é a dona | Skill de fix do projeto → `Skill(kit:fix)` em deny |
+| Desativar a do kit | A peça do projeto é a dona | Skill de fix do projeto → `Skill(kit:fix)` em deny, gravado pelo merge aditivo |
 | Declarar no `kit.json` | Cabe em `coupled_changes`, `key_parity` ou `protected_paths` | Tela mudou sem manual; i18n faltando em uma língua. O `kit.json` é do kit e recebe a declaração; o hook original fica |
 | Promover ao kit | Genérico e útil em outros projetos, mas o kit ainda não tem | Vira nova feature do plugin, implementada e testada no repo do kit, não aqui |
 | Somar | Ambos agregam algo diferente | Sugerir que a skill de review do projeto chame `kit:code-reviewer`; o usuário edita se quiser |
@@ -45,7 +45,7 @@ Equivalentes do kit para comparar:
 - Skills: `spec`, `plan`, `execute`, `epic`, `fix`, `hunt`, `map`.
 - Agents: `investigator`, `code-reviewer`, `plan-reviewer`, `security-reviewer`, `test-writer`, `mapper`, `map-verifier`.
 
-**Sobreposições:** dois hooks bloqueando a mesma coisa (mensagens duplicadas, tempo extra) e duas skills ou agents de review com escopos parecidos (Claude escolhe um de forma imprevisível). O relatório indica qual seria a dona e qual o usuário desativa, e como; o kit não desativa nada.
+**Sobreposições:** dois hooks bloqueando a mesma coisa (mensagens duplicadas, tempo extra) e duas skills ou agents de review com escopos parecidos (Claude escolhe um de forma imprevisível). Quando a dona é a peça do projeto, o kit se desliga pelo deny do merge aditivo. Quando a dona é o kit, a peça do projeto fica como está e `docs/claude-adoption.md` registra qual é e como desligá-la.
 
 ## 3. Prova de equivalência
 
@@ -74,7 +74,7 @@ Obrigatória para toda sugestão "Desativar a do projeto" ou "Declarar no `kit.j
 
 ## 4. Adições
 
-Siga os passos do SKILL.md com as regras de escrita: só arquivos novos ou do kit (`.claude/kit.json`, `.claude/kit-settings.suggested.json`, `docs/claude-adoption.md`), conteúdo mostrado e gravação só após confirmação. Declarações (`coupled_changes`, `key_parity`, `protected_paths`) vão para o `kit.json`. Tudo o que tocaria `.claude/settings.json`, `CLAUDE.md`, skills, agents ou hooks existentes vira sugestão: os JSON em `.claude/kit-settings.suggested.json` (via `merge-json.sh --additions`), o resto em texto no relatório.
+Siga os passos do SKILL.md com as regras de escrita: arquivos novos ou do kit (`.claude/kit.json`, `docs/claude-adoption.md`), merge aditivo no `.claude/settings.json` (`merge-json.sh --preview` na confirmação, `--apply` depois), tudo na confirmação única. Declarações (`coupled_changes`, `key_parity`, `protected_paths`) vão para o `kit.json`. O que tocaria `CLAUDE.md`, skills, agents, rules ou hooks existentes só fica registrado em `docs/claude-adoption.md`.
 
 ## 5. Relatório
 
@@ -85,7 +85,7 @@ Grave `docs/claude-adoption.md` (arquivo do kit; se já existir, acrescente uma 
 
 Data: <AAAA-MM-DD> · Versão do kit: <version do plugin.json>
 
-O kit não alterou nenhum arquivo de configuração do projeto. As sugestões abaixo são aplicadas por você, se quiser.
+O kit não alterou `CLAUDE.md`, skills, agents, rules, hooks nem `settings.local.json`. No `.claude/settings.json` só acrescentou (backup em `.claude/settings.json.bak-kit-<data>`).
 
 ## Peças
 | Peça | Tipo | Origem | O que faz | Quando dispara | Sugestão | Prova |
@@ -98,11 +98,10 @@ O kit não alterou nenhum arquivo de configuração do projeto. As sugestões ab
 ## Riscos detectados
 | Marca | Peça | Motivo | Sugestão |
 | --- | --- | --- | --- |
-| sobreposição | skill fix | a do projeto tem disable-model-invocation: true e a do kit não; o Claude escolheria kit:fix sozinho | `Skill(kit:fix)` em permissions.deny (em .claude/kit-settings.suggested.json) |
+| sobreposição | skill fix | a do projeto tem disable-model-invocation: true e a do kit não; o Claude escolheria kit:fix sozinho | `Skill(kit:fix)` em permissions.deny (gravado no .claude/settings.json) |
 
-## Sugestões de configuração
-- `.claude/kit-settings.suggested.json`: <resumo do que soma> (diff abaixo)
-- `CLAUDE.md`: <seções sugeridas>
+## Acrescentado ao settings
+- `.claude/settings.json`: <resumo do que somou> (diff abaixo); conflitos mantidos: <chave: valor do usuário>
 
 ## Promover ao kit
 - <peça>: <o que faria no kit e por que é genérica>

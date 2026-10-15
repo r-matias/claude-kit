@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Apoio do /kit:setup e do /kit:init. Nao e hook. Settings do usuario: ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json.
-# O kit nunca altera um settings que ja existe: so cria o arquivo quando ele falta; senao, grava
-# ao lado a sugestao do que somaria (kit-settings.suggested.json) para o usuario aplicar.
+# Settings existente so recebe merge aditivo (merge-json.sh --apply): backup ao lado, nada removido,
+# valor existente mantido. A unica troca possivel e enabledPlugins."kit@claude-kit", pelo escopo escolhido.
 #
 #   setup.sh check
 #     Plataforma e dependencias (Claude Code >= minima, git, bash, jq; no Linux/WSL2 tambem bwrap e
@@ -9,17 +9,24 @@
 #
 #   setup.sh status
 #     check mais as regras de usuario do kit no settings e o marketplace claude-kit. Exit 1 se a
-#     maquina precisa do /kit:setup (dependencia faltando, settings ausente, ou regras ausentes sem
-#     sugestao gerada). Usado pelo /kit:init antes de configurar o projeto.
+#     maquina precisa do setup (dependencia faltando, settings ausente ou regra do kit ausente).
+#     Usado pelo /kit:init antes de configurar o projeto.
 #
 #   setup.sh propose <todos|opt-in>
-#     Template de usuario (sandbox.failIfUnavailable pela plataforma e pelo bwrap/socat no Linux, enabledPlugins."kit@claude-kit"
-#     true em todos, false em opt-in). Settings ausente: grava a proposta (settings.kit-proposta.json)
-#     e imprime o diff. Settings existente: grava kit-settings.suggested.json so com o que somaria
-#     (mais a troca de enabledPlugins do kit, se o escopo pedir) e imprime o diff do resultado.
+#     Template de usuario ajustado a plataforma (PowerShell em deny so no Windows nativo; bloco
+#     sandbox so onde ha sandbox) com enabledPlugins."kit@claude-kit" true em todos, false em opt-in.
+#     Grava a proposta (settings.kit-proposta.json) e imprime o diff do settings como ficaria.
 #
 #   setup.sh apply
-#     So com settings ausente: grava a proposta como settings. Settings existente: recusa (exit 1).
+#     Grava a proposta: cria o settings ou faz o merge aditivo com backup. Exit 1 se o merge perderia algo.
+#
+#   setup.sh lsp [pasta]
+#     Plugins LSP oficiais das linguagens do projeto (pelos manifestos rastreados), um por linha:
+#     "lsp <plugin> <binario>: ok", "... falta — instale: <comando>" ou "... falta — sem instalação
+#     automática nesta plataforma". Linguagem sem plugin oficial nao aparece.
+#
+#   setup.sh plans [pasta]
+#     Planos com tarefa pendente e mais de 14 dias sem mudanca, um por linha.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib.sh"
@@ -27,9 +34,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS="$CONFIG/settings.json"
 PROPOSAL="$CONFIG/settings.kit-proposta.json"
-SUGGESTED="$CONFIG/kit-settings.suggested.json"
 TEMPLATE="$HERE/../templates/user-settings.json"
 PLUGIN_KEY="kit@claude-kit"
+PLUGIN_PATH='["enabledPlugins","kit@claude-kit"]'
+LSP_MARKETPLACE="claude-plugins-official"
 
 # Linux e WSL2: o sandbox do Claude Code precisa de bwrap (bubblewrap) e socat. Lista os ausentes.
 sandbox_missing() {
@@ -94,13 +102,17 @@ cmd_check() {
   return "$missing"
 }
 
-# Template ajustado a plataforma (failIfUnavailable), gravado em $1.
+# Template ajustado a plataforma, gravado em $1. PowerShell em deny so no Windows nativo, onde os
+# guardas do kit nao a cobrem. Bloco sandbox (e o ask de dangerouslyDisableSandbox) so onde ha
+# sandbox: macOS, ou Linux/WSL2 com bwrap e socat; sem ele, failIfUnavailable travaria todo Bash.
 template_for_platform() {
-  local fail
-  # Sem sandbox possivel (Windows nativo, ou Linux/WSL sem bwrap e socat), failIfUnavailable
-  # true travaria toda chamada de Bash.
-  if [ "$(kit_platform)" = "windows" ] || [ -n "$(sandbox_missing)" ]; then fail=false; else fail=true; fi
-  jq --argjson f "$fail" '.sandbox.failIfUnavailable = $f' "$TEMPLATE" | tr -d '\r' >"$1"
+  local p sb=true
+  p="$(kit_platform)"
+  if [ "$p" = "windows" ] || [ -n "$(sandbox_missing)" ]; then sb=false; fi
+  jq --arg p "$p" --argjson sb "$sb" '
+    (if $p == "windows" then .permissions.deny += ["PowerShell"] else . end)
+    | (if $sb then .sandbox.failIfUnavailable = true
+       else del(.sandbox) | .permissions.ask -= ["Bash(dangerouslyDisableSandbox:true)"] end)' "$TEMPLATE" | tr -d '\r' >"$1"
 }
 
 # Maquina pronta para o kit? check + regras de usuario do template presentes + marketplace conhecido.
@@ -115,7 +127,7 @@ cmd_status() {
   tmp="$(mktemp)"
   template_for_platform "$tmp"
   if [ ! -f "$SETTINGS" ]; then
-    echo "falta settings: $SETTINGS não existe — rode /kit:setup"
+    echo "falta settings: $SETTINGS não existe"
     missing=1
   elif ! jq empty "$SETTINGS" >/dev/null 2>&1; then
     echo "falta settings: $SETTINGS não é JSON válido"
@@ -125,10 +137,8 @@ cmd_status() {
     n="$(printf '%s' "$lost" | grep -c . || true)"
     if [ "$n" -eq 0 ]; then
       echo "ok settings"
-    elif [ -f "$SUGGESTED" ]; then
-      echo "aviso settings: $n regra(s) de usuário do kit ausentes; sugestão em $SUGGESTED (o kit não altera o settings existente)"
     else
-      echo "falta settings: $n regra(s) de usuário do kit ausentes em $SETTINGS — rode /kit:setup para gerar a sugestão"
+      echo "falta settings: $n regra(s) de usuário do kit ausentes em $SETTINGS"
       missing=1
     fi
   fi
@@ -138,13 +148,13 @@ cmd_status() {
   elif jq -e 'has("claude-kit")' "$mk" >/dev/null 2>&1; then
     echo "ok marketplace claude-kit"
   else
-    echo "aviso marketplace: claude-kit não registrado — rode /plugin marketplace add r-matias/claude-kit"
+    echo "aviso marketplace: claude-kit não registrado"
   fi
   return "$missing"
 }
 
 cmd_propose() {
-  local scope="${1:-}" enabled tmp cur
+  local scope="${1:-}" enabled tmp
   case "$scope" in
     todos) enabled=true ;;
     opt-in) enabled=false ;;
@@ -158,48 +168,66 @@ cmd_propose() {
   mkdir -p "$CONFIG"
   tmp="$(mktemp)"
   template_for_platform "$tmp"
-  jq --arg k "$PLUGIN_KEY" --argjson e "$enabled" '.enabledPlugins[$k] = $e' "$tmp" | tr -d '\r' >"$tmp.full"
-  mv "$tmp.full" "$tmp"
-
-  if [ ! -f "$SETTINGS" ]; then
-    rm -f "$SUGGESTED"
-    jq . "$tmp" | tr -d '\r' >"$PROPOSAL"
-    rm -f "$tmp"
-    diff -u --label "$SETTINGS (novo)" --label "proposta" /dev/null "$PROPOSAL"
-    echo "proposta: $PROPOSAL"
-    return 0
-  fi
-
-  rm -f "$PROPOSAL"
-  cur="$(jq -r --arg k "$PLUGIN_KEY" '(.enabledPlugins // {})[$k] | tostring' "$SETTINGS" 2>/dev/null | tr -d '\r')"
-  bash "$HERE/merge-json.sh" --additions "$SETTINGS" "$tmp" |
-    jq --arg k "$PLUGIN_KEY" --argjson e "$enabled" --arg cur "$cur" \
-      'if $cur != "null" and $cur != ($e | tostring) then .enabledPlugins[$k] = $e else . end' | tr -d '\r' >"$SUGGESTED"
+  jq --arg k "$PLUGIN_KEY" --argjson e "$enabled" '.enabledPlugins[$k] = $e' "$tmp" | tr -d '\r' >"$PROPOSAL"
   rm -f "$tmp"
-  if ! jq empty "$SUGGESTED" >/dev/null 2>&1; then rm -f "$SUGGESTED"; echo "setup: falha ao montar a sugestão" >&2; return 2; fi
-  if jq -e '. == {}' "$SUGGESTED" >/dev/null 2>&1; then
-    rm -f "$SUGGESTED"
-    echo "nada a sugerir: $SETTINGS já tem as regras do kit"
-    return 0
-  fi
-  [ "$cur" != "null" ] && [ "$cur" != "$enabled" ] &&
-    echo "troca sugerida: enabledPlugins.\"$PLUGIN_KEY\": $cur -> $enabled"
-  diff -u --label "$SETTINGS" --label "$SETTINGS com a sugestão" <(jq . "$SETTINGS" | tr -d '\r') \
-    <(bash "$HERE/merge-json.sh" "$SETTINGS" "$SUGGESTED" 2>/dev/null |
-      jq --slurpfile s "$SUGGESTED" --arg k "$PLUGIN_KEY" 'if ($s[0].enabledPlugins // {}) | has($k) then .enabledPlugins[$k] = $s[0].enabledPlugins[$k] else . end' | tr -d '\r')
-  echo "sugestão: $SUGGESTED (o kit não altera $SETTINGS; aplique se quiser)"
+  bash "$HERE/merge-json.sh" --preview --prefer "$PLUGIN_PATH" "$SETTINGS" "$PROPOSAL"
+  echo "proposta: $PROPOSAL"
   return 0
 }
 
 cmd_apply() {
-  if [ -f "$SETTINGS" ]; then
-    echo "setup: $SETTINGS já existe e o kit não altera settings existente; aplique a sugestão de $SUGGESTED se quiser" >&2
-    return 1
-  fi
+  local code
   [ -f "$PROPOSAL" ] || { echo "setup: sem proposta; rode setup.sh propose" >&2; return 2; }
   jq empty "$PROPOSAL" >/dev/null 2>&1 || { echo "setup: proposta inválida" >&2; return 2; }
-  mv "$PROPOSAL" "$SETTINGS"
-  echo "gravado: $SETTINGS"
+  bash "$HERE/merge-json.sh" --apply --prefer "$PLUGIN_PATH" "$SETTINGS" "$PROPOSAL"
+  code=$?
+  [ "$code" -eq 0 ] && rm -f "$PROPOSAL"
+  return "$code"
+}
+
+# Plugins LSP oficiais por linguagem (marketplace claude-plugins-official), em templates/lsp-plugins.txt:
+# plugin|binario|manifestos (nome do arquivo, * vale qualquer trecho)|instalacao ("macos:" = so no
+# macOS; vazio = sem instalacao automatica).
+LSP_TABLE_FILE="$HERE/../templates/lsp-plugins.txt"
+
+cmd_lsp() {
+  local dir="${1:-.}" p plugin bin globs inst names tool
+  git -C "$dir" rev-parse --show-toplevel >/dev/null 2>&1 || { echo "setup: $dir não é repositório git" >&2; return 2; }
+  p="$(kit_platform)"
+  names="$(git -C "$dir" ls-files -co --exclude-standard 2>/dev/null | tr -d '\r' | awk -F/ '{ print $NF }' | sort -u)"
+  while IFS='|' read -r plugin bin globs inst; do
+    [ -n "$plugin" ] || continue
+    printf '%s\n' "$names" | awk -v gl="$globs" '
+      BEGIN { n = split(gl, g, " "); for (i = 1; i <= n; i++) { gsub(/\./, "\\.", g[i]); gsub(/\*/, ".*", g[i]); g[i] = "^" g[i] "$" } }
+      { for (i = 1; i <= n; i++) if ($0 ~ g[i]) { found = 1; exit } }
+      END { exit !found }' || continue
+    if command -v "$bin" >/dev/null 2>&1; then
+      echo "lsp $plugin@$LSP_MARKETPLACE $bin: ok"
+      continue
+    fi
+    case "$inst" in
+      macos:*) if [ "$p" = "macos" ]; then inst="${inst#macos:}"; else inst=""; fi ;;
+    esac
+    tool="${inst%% *}"
+    if [ -n "$inst" ] && command -v "$tool" >/dev/null 2>&1; then
+      echo "lsp $plugin@$LSP_MARKETPLACE $bin: falta — instale: $inst"
+    else
+      echo "lsp $plugin@$LSP_MARKETPLACE $bin: falta — sem instalação automática nesta plataforma"
+    fi
+  done < <(tr -d '\r' <"$LSP_TABLE_FILE")
+  return 0
+}
+
+cmd_plans() {
+  local dir="${1:-.}" root now m d t f
+  command -v jq >/dev/null 2>&1 || { echo "setup: jq não encontrado" >&2; return 2; }
+  root="$(kit_session_root "$(cd "$dir" && pwd)")"
+  now="$(date +%s)"
+  while IFS=$'\t' read -r m d t f; do
+    [ -n "$f" ] || continue
+    echo "plano parado há $(((now - m) / 86400)) dias: $(kit_rel_to "$root" "$f") ($d/$t)"
+  done < <(kit_stale_plans "$root")
+  return 0
 }
 
 case "${1:-}" in
@@ -207,5 +235,7 @@ case "${1:-}" in
   status) cmd_status ;;
   propose) shift; cmd_propose "$@" ;;
   apply) cmd_apply ;;
-  *) echo "uso: setup.sh check | status | propose <todos|opt-in> | apply" >&2; exit 2 ;;
+  lsp) shift; cmd_lsp "$@" ;;
+  plans) shift; cmd_plans "$@" ;;
+  *) echo "uso: setup.sh check | status | propose <todos|opt-in> | apply | lsp [pasta] | plans [pasta]" >&2; exit 2 ;;
 esac

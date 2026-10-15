@@ -70,11 +70,17 @@ Valores de partida. Confirme sempre contra o que o projeto realmente usa (script
 
 ## Plugin LSP oficial
 
-| Stack | Plugin |
-| --- | --- |
-| .NET | `csharp-lsp` |
-| Node/TS | `typescript-lsp` |
-| Python | `pyright-lsp` |
-| Go | `gopls-lsp` |
-| Rust | `rust-analyzer-lsp` |
-| Java | `jdtls-lsp` |
+Marketplace `claude-plugins-official` (já conhecido pelo Claude Code). O `setup.sh lsp` detecta pelos manifestos, confere o binário e devolve o comando de instalação; esta tabela é a mesma do script.
+
+| Stack | Manifesto | Plugin (`enabledPlugins`) | Binário | Instalação |
+| --- | --- | --- | --- | --- |
+| .NET | `*.sln`, `*.csproj` | `csharp-lsp@claude-plugins-official` | `csharp-ls` | `dotnet tool install --global csharp-ls` |
+| Node/TS | `package.json`, `tsconfig.json` | `typescript-lsp@claude-plugins-official` | `typescript-language-server` | `npm install -g typescript-language-server typescript` |
+| Python | `pyproject.toml`, `requirements*.txt`, `setup.py`, `Pipfile` | `pyright-lsp@claude-plugins-official` | `pyright-langserver` | `npm install -g pyright` |
+| Go | `go.mod` | `gopls-lsp@claude-plugins-official` | `gopls` | `go install golang.org/x/tools/gopls@latest` |
+| Rust | `Cargo.toml` | `rust-analyzer-lsp@claude-plugins-official` | `rust-analyzer` | `rustup component add rust-analyzer` |
+| Java | `*.java` | `jdtls-lsp@claude-plugins-official` | `jdtls` | macOS: `brew install jdtls`; outras: sem instalação automática |
+| Kotlin | `*.kt` | `kotlin-lsp@claude-plugins-official` | `kotlin-lsp` | macOS: `brew install JetBrains/utils/kotlin-lsp`; outras: sem instalação automática |
+| Ruby | `Gemfile` | `ruby-lsp@claude-plugins-official` | `ruby-lsp` | `gem install ruby-lsp` |
+| PHP | `composer.json` | `php-lsp@claude-plugins-official` | `intelephense` | `npm install -g intelephense` |
+| Swift | `Package.swift` | `swift-lsp@claude-plugins-official` | `sourcekit-lsp` | vem com o Xcode ou o toolchain Swift |

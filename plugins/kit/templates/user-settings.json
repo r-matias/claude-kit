@@ -1,15 +1,12 @@
 {
   "permissions": {
     "deny": [
-      "Read(**/.env)", "Read(**/.env.*)", "Read(**/*.pem)", "Read(**/*.key)",
-      "Read(**/secrets/**)", "Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.kube/**)",
-      "Bash(git push --force *)", "Bash(git push -f *)", "Bash(git reset --hard *)",
-      "Bash(git clean -fdx *)", "Bash(curl *)", "Bash(wget *)",
-      "PowerShell"
+      "Read(**/.env)", "Read(**/.env.*)", "Read(**/*.pem)", "Read(**/*.key)", "Read(**/secrets/**)",
+      "Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.kube/**)",
+      "Read(~/.git-credentials)", "Read(~/.npmrc)", "Read(~/.config/gh/**)", "Read(~/.docker/config.json)",
+      "Bash(git push --force *)", "Bash(git push -f *)", "Bash(git reset --hard *)", "Bash(git clean -fdx *)"
     ],
-    "ask": [
-      "Bash(git push *)", "Bash(dangerouslyDisableSandbox:true)"
-    ],
+    "ask": ["Bash(git push *)", "Bash(dangerouslyDisableSandbox:true)"],
     "disableBypassPermissionsMode": "disable"
   },
   "sandbox": {

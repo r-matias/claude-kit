@@ -191,21 +191,20 @@ kit_session_root() {
   if [ -n "$top" ]; then kit_norm_path "$top"; else printf '%s' "$1"; fi
 }
 
-# Planos ativos: docs/specs/**/PLAN.md na raiz e em cada repositorio, mais os .md de "plan_dirs"
-# do kit.json da raiz; modificados nos ultimos 14 dias e com tarefa "- [ ]" pendente.
-# Saida: "feitas<TAB>total<TAB>caminho", do mais recente para o mais antigo.
-# Uso: kit_active_plans <raiz> [repositorio...]
-kit_active_plans() {
-  local root="$1" d f done total
-  shift
+# Planos com tarefa "- [ ]" pendente: docs/specs/**/PLAN.md na raiz e em cada repositorio, mais os
+# .md de "plan_dirs" do kit.json da raiz, filtrados pelo -mtime do find ($1: -14 ou +14).
+# Saida: "mtime<TAB>feitas<TAB>total<TAB>caminho", do mais recente para o mais antigo.
+kit_plans_by_age() {
+  local age="$1" root="$2" d f done total
+  shift 2
   {
     for d in "$root" "$@"; do
-      [ -d "$d/docs/specs" ] && find "$d/docs/specs" -name PLAN.md -type f -mtime -14 2>/dev/null
+      [ -d "$d/docs/specs" ] && find "$d/docs/specs" -name PLAN.md -type f -mtime "$age" 2>/dev/null
     done
     if [ -f "$root/.claude/kit.json" ]; then
       while IFS= read -r d; do
         [ -n "$d" ] || continue
-        [ -d "$root/${d#./}" ] && find "$root/${d#./}" -maxdepth 2 -name '*.md' -type f -mtime -14 2>/dev/null
+        [ -d "$root/${d#./}" ] && find "$root/${d#./}" -maxdepth 2 -name '*.md' -type f -mtime "$age" 2>/dev/null
       done < <(jq -r '(.plan_dirs // [])[]' "$root/.claude/kit.json" 2>/dev/null | tr -d '\r')
     fi
   } | awk '!seen[$0]++' | while IFS= read -r f; do
@@ -213,7 +212,20 @@ kit_active_plans() {
     done="$(grep -cE '^[[:space:]]*[-*] \[[xX]\]' "$f")"
     total="$(grep -cE '^[[:space:]]*[-*] \[[ xX]\]' "$f")"
     printf '%s\t%s\t%s\t%s\n' "$(date -r "$f" +%s 2>/dev/null || echo 0)" "$done" "$total" "$f"
-  done | sort -t$'\t' -k1,1nr | cut -f2-
+  done | sort -t$'\t' -k1,1nr
+}
+
+# Planos ativos: modificados nos ultimos 14 dias e com tarefa pendente.
+# Saida: "feitas<TAB>total<TAB>caminho", do mais recente para o mais antigo.
+# Uso: kit_active_plans <raiz> [repositorio...]
+kit_active_plans() {
+  kit_plans_by_age -14 "$@" | cut -f2-
+}
+
+# Planos parados: tarefa pendente e mais de 14 dias sem mudanca. Mesma saida de kit_plans_by_age.
+# Uso: kit_stale_plans <raiz> [repositorio...]
+kit_stale_plans() {
+  kit_plans_by_age +14 "$@"
 }
 
 # Caminho de $2 relativo a $1 (ou o proprio $2 se estiver fora).

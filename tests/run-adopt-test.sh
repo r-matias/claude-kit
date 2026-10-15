@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Teste de aceite ao vivo do modo adotar: roda /kit:init via `claude -p` num repo com CLAUDE.md, settings,
-# skill, agent, rule e hooks proprios e confere por hash que nenhum desses arquivos mudou, que as
-# sugestoes foram para .claude/kit-settings.suggested.json e que docs/claude-adoption.md foi gerado.
+# skill, agent, rule e hooks proprios e confere por hash que CLAUDE.md, skills, agents, hooks, rules,
+# MCP e settings.local.json nao mudaram, que o settings.json so ganhou itens (com backup identico ao
+# original) e que docs/claude-adoption.md foi gerado.
 # Custa uma sessao do Claude Code (alguns minutos). Uso: tests/run-adopt-test.sh [--keep]
 set -u
 
@@ -34,12 +35,14 @@ gitq commit -m init
 git -C "$P" ls-files | tr -d '\r' >"$W/tracked-before"
 # Hash de todo arquivo rastreado: config do Claude Code e codigo do projeto.
 (cd "$P" && tr '\n' '\0' <"$W/tracked-before" | xargs -0 sha256sum) | tr -d '\r' >"$W/hash-before"
-grep -E ' [ *](CLAUDE\.md|\.mcp\.json|\.claude/.*)$' "$W/hash-before" >"$W/hash-config"
+grep -E ' [ *](CLAUDE\.md|\.mcp\.json|\.claude/.*)$' "$W/hash-before" | grep -vE ' [ *]\.claude/settings\.json$' >"$W/hash-config"
+cp "$P/.claude/settings.json" "$W/settings.before"
 
 PROMPT='/kit:init Respostas pré-aprovadas (execução não interativa; não há como perguntar):
 - Classificação das peças: aceite os destinos que você propuser.
-- Máquina: pule a preparação da máquina; não grave nada em ~/.claude, só liste o que faltar no resumo.
-- Gravação: sim, grave os arquivos do kit propostos (.claude/kit.json, .claude/kit-settings.suggested.json e docs/claude-adoption.md).
+- Máquina: pule a preparação da máquina; não grave nada em ~/.claude.
+- Gravação: sim, grave tudo o que propuser (arquivos do kit, merge aditivo no .claude/settings.json e linhas do .gitignore).
+- Instalação de language server: não instale nada.
 - Mapa: não rode o /kit:map.
 - Marketplace do kit: r-matias/claude-kit.
 - i18n: sim; strings/pt.json, en.json e es.json precisam ter as mesmas chaves.
@@ -66,9 +69,9 @@ while IFS= read -r f; do [ -e "$P/$f" ] || missing+="$f "; done <"$W/tracked-bef
 
 changed="$(cd "$P" && sha256sum -c --quiet "$W/hash-config" 2>/dev/null | tr -d '\r' | sed 's/: .*//' | paste -sd' ' -)"
 n_config="$(wc -l <"$W/hash-config" | tr -d ' ')"
-if [ -z "$changed" ] && [ "$n_config" -ge 10 ]; then ok "nenhum arquivo de configuração do projeto mudou (hash de $n_config arquivos: CLAUDE.md, settings, skills, agent, rule, hooks, MCP)"
-else ko "nenhum arquivo de configuração do projeto mudou" "alterados: ${changed:-nenhum} (conferidos: $n_config)"; fi
-changed="$(cd "$P" && sha256sum -c --quiet "$W/hash-before" 2>/dev/null | tr -d '\r' | sed 's/: .*//' | grep -vxF .gitignore | paste -sd' ' -)"
+if [ -z "$changed" ] && [ "$n_config" -ge 10 ]; then ok "skills, agent, hooks, rule, CLAUDE.md, MCP e settings.local.json intactos (hash de $n_config arquivos)"
+else ko "skills, agent, hooks, rule, CLAUDE.md, MCP e settings.local.json intactos" "alterados: ${changed:-nenhum} (conferidos: $n_config)"; fi
+changed="$(cd "$P" && sha256sum -c --quiet "$W/hash-before" 2>/dev/null | tr -d '\r' | sed 's/: .*//' | grep -vxF -e .gitignore -e .claude/settings.json | paste -sd' ' -)"
 [ -z "$changed" ] && ok "nenhum outro arquivo rastreado mudou" || ko "nenhum outro arquivo rastreado mudou" "$changed"
 
 A="$P/docs/claude-adoption.md"
@@ -95,10 +98,18 @@ if jq -e '[.protected_paths[]? | objects | select((.glob // "") | test("strings/
   ok "lista de bloqueio do projeto virou protected_paths com a mesma mensagem"
 else ko "lista de bloqueio do projeto virou protected_paths com a mesma mensagem" "$(jq -c '.protected_paths' "$K" 2>&1)"; fi
 
-SG="$P/.claude/kit-settings.suggested.json"
-if jq -e '.enabledPlugins["kit@claude-kit"] == true and (.extraKnownMarketplaces["claude-kit"] != null)' "$SG" >/dev/null 2>&1; then ok "sugestão habilita kit@claude-kit"; else ko "sugestão habilita kit@claude-kit" "$(jq -c '{enabledPlugins, extraKnownMarketplaces}' "$SG" 2>&1)"; fi
-if jq -e '(.permissions.deny // []) | index("Skill(kit:fix)") != null' "$SG" >/dev/null 2>&1; then ok "sugestão traz Skill(kit:fix) em deny"; else ko "sugestão traz Skill(kit:fix) em deny" "$(jq -c '.permissions' "$SG" 2>&1)"; fi
-if jq -e '(.hooks // null) == null and ((.permissions.allow // []) | index("Bash(npm test)") == null)' "$SG" >/dev/null 2>&1; then ok "sugestão só tem o que soma (sem repetir o settings)"; else ko "sugestão só tem o que soma (sem repetir o settings)" "$(head -c 300 "$SG" 2>&1)"; fi
+S="$P/.claude/settings.json"
+if bash "$PLUGIN/scripts/merge-json.sh" --check "$W/settings.before" "$S" 2>"$W/check.err"; then ok "settings.json só ganhou itens (nenhuma chave ou valor original sumiu ou mudou)"
+else ko "settings.json só ganhou itens" "$(head -c 300 "$W/check.err")"; fi
+bak="$(ls "$P"/.claude/settings.json.bak-kit-* 2>/dev/null | head -n 1)"
+if [ -n "$bak" ] && cmp -s "$W/settings.before" "$bak"; then ok "backup do settings.json idêntico ao original"; else ko "backup do settings.json idêntico ao original" "${bak:-sem backup}"; fi
+if jq -e --slurpfile b "$W/settings.before" '.hooks == $b[0].hooks' "$S" >/dev/null 2>&1; then ok "hooks do settings.json intocados"; else ko "hooks do settings.json intocados" "$(jq -c '.hooks' "$S" 2>&1 | head -c 300)"; fi
+if jq -e '.enabledPlugins["kit@claude-kit"] == true and (.extraKnownMarketplaces["claude-kit"] != null)' "$S" >/dev/null 2>&1; then ok "settings.json habilita kit@claude-kit"; else ko "settings.json habilita kit@claude-kit" "$(jq -c '{enabledPlugins, extraKnownMarketplaces}' "$S" 2>&1)"; fi
+if jq -e '(.permissions.deny // []) | index("Skill(kit:fix)") != null' "$S" >/dev/null 2>&1; then ok "settings.json traz Skill(kit:fix) em deny"; else ko "settings.json traz Skill(kit:fix) em deny" "$(jq -c '.permissions' "$S" 2>&1)"; fi
+if jq -e '.enabledPlugins["typescript-lsp@claude-plugins-official"] == true' "$S" >/dev/null 2>&1; then ok "settings.json liga o plugin LSP oficial da linguagem"; else ko "settings.json liga o plugin LSP oficial da linguagem" "$(jq -c '.enabledPlugins' "$S" 2>&1)"; fi
+[ ! -e "$P/.claude/kit-settings.suggested.json" ] && ok "nenhum arquivo de sugestão gerado" || ko "nenhum arquivo de sugestão gerado" "kit-settings.suggested.json existe"
+if grep -qF 'Próximo: /kit:spec' "$W/claude.out" && ! grep -qE 'run-skill-generator|/verify\b' "$W/claude.out"; then ok "relatório termina no /kit:spec, sem /run-skill-generator nem /verify"
+else ko "relatório termina no /kit:spec, sem /run-skill-generator nem /verify" "$(tail -n 12 "$W/claude.out")"; fi
 
 echo
 echo "$PASS passaram, $FAIL falharam"

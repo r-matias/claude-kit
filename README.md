@@ -14,7 +14,7 @@ O que você ganha:
 
 Requisitos mínimos: Claude Code 2.1.295 ou mais novo, `git`, `bash` e `jq` (no Windows, o Git for Windows traz `git` e `bash`). Detalhes em [Requisitos e plataformas](#requisitos-e-plataformas).
 
-O fluxo inteiro é: **instalar o plugin → `/kit:init` → `/kit:spec` → `/kit:plan` → `/kit:execute`**.
+O fluxo inteiro é: **instalar o plugin → `/kit:init` → `/kit:spec`** (e depois `/kit:plan` → `/kit:execute`). Nenhum passo manual entre eles.
 
 1. Instale o plugin, uma vez por máquina, no Claude Code:
 
@@ -24,38 +24,39 @@ O fluxo inteiro é: **instalar o plugin → `/kit:init` → `/kit:spec` → `/ki
    ```
 
    Pelo terminal: `claude plugin marketplace add r-matias/claude-kit` e `claude plugin install kit@claude-kit`. Se o `/kit:init` não aparecer logo depois, reinicie a sessão.
-2. Abra o Claude Code na raiz do repositório e rode `/kit:init`. É o único comando de configuração que você precisa conhecer.
+2. Abra o Claude Code na raiz do repositório e rode `/kit:init`. Ele mostra tudo o que vai fazer e pede **uma** confirmação; depois faz tudo e termina em `Pronto. Próximo: /kit:spec <ideia>`. É o único comando de configuração que você precisa conhecer.
 3. Para cada feature: `/kit:spec` → `/clear` → `/kit:plan` → `/kit:execute` (ver [Fluxo do dia a dia](#fluxo-do-dia-a-dia)).
 
 ## O que o `/kit:init` faz
 
-Em ordem, sem você chamar mais nada:
+Se o kit consegue fazer, ele faz. Primeiro junta tudo o que vai propor, mostra os arquivos novos e os diffs e pede uma confirmação só (com as poucas decisões que são suas, como o escopo do kit ou a URL do smoke). Com o "sim":
 
-1. **Prepara a máquina**, se faltar algo: confere Claude Code, `git`, `bash` e `jq`, as regras de usuário do kit no `~/.claude/settings.json` e o marketplace. Faltando, roda os passos do `/kit:setup` (mostra o diff e só grava com sua confirmação). Se faltar dependência, mostra o comando de instalação do seu sistema e para.
+1. **Prepara a máquina**, se faltar algo: confere Claude Code, `git`, `bash` e `jq` (e `bwrap`/`socat` no Linux e no WSL2) e instala o que faltar; cria ou completa o `~/.claude/settings.json` com as regras de usuário do kit.
 2. **Configura o projeto** (o adaptador), descrito abaixo.
-3. **Mapeia o código**, se o projeto tiver mais de 300 arquivos de código ou mais de um repositório: roda o `/kit:map` ao final, sem perguntar (só pergunta se passar de 30 agents).
-4. **Rodado de novo** num projeto já configurado, entra em modo reparo: valida o `kit.json`, os comandos e o settings, propõe só o que falta e roda `/kit:map --update` se o mapa estiver desatualizado.
+3. **Liga o LSP da linguagem**: acrescenta o plugin LSP oficial (`typescript-lsp`, `pyright-lsp`, `csharp-lsp`, `gopls-lsp`, ...) ao `.claude/settings.json` do projeto e instala o language server se faltar.
+4. **Verifica**: roda uma vez cada comando de `verify_on_stop` e mostra `ok` ou `falhou`.
+5. **Mapeia o código**, se o projeto tiver mais de 300 arquivos de código ou mais de um repositório: roda o `/kit:map` ao final, sem perguntar (só pergunta se passar de 30 agents).
+6. **Relatório curto** (até ~10 linhas): o que foi feito (com o caminho de cada backup), o que foi verificado, avisos reais e `Pronto. Próximo: /kit:spec <ideia>`. Ele não lista tarefas para você.
+
+Rodado de novo num projeto já configurado, entra em modo reparo: valida o `kit.json`, os comandos e o settings, soma só o que falta (mesma confirmação única) e roda `/kit:map --update` se o mapa estiver desatualizado.
 
 Na configuração do projeto:
 
-- **Repositório sem configuração do Claude Code:** o init detecta o stack (manifestos, Makefile, CI) e propõe três arquivos:
+- **Repositório sem configuração do Claude Code:** o init detecta o stack (manifestos, Makefile, CI) e cria:
   - `.claude/kit.json` com os comandos reais do projeto;
-  - `.claude/settings.json`, que liga o plugin, libera os comandos do `kit.json` e pergunta antes de instalar dependência;
-  - um `CLAUDE.md` curto.
+  - `.claude/settings.json`, que liga o plugin e o LSP, libera os comandos do `kit.json`, pergunta antes de instalar dependência e nega `curl`/`wget` (o registry do stack fica liberado no sandbox);
+  - um `CLAUDE.md` curto;
+  - as linhas `.claude/state/` e `.claude/*.bak-kit-*` no `.gitignore`.
+- **Repositório que já tem `.claude/`, `CLAUDE.md` ou `.mcp.json` (modo adotar):** o init faz o inventário de hooks, skills, agents e rules, aponta sobreposições com o kit, soma ao `.claude/settings.json` o que falta e grava o relatório em `docs/claude-adoption.md`.
 
-  Ele mostra tudo e só grava após confirmação.
-- **Repositório que já tem `.claude/`, `CLAUDE.md` ou `.mcp.json` (modo adotar):** o init faz o inventário de hooks, skills, agents e rules, aponta sobreposições com o kit e grava o relatório em `docs/claude-adoption.md`. A sua configuração fica como está (veja abaixo).
+### O kit só soma
 
-### O kit só soma, nunca altera sua configuração
+- **Nunca altera** skills, agents, commands, rules, hooks, `CLAUDE.md`, `.mcp.json` nem `.claude/settings.local.json`, seus ou do projeto.
+- **Nos settings** (`.claude/settings.json` e `~/.claude/settings.json`) **só acrescenta**: itens novos em listas (`allow`, `ask`, `deny`, `allowedDomains`, `excludedCommands`) e chaves que não existem. Nunca remove, nunca troca um valor seu e nunca mexe em `hooks`. Antes de gravar, faz backup em `<arquivo>.bak-kit-<data>` e mostra o diff na confirmação. Se uma chave sua tem outro valor, o seu fica e o relatório cita em uma linha. A única troca possível é a do próprio kit (`enabledPlugins."kit@claude-kit"`), pela sua resposta de escopo.
+- **Sobreposição:** se uma skill ou agent seu faz o mesmo que um do kit, o do kit sai do caminho (`Skill(kit:fix)` em `permissions.deny`). Um hook seu que o kit cobre fica como está; `docs/claude-adoption.md` registra qual é.
+- Os arquivos do próprio kit podem ser regravados: `.claude/kit.json`, `docs/claude-adoption.md` e os do mapa (`.claude/rules/map-*.md`, `.claude/rules/kit-codemap.md`, `docs/codemap.md`, com o cabeçalho `kit:map`).
 
-Em nenhum comando (init, setup, map, reparo) o kit edita, mescla, desativa ou apaga um arquivo de Claude Code que já existe: `CLAUDE.md`, `.claude/settings.json`, `.claude/settings.local.json`, `.mcp.json`, `.claude/skills/`, `.claude/agents/`, `.claude/commands/`, `.claude/rules/` e hooks, nem o `~/.claude/settings.json`. Ele só cria arquivos novos dele.
-
-- `CLAUDE.md` e `.claude/settings.json` que não existem podem ser criados (com sua confirmação).
-- Se existem, o que o kit acrescentaria vai para `.claude/kit-settings.suggested.json` (ou `~/.claude/kit-settings.suggested.json`, no setup) e para o relatório final, com o diff. Você aplica se quiser.
-- Uma skill, agent ou hook seu que faz o mesmo que o kit só aparece no relatório, com a sugestão de qual desativar e como (ex.: `Skill(kit:fix)` em `permissions.deny`).
-- Os arquivos do próprio kit podem ser regravados: `.claude/kit.json`, `.claude/kit-settings.suggested.json`, `docs/claude-adoption.md` e os do mapa (`.claude/rules/map-*.md`, `.claude/rules/kit-codemap.md`, `docs/codemap.md`, com o cabeçalho `kit:map`).
-
-Depois, revise e commite os arquivos criados (`.claude/kit.json`, `docs/claude-adoption.md`, `docs/codemap.md` e as rules do mapa). Quem clonar o repositório recebe a indicação do marketplace e do plugin pelo settings versionado; na própria máquina, basta rodar o `/kit:init`, que prepara o que faltar.
+Os arquivos criados ficam no git para você commitar junto com o código (o kit nunca commita). Quem clonar o repositório recebe o plugin pelo settings versionado; na própria máquina, basta rodar o `/kit:init`.
 
 Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:init` na pasta-mãe: ele configura cada repositório e as regras que cruzam repositórios.
 
@@ -101,25 +102,32 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 | `/kit:fix` | Bug com sintoma claro ou teste falhando | Teste que reproduz + correção | Manual ou sozinho, quando você relata um bug |
 | `/kit:hunt` | Falha intermitente, lentidão, causa desconhecida | Hipóteses com evidência, sem editar código | Manual ou sozinho, quando você relata uma falha vaga |
 
-| `/kit:setup` | Avançado: máquina nova sem projeto, ou reparo da máquina | `~/.claude/settings.json` (se não existir) ou `~/.claude/kit-settings.suggested.json` | Só manual |
+| `/kit:setup` | Avançado: máquina nova sem projeto, ou reparo da máquina | `~/.claude/settings.json` criado ou completado (com backup) | Só manual |
 | `/kit:map` | Avançado: mapear de novo, uma área ou só o que mudou | `.claude/rules/map-*.md`, `docs/codemap.md` | Só manual |
 
 "Sozinho" quer dizer que o Claude pode escolher o comando ao reconhecer o pedido, sem você digitar a barra.
 
-## Avançado
+## Avançado (opcional)
 
-O `/kit:init` já chama os dois comandos abaixo quando precisa. Use-os sozinhos para preparar uma máquina sem abrir um projeto, reparar a máquina ou atualizar o mapa.
+Nada aqui é necessário: o `/kit:init` já chama `/kit:setup` e `/kit:map` quando precisa.
 
 ### `/kit:setup`
 
-Prepara a máquina, uma vez por máquina:
+Prepara só a máquina, sem abrir um projeto:
 
 - detecta Windows nativo, WSL2, macOS ou Linux e ajusta o sandbox (no Windows nativo não há sandbox, e ele avisa; no Linux e no WSL2 confere `bwrap` e `socat` e avisa se o AppArmor restringe user namespaces);
-- detecta Windows nativo, WSL2, macOS ou Linux e ajusta o sandbox (no Windows nativo não há sandbox, e ele avisa);
+- instala dependência que falte, com sua confirmação;
 - pergunta se o kit fica ligado em **todos os projetos** ou **só nos projetos que o habilitam** (nesse caso, `claude plugin list` mostra o kit como `disabled` no escopo `user`, e cada projeto o liga pelo próprio `.claude/settings.json`);
-- sem `~/.claude/settings.json`, mostra o arquivo e só cria depois que você confirmar. Se ele já existe, não é alterado: o setup grava `~/.claude/kit-settings.suggested.json` só com o que somaria e mostra o diff.
+- cria ou completa o `~/.claude/settings.json` com as mesmas regras do `/kit:init`: só acrescenta, com backup e diff na confirmação.
 
-Prefere configurar à mão? Mescle [`plugins/kit/templates/user-settings.json`](plugins/kit/templates/user-settings.json) no seu `~/.claude/settings.json` e, no Windows nativo ou num Linux sem `bwrap` e `socat`, troque `sandbox.failIfUnavailable` para `false`.
+O template de usuário tem só o que é seguro em qualquer projeto: deny de leitura de segredos (`.env`, chaves, `~/.ssh`, `~/.aws`, `~/.kube`, arquivos de token), deny de git destrutivo (`push --force`/`-f`, `reset --hard`, `clean -fdx`), ask antes de `git push` e `disableBypassPermissionsMode`. `PowerShell` em deny só no Windows nativo; o bloco `sandbox` só onde há sandbox. `curl`/`wget` em deny ficam no settings de cada projeto, junto com os domínios do stack.
+
+### `/run-skill-generator` e `/verify`
+
+Comandos do próprio Claude Code, úteis depois do `/kit:init` se você quiser verificação com o app rodando:
+
+- `/run-skill-generator` sobe o app a partir de um ambiente limpo e grava a receita em `.claude/skills/run-<nome>/`;
+- `/verify` grava a skill de verificação do projeto em `.claude/skills/verify/SKILL.md`, que o Claude Code roda antes de cada commit.
 
 ### `/kit:map`
 
@@ -168,7 +176,7 @@ Sem você chamar nada, em todo projeto com o kit ligado:
 
 **Regra de acoplamento que não se aplica a esta mudança.** Grave uma linha de justificativa em `.claude/kit-skip` (ex.: `só renomeei uma variável na tela, o manual não muda`). Isso libera só os acoplamentos (`coupled_changes`), não build, testes nem tradução. O arquivo é apagado quando o gate passa e a justificativa fica registrada em `docs/claude-adoption.md` (ou `.claude/kit-skip.log`). Arquivo vazio não libera.
 
-**"kit: jq não encontrado; instale o jq".** Sem `jq` os guardas bloqueiam toda chamada, de propósito: guarda que não consegue checar não deixa passar. Instale com `winget install jqlang.jq` (Windows), `brew install jq` (macOS) ou `sudo apt install jq` (Linux/WSL), reabra o Claude Code e rode `/kit:setup`.
+**"kit: jq não encontrado; instale o jq".** Sem `jq` os guardas bloqueiam toda chamada, de propósito: guarda que não consegue checar não deixa passar, e por isso nem o `/kit:init` consegue instalá-lo. Instale num terminal com `winget install jqlang.jq` (Windows), `brew install jq` (macOS) ou `sudo apt install jq` (Linux/WSL) e reabra o Claude Code.
 
 **`Executable not found in $PATH: "bash"`.** Versões antigas do kit chamavam `bash` pelo PATH, o que falha no Windows quando o Git não está no PATH. Atualize o kit (veja [Atualizar e desinstalar](#atualizar-e-desinstalar)). Se persistir no Windows, instale o Git for Windows (`winget install Git.Git`) ou aponte a variável de ambiente `CLAUDE_CODE_GIT_BASH_PATH` para o `bash.exe` (ex.: `C:\Program Files\Git\bin\bash.exe`).
 
@@ -187,9 +195,9 @@ Sem você chamar nada, em todo projeto com o kit ligado:
 }
 ```
 
-O `/kit:init` propõe isso quando detecta testes de integração.
+O `/kit:init` já soma isso ao settings quando detecta testes de integração (inclusive no modo reparo).
 
-**Windows nativo sem sandbox.** O sandbox do Claude Code não existe no Windows nativo. O `/kit:setup` configura o kit para rodar sem ele: as regras de `permissions.deny` e os guardas continuam valendo, mas disco e rede não ficam isolados. Para ter sandbox, use o WSL2 e rode o `/kit:setup` lá. A ferramenta PowerShell fica desligada pelo setup porque os guardas não a cobrem. Quem precisar dela remove `"PowerShell"` de `permissions.deny` no `~/.claude/settings.json` e fica sem guarda nessa ferramenta.
+**Windows nativo sem sandbox.** O sandbox do Claude Code não existe no Windows nativo. O `/kit:init` configura o kit para rodar sem ele (sem bloco `sandbox` no settings): as regras de `permissions.deny` e os guardas continuam valendo, mas disco e rede não ficam isolados. Para ter sandbox, use o WSL2 e rode o `/kit:init` lá. A ferramenta PowerShell fica em `permissions.deny` (só no Windows nativo) porque os guardas não a cobrem. Quem precisar dela remove `"PowerShell"` de `permissions.deny` no `~/.claude/settings.json` e fica sem guarda nessa ferramenta.
 
 ## Atualizar e desinstalar
 
@@ -211,7 +219,7 @@ claude plugin uninstall kit@claude-kit --scope project   # só se estiver instal
 claude plugin marketplace remove claude-kit              # opcional
 ```
 
-As regras que o `/kit:setup` acrescentou ao `~/.claude/settings.json` (deny de segredos, sandbox) ficam; remova à mão se não quiser mais.
+As regras que o kit acrescentou ao `~/.claude/settings.json` (deny de segredos, sandbox) ficam. O estado anterior está no backup `~/.claude/settings.json.bak-kit-<data>`.
 
 ## Configuração do projeto (`.claude/kit.json`)
 
@@ -235,7 +243,7 @@ Exemplo completo em [`plugins/kit/templates/kit.example.json`](plugins/kit/templ
 
 ## Requisitos e plataformas
 
-- **Claude Code ≥ 2.1.295.** Em versão anterior, um guarda que falha ou estoura o tempo deixa a ação passar. O `/kit:setup` para e o início da sessão avisa quando a versão é menor; corrija com `claude update`.
+- **Claude Code ≥ 2.1.295.** Em versão anterior, um guarda que falha ou estoura o tempo deixa a ação passar. O `/kit:init` atualiza com `claude update` (com sua confirmação), e o início da sessão avisa quando a versão é menor.
 
   | Recurso usado pelo kit | Desde | Efeito em versão anterior |
   | --- | --- | --- |
@@ -247,7 +255,7 @@ Exemplo completo em [`plugins/kit/templates/kit.example.json`](plugins/kit/templ
 
   Fonte: [changelog oficial](https://code.claude.com/docs/en/changelog) e [referência de hooks](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails).
 - **`bash` 3.2 ou mais novo, `git` e `jq`.** Os scripts rodam no `/bin/bash` 3.2 do macOS, sem `realpath` nem `readlink -f`. No Windows, Git for Windows (traz Git Bash) e `jq` no PATH.
-- **Linux e WSL2: `bwrap` e `socat`** para o sandbox (`sudo apt install bubblewrap socat`). Sem eles, o `/kit:setup` acusa a falta e grava `failIfUnavailable: false` até a instalação. No Ubuntu 24.04 ou mais novo, o AppArmor pode restringir os user namespaces que o `bwrap` usa; o `/kit:setup` avisa quando isso acontece.
+- **Linux e WSL2: `bwrap` e `socat`** para o sandbox (`sudo apt install bubblewrap socat`). Sem eles, o `/kit:init` propõe instalar na confirmação; até lá o settings fica sem bloco `sandbox`. No Ubuntu 24.04 ou mais novo, o AppArmor pode restringir os user namespaces que o `bwrap` usa; o `/kit:init` avisa quando isso acontece.
 - **Plataformas:**
 
   | Plataforma | Sandbox | Observação |
@@ -255,6 +263,6 @@ Exemplo completo em [`plugins/kit/templates/kit.example.json`](plugins/kit/templ
   | macOS | Sim | |
   | Linux | Sim | Precisa de `bwrap` e `socat` |
   | WSL2 | Sim | Recomendado no Windows; precisa de `bwrap` e `socat` |
-  | Windows nativo | Não | O `/kit:setup` grava `failIfUnavailable: false`; valem só `permissions.deny` e os guardas |
+  | Windows nativo | Não | Sem bloco `sandbox` no settings; valem `permissions.deny` (com `PowerShell`) e os guardas |
 
 Para contribuir com o kit (estrutura do repositório, testes, publicação), veja [CONTRIBUTING.md](CONTRIBUTING.md). Decisões de desenho em [docs/design.md](docs/design.md).

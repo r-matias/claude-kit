@@ -1,0 +1,10 @@
+csharp-lsp|csharp-ls|*.sln *.csproj|dotnet tool install --global csharp-ls
+typescript-lsp|typescript-language-server|package.json tsconfig.json|npm install -g typescript-language-server typescript
+pyright-lsp|pyright-langserver|pyproject.toml requirements*.txt setup.py Pipfile|npm install -g pyright
+gopls-lsp|gopls|go.mod|go install golang.org/x/tools/gopls@latest
+rust-analyzer-lsp|rust-analyzer|Cargo.toml|rustup component add rust-analyzer
+jdtls-lsp|jdtls|*.java|macos:brew install jdtls
+kotlin-lsp|kotlin-lsp|*.kt|macos:brew install JetBrains/utils/kotlin-lsp
+ruby-lsp|ruby-lsp|Gemfile|gem install ruby-lsp
+php-lsp|intelephense|composer.json|npm install -g intelephense
+swift-lsp|sourcekit-lsp|Package.swift|

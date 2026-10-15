@@ -1,23 +1,22 @@
 ---
 name: setup
-description: Prepara a máquina para o kit, uma vez por máquina. Confere Claude Code, git, bash e jq, ajusta o sandbox à plataforma e cria ~/.claude/settings.json com as regras de usuário do kit, ou, se ele já existir, gera ao lado a sugestão do que somar.
+description: Prepara a máquina para o kit, uma vez por máquina. Confere Claude Code, git, bash e jq, ajusta o sandbox à plataforma e cria ou completa o ~/.claude/settings.json com as regras de usuário do kit (merge só aditivo, com backup e confirmação).
 disable-model-invocation: true
 allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" *) Read(${CLAUDE_PLUGIN_ROOT}/**)
 ---
 
 ## Regras que valem a tarefa inteira
-- O `/kit:init` executa estes mesmos passos quando o `setup.sh status` aponta falta; ao terminar, ele segue para o projeto.
-- O kit nunca altera um `~/.claude/settings.json` que já existe. Só cria o arquivo quando ele falta; senão grava `kit-settings.suggested.json` ao lado, e o usuário aplica se quiser.
-- Todo passo usa `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" <subcomando>`. Não edite o settings à mão nem instale dependências: mostre o comando e deixe o usuário rodar.
+- O `/kit:init` executa os passos 1 a 3 quando o `setup.sh status` aponta falta e junta a proposta à confirmação única dele; ao terminar, ele segue para o projeto.
+- O `~/.claude/settings.json` existente só recebe merge aditivo: o kit acrescenta itens em arrays e chaves ausentes, nunca remove, nunca troca valor existente e nunca mexe em `hooks`. Antes de gravar, `setup.sh apply` faz backup em `settings.json.bak-kit-<data>`. Única troca: `enabledPlugins."kit@claude-kit"`, pela resposta de escopo. Conflito fica com o valor do usuário e vira uma linha no resumo.
+- Todo passo usa `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" <subcomando>`. Não edite o settings à mão.
 - O settings fica em `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json`; o script já resolve isso.
 
 ## Passos
-1. **Dependências.** Rode `setup.sh check`. Se o exit for 1, mostre cada linha `falta` com o comando de instalação, diga para rodar o comando, reabrir o Claude Code e rodar `/kit:init` (ou `/kit:setup`) de novo, e pare aqui. Linhas `aviso` não param o setup; repita-as no resumo.
-2. **Plataforma.** Repita a linha `plataforma:` do check. No Windows nativo, diga com todas as letras que não há sandbox (disco e rede sem isolamento; só `permissions.deny` e os guardas do kit protegem) e que o WSL2 mantém o sandbox.
-3. **Escopo.** Pergunte com `AskUserQuestion`:
-   - "Todos os projetos": o kit fica ligado em toda sessão desta máquina (`enabledPlugins."kit@claude-kit": true`).
-   - "Só nos projetos que o habilitam": desligado no usuário (`false`); cada projeto liga no próprio `.claude/settings.json`, que o `/kit:init` cria quando falta.
-4. **Proposta.** Rode `setup.sh propose todos` ou `setup.sh propose opt-in`.
-   - Settings inexistente: a saída termina em `proposta:`. Mostre o diff inteiro, pergunte com `AskUserQuestion` (gravar ou cancelar) e, com "gravar", rode `setup.sh apply` e mostre a linha `gravado`.
-   - Settings existente: a saída termina em `sugestão:` (ou `nada a sugerir`). Nada é gravado no settings. Mostre o diff e a linha `troca sugerida`, se houver, e diga que o usuário aplica a sugestão se quiser. No Windows nativo, se o settings tiver `sandbox.failIfUnavailable: true`, avise que isso impede o Claude Code de iniciar e que a troca para `false` é dele.
-5. **Resumo**, em até 6 linhas: dependências e versões, plataforma e sandbox, escopo escolhido, o que foi criado ou o caminho da sugestão, avisos, e o próximo passo: reiniciar o Claude Code para o sandbox valer e rodar `/kit:init` em cada repositório.
+1. **Dependências.** Rode `setup.sh check`. Cada linha `falta` traz o comando de instalação: ele entra na confirmação (passo 4) e roda se aprovado. Linhas `aviso` não param o setup; repita-as no resumo.
+2. **Plataforma.** Guarde a linha `plataforma:` do check. No Windows nativo, o resumo diz em uma linha que não há sandbox (disco e rede sem isolamento; valem `permissions.deny` e os guardas do kit) e que o WSL2 mantém o sandbox.
+3. **Proposta.** Rode `setup.sh propose todos`. A saída é o arquivo novo, o diff do merge aditivo ou `sem mudança`, mais as linhas `conflito:` e `troca:`.
+4. **Confirmação.** Mostre os comandos de instalação e o diff e faça **uma** chamada de `AskUserQuestion` com duas perguntas:
+   - "Gravar?": Gravar (recomendado) / Cancelar.
+   - Escopo: "Todos os projetos" (o kit fica ligado em toda sessão desta máquina) ou "Só nos projetos que o habilitam" (desligado no usuário; cada projeto liga no próprio `.claude/settings.json`, que o `/kit:init` cria ou completa).
+5. **Gravar.** Rode os comandos de instalação aprovados e `setup.sh check` de novo; dependência que continuar faltando para aqui com um aviso de uma linha. Com escopo "Só nos projetos que o habilitam", rode `setup.sh propose opt-in`. Depois `setup.sh apply` e mostre a linha `criado:` ou `gravado: ... (backup em ...)`.
+6. **Resumo**, em até 6 linhas: dependências e versões, plataforma e sandbox, escopo escolhido, o que foi gravado (com o backup), conflitos mantidos e avisos. Última linha: `Pronto. Próximo: /kit:init no repositório.`

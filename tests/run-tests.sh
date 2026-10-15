@@ -459,12 +459,52 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   if jq -e '.permissions.allow == ["A","B","C"] and .permissions.deny == ["X"] and .permissions.ask == ["Q"] and .model == "opus" and .enabledPlugins["kit@claude-kit"] == true' "$U/merged.json" >/dev/null 2>&1; then
     ok "merge-json: chave a chave, arrays por uniao, existente vence"
   else ko "merge-json: chave a chave, arrays por uniao, existente vence" "$(tr '\n' ' ' <"$U/merged.json")"; fi
-  if grep -qF 'conflito em $.model' "$U/conflicts"; then ok "merge-json: conflito reportado no stderr"; else ko "merge-json: conflito reportado no stderr" "$(cat "$U/conflicts")"; fi
+  if grep -qF 'conflito: .model mantido "opus"' "$U/conflicts"; then ok "merge-json: conflito reportado no stderr"; else ko "merge-json: conflito reportado no stderr" "$(cat "$U/conflicts")"; fi
   if bash "$M" "$U/nao-existe.json" "$U/new.json" | jq -e '.model == "sonnet"' >/dev/null 2>&1; then ok "merge-json: existente ausente usa a proposta"; else ko "merge-json: existente ausente usa a proposta" ""; fi
-  if bash "$M" --additions "$U/old.json" "$U/new.json" | jq -e '. == {"permissions":{"allow":["C"],"ask":["Q"]},"enabledPlugins":{"kit@claude-kit":true}}' >/dev/null 2>&1; then
-    ok "merge-json --additions: so chaves e itens novos, sem conflito"
-  else ko "merge-json --additions: so chaves e itens novos, sem conflito" "$(bash "$M" --additions "$U/old.json" "$U/new.json" 2>&1 | tr '\n' ' ')"; fi
-  if bash "$M" --additions "$U/merged.json" "$U/new.json" | jq -e '. == {}' >/dev/null 2>&1; then ok "merge-json --additions: nada a somar da {}"; else ko "merge-json --additions: nada a somar da {}" ""; fi
+  # --preview: diff e conflitos, nada gravado.
+  cp "$U/old.json" "$U/pv.json"
+  out="$(bash "$M" --preview "$U/pv.json" "$U/new.json" 2>&1)"
+  if cmp -s "$U/old.json" "$U/pv.json" && grep -qF '+      "C"' <<<"$out" && grep -qF 'conflito: .model mantido "opus" (o kit propunha "sonnet")' <<<"$out" &&
+    ! ls "$U"/pv.json.bak-kit-* >/dev/null 2>&1; then
+    ok "merge-json --preview: diff e conflito, nada gravado"
+  else ko "merge-json --preview: diff e conflito, nada gravado" "$out"; fi
+  # --apply: backup identico ao original, so adicoes, hooks do settings intocados, conflito mantido.
+  printf '%s' '{"model":"opus","permissions":{"allow":["A"],"deny":["X"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"meu.sh"}]}]},"enabledPlugins":{"kit@claude-kit":true}}' >"$U/ap.json"
+  printf '%s' '{"model":"sonnet","permissions":{"allow":["B"],"ask":["Q"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"kit.sh"}]}],"PreToolUse":[]},"enabledPlugins":{"kit@claude-kit":false,"lsp@x":true}}' >"$U/ap-prop.json"
+  cp "$U/ap.json" "$U/ap.orig"
+  out="$(bash "$M" --apply "$U/ap.json" "$U/ap-prop.json" 2>&1)"; code=$?
+  bak="$(ls "$U"/ap.json.bak-kit-* 2>/dev/null | head -n 1)"
+  if [ "$code" = "0" ] && [ -n "$bak" ] && cmp -s "$U/ap.orig" "$bak" && bash "$M" --check "$U/ap.orig" "$U/ap.json" 2>/dev/null &&
+    jq -e '.permissions.allow == ["A","B"] and .permissions.ask == ["Q"] and .model == "opus" and .enabledPlugins == {"kit@claude-kit":true,"lsp@x":true}
+      and .hooks == {"Stop":[{"hooks":[{"type":"command","command":"meu.sh"}]}]}' "$U/ap.json" >/dev/null 2>&1 &&
+    grep -qF "gravado: $U/ap.json (backup em $bak)" <<<"$out" && grep -qF 'conflito: .model mantido' <<<"$out" && grep -qF 'conflito: .enabledPlugins."kit@claude-kit"' <<<"$out"; then
+    ok "merge-json --apply: backup, só adições, hooks e valores existentes intocados"
+  else ko "merge-json --apply: backup, só adições, hooks e valores existentes intocados" "exit $code, $out, $(tr -d '\n ' <"$U/ap.json")"; fi
+  out="$(bash "$M" --apply "$U/ap.json" "$U/ap-prop.json" 2>&1)"
+  if grep -qF 'sem mudança' <<<"$out" && [ "$(ls "$U"/ap.json.bak-kit-* | wc -l | tr -d ' ')" = "1" ]; then
+    ok "merge-json --apply: nada a somar não grava nem cria backup"
+  else ko "merge-json --apply: nada a somar não grava nem cria backup" "$out"; fi
+  # --prefer: so o caminho indicado troca de valor.
+  out="$(bash "$M" --apply --prefer '["enabledPlugins","kit@claude-kit"]' "$U/ap.json" "$U/ap-prop.json" 2>&1)"; code=$?
+  if [ "$code" = "0" ] && jq -e '.enabledPlugins["kit@claude-kit"] == false and .model == "opus"' "$U/ap.json" >/dev/null 2>&1 &&
+    grep -qF 'troca: .enabledPlugins."kit@claude-kit" true -> false' <<<"$out" && [ "$(ls "$U"/ap.json.bak-kit-* | wc -l | tr -d ' ')" = "2" ]; then
+    ok "merge-json --apply --prefer: troca só a chave do kit, com novo backup"
+  else ko "merge-json --apply --prefer: troca só a chave do kit, com novo backup" "exit $code, $out"; fi
+  # settings.local.json, JSON invalido e arquivo ausente.
+  mkdir -p "$U/loc/.claude"
+  printf '{"permissions":{"allow":["Z"]}}\n' >"$U/loc/.claude/settings.local.json"
+  cp "$U/loc/.claude/settings.local.json" "$U/loc.orig"
+  bash "$M" --apply "$U/loc/.claude/settings.local.json" "$U/new.json" >/dev/null 2>&1; code=$?
+  if [ "$code" = "2" ] && cmp -s "$U/loc.orig" "$U/loc/.claude/settings.local.json" && ! ls "$U"/loc/.claude/*.bak-kit-* >/dev/null 2>&1; then
+    ok "merge-json --apply: settings.local.json recusado e intacto"
+  else ko "merge-json --apply: settings.local.json recusado e intacto" "exit $code"; fi
+  printf '{"a":' >"$U/bad.json"
+  bash "$M" --apply "$U/bad.json" "$U/new.json" >/dev/null 2>&1; code=$?
+  if [ "$code" = "2" ] && [ "$(cat "$U/bad.json")" = '{"a":' ]; then ok "merge-json --apply: JSON inválido não é tocado"; else ko "merge-json --apply: JSON inválido não é tocado" "exit $code"; fi
+  out="$(bash "$M" --apply "$U/novo/settings.json" "$U/ap-prop.json" 2>&1)"
+  if grep -qF 'criado:' <<<"$out" && jq -e '(has("hooks") | not) and .model == "sonnet"' "$U/novo/settings.json" >/dev/null 2>&1; then
+    ok "merge-json --apply: arquivo ausente é criado com a proposta, sem hooks"
+  else ko "merge-json --apply: arquivo ausente é criado com a proposta, sem hooks" "$out"; fi
   if bash "$M" --check "$U/old.json" "$U/merged.json" 2>/dev/null; then ok "merge-json --check: so adicoes passa"; else ko "merge-json --check: so adicoes passa" ""; fi
   if ! bash "$M" --check "$U/merged.json" "$U/old.json" 2>"$U/lost" && grep -qF '$.enabledPlugins: removido' "$U/lost"; then
     ok "merge-json --check: remocao falha e e listada"
@@ -700,7 +740,8 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" apply >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
   code=$?
   if [ "$code" = "0" ] && jq -e --slurpfile t "$TPL_USER" '.permissions.deny == $t[0].permissions.deny and .sandbox.failIfUnavailable == true
-      and .enabledPlugins["kit@claude-kit"] == true' "$C1/settings.json" >/dev/null 2>&1 && [ ! -e "$C1/settings.kit-proposta.json" ]; then
+      and (.permissions.deny | index("PowerShell") == null) and .enabledPlugins["kit@claude-kit"] == true' "$C1/settings.json" >/dev/null 2>&1 &&
+    [ ! -e "$C1/settings.kit-proposta.json" ] && ! ls "$C1"/settings.json.bak-kit-* >/dev/null 2>&1; then
     ok "setup apply: settings inexistente criado com o template e kit ligado"
   else ko "setup apply: settings inexistente criado com o template e kit ligado" "exit $code, $(head -c 300 "$TMP_ALL/su.err")"; fi
 
@@ -714,7 +755,7 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
   code=$?
   if [ "$code" = "1" ] && grep -qF 'falta settings' <<<"$out"; then ok "setup status: settings inexistente pede /kit:setup"; else ko "setup status: settings inexistente pede /kit:setup" "exit $code, $out"; fi
-  jq '.permissions.deny -= ["PowerShell"] | .sandbox.failIfUnavailable = false' "$C1/settings.json" >"$CS/settings.json"
+  jq '.permissions.deny -= ["Read(~/.kube/**)"] | .sandbox.failIfUnavailable = false' "$C1/settings.json" >"$CS/settings.json"
   mkdir -p "$CS/plugins"
   printf '{"claude-kit":{}}\n' >"$CS/plugins/known_marketplaces.json"
   out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
@@ -723,32 +764,37 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
     ok "setup status: regra removida falta, valor trocado pelo usuário não"
   else ko "setup status: regra removida falta, valor trocado pelo usuário não" "exit $code, $out"; fi
 
-  # settings existente: nunca alterado; a sugestao traz so o que somaria e a troca do opt-in.
+  # settings existente: merge so aditivo com backup; valor do usuario mantido; o escopo troca so a chave do kit.
   C2="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
-  printf '%s' '{"model":"opus","permissions":{"allow":["Bash(ls *)"],"deny":["Bash(rm *)","Bash(curl *)"]},"enabledPlugins":{"kit@claude-kit":true,"outro@mkt":true},"sandbox":{"enabled":true,"network":{"allowedDomains":["example.com"]}}}' >"$C2/settings.json"
+  printf '%s' '{"model":"opus","permissions":{"allow":["Bash(ls *)"],"deny":["Bash(rm *)","Bash(curl *)"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"x.sh"}]}]},"enabledPlugins":{"kit@claude-kit":true,"outro@mkt":true},"sandbox":{"enabled":true,"failIfUnavailable":false,"network":{"allowedDomains":["example.com"]}}}' >"$C2/settings.json"
   cp "$C2/settings.json" "$TMP_ALL/su.before"
   run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" propose opt-in >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
   code=$?
-  SG="$C2/kit-settings.suggested.json"
-  if [ "$code" = "0" ] && cmp -s "$TMP_ALL/su.before" "$C2/settings.json" && [ ! -e "$C2/settings.kit-proposta.json" ] &&
-    jq -e '(.permissions.deny | index("PowerShell") != null) and (.permissions.deny | index("Bash(curl *)") == null)
-      and (.permissions | has("allow") | not) and (has("model") | not) and .enabledPlugins == {"kit@claude-kit": false}
-      and .sandbox.failIfUnavailable == true and (.sandbox | has("enabled") | not)' "$SG" >/dev/null 2>&1 &&
-    grep -qF 'troca sugerida: enabledPlugins."kit@claude-kit": true -> false' "$TMP_ALL/su.out" && grep -qF 'sugestão:' "$TMP_ALL/su.out"; then
-    ok "setup propose: settings existente intacto, sugestão só com o que somaria e a troca do opt-in"
-  else ko "setup propose: settings existente intacto, sugestão só com o que somaria e a troca do opt-in" "exit $code, $(tr -d '\n' <"$SG" 2>&1 | head -c 400)"; fi
+  if [ "$code" = "0" ] && cmp -s "$TMP_ALL/su.before" "$C2/settings.json" && [ -e "$C2/settings.kit-proposta.json" ] &&
+    grep -qF '+      "Read(~/.ssh/**)"' "$TMP_ALL/su.out" && grep -qF 'troca: .enabledPlugins."kit@claude-kit" true -> false' "$TMP_ALL/su.out" &&
+    grep -qF 'conflito: .sandbox.failIfUnavailable mantido false' "$TMP_ALL/su.out" && ! ls "$C2" | grep -q suggested; then
+    ok "setup propose: settings existente intacto, diff com o que soma, troca do escopo e conflito"
+  else ko "setup propose: settings existente intacto, diff com o que soma, troca do escopo e conflito" "exit $code, $(head -c 600 "$TMP_ALL/su.out")"; fi
   run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" apply >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
   code=$?
-  if [ "$code" = "1" ] && cmp -s "$TMP_ALL/su.before" "$C2/settings.json" && grep -qF 'não altera settings existente' "$TMP_ALL/su.err"; then
-    ok "setup apply: settings existente é recusado e fica idêntico"
-  else ko "setup apply: settings existente é recusado e fica idêntico" "exit $code, $(head -c 300 "$TMP_ALL/su.err")"; fi
+  bak="$(ls "$C2"/settings.json.bak-kit-* 2>/dev/null | head -n 1)"
+  jq 'del(.enabledPlugins["kit@claude-kit"])' "$TMP_ALL/su.before" >"$TMP_ALL/su.before.nokit"
+  jq 'del(.enabledPlugins["kit@claude-kit"])' "$C2/settings.json" >"$TMP_ALL/su.after.nokit" 2>/dev/null
+  if [ "$code" = "0" ] && [ -n "$bak" ] && cmp -s "$TMP_ALL/su.before" "$bak" && [ ! -e "$C2/settings.kit-proposta.json" ] &&
+    bash "$SCRIPTS/merge-json.sh" --check "$TMP_ALL/su.before.nokit" "$TMP_ALL/su.after.nokit" 2>/dev/null &&
+    jq -e --slurpfile t "$TPL_USER" '(.permissions.deny as $d | all($t[0].permissions.deny[]; . as $x | $d | index($x) != null))
+      and (.permissions.deny | index("Bash(curl *)") != null) and .model == "opus" and .sandbox.failIfUnavailable == false
+      and .enabledPlugins == {"kit@claude-kit": false, "outro@mkt": true} and (.hooks.Stop | length) == 1' "$C2/settings.json" >/dev/null 2>&1 &&
+    grep -qF "backup em $bak" "$TMP_ALL/su.out"; then
+    ok "setup apply: settings existente recebe só adições, com backup e a troca do escopo"
+  else ko "setup apply: settings existente recebe só adições, com backup e a troca do escopo" "exit $code, $(cat "$TMP_ALL/su.out" "$TMP_ALL/su.err" | head -c 400)"; fi
   out="$(run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
   code=$?
-  if [ "$code" = "0" ] && grep -qF 'aviso settings:' <<<"$out" && grep -qF 'kit-settings.suggested.json' <<<"$out"; then
-    ok "setup status: regras faltando com sugestão gerada vira aviso"
-  else ko "setup status: regras faltando com sugestão gerada vira aviso" "exit $code, $out"; fi
+  if [ "$code" = "0" ] && grep -qF 'ok settings' <<<"$out"; then
+    ok "setup status: depois do apply o settings existente está pronto"
+  else ko "setup status: depois do apply o settings existente está pronto" "exit $code, $out"; fi
   run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" propose todos >"$TMP_ALL/su.out" 2>&1
-  if grep -qF 'nada a sugerir' "$TMP_ALL/su.out" && [ ! -e "$C1/kit-settings.suggested.json" ]; then ok "setup propose: settings completo não gera sugestão"; else ko "setup propose: settings completo não gera sugestão" "$(cat "$TMP_ALL/su.out")"; fi
+  if grep -qF 'sem mudança' "$TMP_ALL/su.out"; then ok "setup propose: settings completo não muda"; else ko "setup propose: settings completo não muda" "$(cat "$TMP_ALL/su.out")"; fi
 
   # Windows nativo simulado: sem sandbox, failIfUnavailable false; WSL mantem true.
   C3="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
@@ -758,13 +804,14 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
     ok "setup check: Windows nativo simulado avisa que não há sandbox"
   else ko "setup check: Windows nativo simulado avisa que não há sandbox" "exit $code, $out"; fi
   run_setup "$C3" "$WIN_BIN:$NOCLAUDE_PATH" propose todos >/dev/null 2>&1
-  if jq -e '.sandbox.failIfUnavailable == false and .sandbox.enabled == true' "$C3/settings.kit-proposta.json" >/dev/null 2>&1; then
-    ok "setup propose: Windows nativo simulado usa failIfUnavailable false"
-  else ko "setup propose: Windows nativo simulado usa failIfUnavailable false" "$(head -c 300 "$C3/settings.kit-proposta.json" 2>&1)"; fi
+  if jq -e '(has("sandbox") | not) and (.permissions.deny | index("PowerShell") != null)
+      and (.permissions.ask | index("Bash(dangerouslyDisableSandbox:true)") == null)' "$C3/settings.kit-proposta.json" >/dev/null 2>&1; then
+    ok "setup propose: Windows nativo simulado nega PowerShell e não tem bloco sandbox"
+  else ko "setup propose: Windows nativo simulado nega PowerShell e não tem bloco sandbox" "$(head -c 300 "$C3/settings.kit-proposta.json" 2>&1)"; fi
   C4="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
   out="$(WSL_DISTRO_NAME=Ubuntu CLAUDE_CONFIG_DIR="$C4" PATH="$LINUX_BIN:$NOCLAUDE_PATH" bash "$SU" check 2>&1)"
   WSL_DISTRO_NAME=Ubuntu CLAUDE_CONFIG_DIR="$C4" PATH="$LINUX_BIN:$NOCLAUDE_PATH" bash "$SU" propose todos >/dev/null 2>&1
-  if grep -qF 'plataforma: wsl2' <<<"$out" && jq -e '.sandbox.failIfUnavailable == true' "$C4/settings.kit-proposta.json" >/dev/null 2>&1; then
+  if grep -qF 'plataforma: wsl2' <<<"$out" && jq -e '.sandbox.failIfUnavailable == true and (.permissions.deny | index("PowerShell") == null)' "$C4/settings.kit-proposta.json" >/dev/null 2>&1; then
     ok "setup: WSL2 simulado mantém failIfUnavailable true"
   else ko "setup: WSL2 simulado mantém failIfUnavailable true" "$out"; fi
   rm -f "$C4/settings.kit-proposta.json"
@@ -793,9 +840,79 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
     ok "setup check: Linux sem bwrap e socat falha com o comando de instalação"
   else ko "setup check: Linux sem bwrap e socat falha com o comando de instalação" "exit $code, $out"; fi
   run_setup "$C5" "$NOSB_BIN:$(PATH="$NOSB_PATH" path_without claude)" propose todos >/dev/null 2>&1
-  if jq -e '.sandbox.failIfUnavailable == false' "$C5/settings.kit-proposta.json" >/dev/null 2>&1; then
-    ok "setup propose: Linux sem bwrap e socat usa failIfUnavailable false"
-  else ko "setup propose: Linux sem bwrap e socat usa failIfUnavailable false" "$(head -c 300 "$C5/settings.kit-proposta.json" 2>&1)"; fi
+  if jq -e '(has("sandbox") | not) and (.permissions.deny | index("PowerShell") == null)' "$C5/settings.kit-proposta.json" >/dev/null 2>&1; then
+    ok "setup propose: Linux sem bwrap e socat fica sem bloco sandbox"
+  else ko "setup propose: Linux sem bwrap e socat fica sem bloco sandbox" "$(head -c 300 "$C5/settings.kit-proposta.json" 2>&1)"; fi
+  C6="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
+  run_setup "$C6" "$MAC_BIN:$NOCLAUDE_PATH" propose todos >/dev/null 2>&1
+  if jq -e '.sandbox.enabled == true and .sandbox.failIfUnavailable == true and (.permissions.deny | index("PowerShell") == null)' "$C6/settings.kit-proposta.json" >/dev/null 2>&1; then
+    ok "setup propose: macOS tem bloco sandbox e não nega PowerShell"
+  else ko "setup propose: macOS tem bloco sandbox e não nega PowerShell" "$(head -c 300 "$C6/settings.kit-proposta.json" 2>&1)"; fi
+
+  # Templates: curl/wget negados no projeto (com os dominios do stack), nunca no usuario.
+  TPL_PROJ="$REPO/plugins/kit/templates/project-settings.json"
+  if jq -e '[.permissions.deny[] | select(test("curl|wget"))] == []' "$TPL_USER" >/dev/null 2>&1 &&
+    jq -e '(.permissions.deny | index("Bash(curl *)") != null and index("Bash(wget *)") != null) and (.sandbox.network.allowedDomains | length > 0)' "$TPL_PROJ" >/dev/null 2>&1; then
+    ok "templates: curl e wget em deny só no projeto, com allowedDomains"
+  else ko "templates: curl e wget em deny só no projeto, com allowedDomains" "$(jq -c '.permissions.deny' "$TPL_USER" "$TPL_PROJ" | tr '\n' ' ')"; fi
+  tpl_miss=""
+  for r in 'Read(**/.env)' 'Read(~/.ssh/**)' 'Read(~/.aws/**)' 'Read(~/.kube/**)' 'Read(~/.git-credentials)' 'Bash(git push --force *)' 'Bash(git push -f *)' 'Bash(git reset --hard *)' 'Bash(git clean -fdx *)'; do
+    jq -e --arg r "$r" '.permissions.deny | index($r) != null' "$TPL_USER" >/dev/null 2>&1 || tpl_miss+="$r "
+  done
+  if [ -z "$tpl_miss" ] && jq -e '(.permissions.ask | index("Bash(git push *)") != null) and .permissions.disableBypassPermissionsMode == "disable"' "$TPL_USER" >/dev/null 2>&1; then
+    ok "template de usuário: segredos, git destrutivo, ask de push e bypass desligado"
+  else ko "template de usuário: segredos, git destrutivo, ask de push e bypass desligado" "faltam: $tpl_miss"; fi
+
+  # lsp: plugin oficial pelos manifestos; binario presente ok, ausente com o comando ou sem instalacao.
+  LR="$(mktemp -d "$TMP_ALL/lsp.XXXXXX")"
+  mkdir -p "$LR/web" "$LR/svc" "$LR/java/src" "$LR/bin"
+  printf '{}
+' >"$LR/web/package.json"
+  printf 'module x
+' >"$LR/svc/go.mod"
+  printf 'class A {}
+' >"$LR/java/src/A.java"
+  printf '# nada
+' >"$LR/Makefile"
+  git_q init "$LR"
+  for t in typescript-language-server go; do printf '#!/usr/bin/env bash
+exit 0
+' >"$LR/bin/$t"; chmod +x "$LR/bin/$t"; done
+  LSP_PATH="$LR/bin:$LINUX_BIN:$(PATH="$(PATH="$NOCLAUDE_PATH" path_without gopls)" path_without jdtls)"
+  out="$(run_setup "$C1" "$LSP_PATH" lsp "$LR" 2>&1)"; code=$?
+  if [ "$code" = "0" ] && grep -qxF 'lsp typescript-lsp@claude-plugins-official typescript-language-server: ok' <<<"$out" &&
+    grep -qxF 'lsp gopls-lsp@claude-plugins-official gopls: falta — instale: go install golang.org/x/tools/gopls@latest' <<<"$out" &&
+    grep -qxF 'lsp jdtls-lsp@claude-plugins-official jdtls: falta — sem instalação automática nesta plataforma' <<<"$out" &&
+    [ "$(grep -c . <<<"$out")" = "3" ]; then
+    ok "setup lsp: plugin oficial por linguagem, binário ok, ausente com instalação ou sem instalação"
+  else ko "setup lsp: plugin oficial por linguagem, binário ok, ausente com instalação ou sem instalação" "exit $code, $out"; fi
+  out="$(run_setup "$C1" "$LR/bin:$MAC_BIN:$(PATH="$NOCLAUDE_PATH" path_without jdtls)" lsp "$LR" 2>&1)"
+  if grep -qF 'jdtls: falta' <<<"$out" && { command -v brew >/dev/null 2>&1 || grep -qF 'sem instalação automática' <<<"$out"; }; then
+    ok "setup lsp: instalação só do macOS não vale fora dele e exige a ferramenta"
+  else ko "setup lsp: instalação só do macOS não vale fora dele e exige a ferramenta" "$out"; fi
+  LN="$(mktemp -d "$TMP_ALL/lsp.XXXXXX")"
+  printf 'x
+' >"$LN/main.c"
+  git_q init "$LN"
+  out="$(run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" lsp "$LN" 2>&1)"; code=$?
+  if [ "$code" = "0" ] && [ -z "$out" ]; then ok "setup lsp: linguagem sem plugin no kit não aparece"; else ko "setup lsp: linguagem sem plugin no kit não aparece" "exit $code, $out"; fi
+
+  # plans: so plano com pendencia e mais de 14 dias sem mudanca.
+  PR="$(mktemp -d "$TMP_ALL/plans.XXXXXX")"
+  mkdir -p "$PR/docs/specs/velho" "$PR/docs/specs/novo" "$PR/docs/specs/feito"
+  printf -- '- [x] 1. a
+- [ ] 2. b
+' >"$PR/docs/specs/velho/PLAN.md"
+  printf -- '- [ ] 1. a
+' >"$PR/docs/specs/novo/PLAN.md"
+  printf -- '- [x] 1. a
+' >"$PR/docs/specs/feito/PLAN.md"
+  git_q init "$PR"
+  touch -d "@$(($(date +%s) - 20 * 86400))" "$PR/docs/specs/velho/PLAN.md" "$PR/docs/specs/feito/PLAN.md"
+  out="$(run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" plans "$PR" 2>&1)"; code=$?
+  if [ "$code" = "0" ] && [ "$out" = "plano parado há 20 dias: docs/specs/velho/PLAN.md (1/2)" ]; then
+    ok "setup plans: só plano pendente com mais de 14 dias sem mudança"
+  else ko "setup plans: só plano pendente com mais de 14 dias sem mudança" "exit $code, $out"; fi
   out="$(KIT_USERNS_SYSCTL="$TMP_ALL/userns-1" run_setup "$C5" "$LINUX_BIN:$NOCLAUDE_PATH" check 2>&1)"
   if grep -qF 'aviso sandbox: o AppArmor restringe user namespaces' <<<"$out"; then ok "setup check: AppArmor restringindo userns gera aviso"; else ko "setup check: AppArmor restringindo userns gera aviso" "$out"; fi
   out="$(KIT_USERNS_SYSCTL="$TMP_ALL/userns-1" run_setup "$C5" "$MAC_BIN:$NOCLAUDE_PATH" check 2>&1)"
@@ -855,6 +972,38 @@ echo "checagens estaticas"
 if [ -z "$FILTER" ]; then
   stack_hits="$(grep -nE '(^|[^a-z_.-])(dotnet|npm|npx|pnpm|yarn|pytest|uv run|pip|poetry|cargo|mvn|gradlew?|go (build|test|vet)|golangci-lint|ruff|prettier|eslint|tsc)([^a-z_-]|$)' "$SCRIPTS"/*.sh || true)"
   if [ -z "$stack_hits" ]; then ok "nenhum script referencia comando de stack"; else ko "nenhum script referencia comando de stack" "$stack_hits"; fi
+
+  # O relatorio do init nao manda o usuario fazer nada; extras opcionais ficam no README.
+  INIT_MD="$REPO/plugins/kit/skills/init/SKILL.md"
+  init_bad="$(grep -nE 'run-skill-generator|/verify|instalar LSP|plugin LSP oficial da linguagem \(ver|kit-settings\.suggested|sugest' "$INIT_MD" || true)"
+  if [ -z "$init_bad" ] && grep -qF 'Pronto. Próximo: /kit:spec <ideia>' "$INIT_MD" && grep -qF 'no máximo ~10 linhas' "$INIT_MD" &&
+    grep -qF 'setup.sh" plans' "$INIT_MD" && grep -qF 'merge-json.sh" --apply' "$INIT_MD"; then
+    ok "init: relatório curto termina no /kit:spec, sem tarefa para o usuário"
+  else ko "init: relatório curto termina no /kit:spec, sem tarefa para o usuário" "$init_bad"; fi
+  readme_adv="$(awk '/^## Avançado \(opcional\)/ { on = 1; next } on && /^## / { on = 0 } on' "$REPO/README.md")"
+  if grep -qF '/run-skill-generator' <<<"$readme_adv" && grep -qF '/verify' <<<"$readme_adv" &&
+    [ "$(grep -c 'run-skill-generator' "$REPO/README.md")" = "$(grep -c 'run-skill-generator' <<<"$readme_adv")" ]; then
+    ok "README: /run-skill-generator e /verify só em Avançado (opcional)"
+  else ko "README: /run-skill-generator e /verify só em Avançado (opcional)" "$(grep -n 'run-skill-generator\|/verify' "$REPO/README.md")"; fi
+  manual="$(grep -rnE 'kit-settings\.suggested|merge-json\.sh --additions|aplique a sugestão|aplica se quiser|Mescle .*user-settings' \
+    "$REPO/README.md" "$REPO/CONTRIBUTING.md" "$REPO/docs" "$REPO/plugins/kit" || true)"
+  if [ -z "$manual" ]; then ok "nenhum resto do fluxo de sugestão (kit-settings.suggested) em docs, skills e scripts"; else ko "nenhum resto do fluxo de sugestão" "$manual"; fi
+  # A tabela LSP do stacks.md tem os mesmos plugins e binarios do templates/lsp-plugins.txt.
+  lsp_tpl="$(tr -d '\r' <"$REPO/plugins/kit/templates/lsp-plugins.txt" | awk -F'|' 'NF { print $1 "@claude-plugins-official " $2 }' | sort)"
+  lsp_doc="$(tr -d '\r' <"$REPO/plugins/kit/skills/init/stacks.md" | awk -F'|' '/@claude-plugins-official/ { p = $4; b = $5; gsub(/[ `]/, "", p); gsub(/[ `]/, "", b); print p " " b }' | sort)"
+  if [ -n "$lsp_tpl" ] && [ "$lsp_tpl" = "$lsp_doc" ]; then ok "stacks.md: tabela LSP igual a templates/lsp-plugins.txt"
+  else ko "stacks.md: tabela LSP igual a templates/lsp-plugins.txt" "$(diff <(printf '%s\n' "$lsp_tpl") <(printf '%s\n' "$lsp_doc") | tr '\n' ' ')"; fi
+  lsp_marketplace="${HOME}/.claude/plugins/marketplaces/claude-plugins-official/.claude-plugin/marketplace.json"
+  if [ -f "$lsp_marketplace" ]; then
+    lsp_missing=""
+    while IFS='|' read -r plugin bin _; do
+      [ -n "$plugin" ] || continue
+      jq -e --arg n "$plugin" --arg b "$bin" '[.plugins[] | select(.name == $n) | .lspServers[]?.command] | index($b) != null' "$lsp_marketplace" >/dev/null 2>&1 || lsp_missing+="$plugin/$bin "
+    done < <(tr -d '\r' <"$REPO/plugins/kit/templates/lsp-plugins.txt")
+    if [ -z "$lsp_missing" ]; then ok "lsp-plugins.txt: nomes e binários conferem com o marketplace oficial instalado"; else ko "lsp-plugins.txt: nomes e binários conferem com o marketplace oficial" "$lsp_missing"; fi
+  else
+    echo "  pulado conferência com o marketplace oficial (não instalado)"
+  fi
 
   TPL="$REPO/plugins/kit/skills/plan/template.md"
   tpl_got="$(grep -E '^##+ |^  - (files|behavior|action|verify|done):' "$TPL" | sed -E 's/^(##+ [^—]*[^ —]).*/\1/; s/:.*//; s/^ *- //' | tr -d '\r' | paste -sd'|' -)"
