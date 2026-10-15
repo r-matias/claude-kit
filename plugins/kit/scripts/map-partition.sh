@@ -207,7 +207,7 @@ for repo in "${REPOS[@]}"; do
     function leaf(base, files, kind, cnt, lc, loc_key) { BC[base] += cnt; nl++; LB[nl] = base; LF[nl] = files; LK[nl] = kind; LC[nl] = cnt; LL[nl] = lc; LKEY[nl] = loc_key }
     BEGIN {
       FS = "\t"
-      while ((getline line < mfile) > 0) { md = dirof(line); MAN[md] = (md in MAN) ? MAN[md] SUBSEP line : line; if (md != ".") PKG[md] = 1 }
+      while ((getline line < mfile) > 0) { md = dirof(line); if (md in MAN) MAN[md] = MAN[md] SUBSEP line; else MAN[md] = line; if (md != ".") PKG[md] = 1 }
       while ((getline line < cfile) > 0) { CH[line] = 1; nch++; CHL[nch] = line }
     }
     {
@@ -216,7 +216,7 @@ for repo in "${REPOS[@]}"; do
       while (d != "" && d != ".") { if (d in PKG) { g = d; break } d = parentof(d) }
       if (g == "") { i = index($1, "/"); g = i ? substr($1, 1, i - 1) : "." }
       if (!(g in GF)) { ng++; GORDER[ng] = g }
-      GF[g] = (g in GF) ? GF[g] " " n : n; GC[g]++; GL[g] += L[n]
+      if (g in GF) GF[g] = GF[g] " " n; else GF[g] = n; GC[g]++; GL[g] += L[n]
     }
     END {
       if (n == 0) exit

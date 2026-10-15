@@ -137,6 +137,8 @@ O resultado fica no git:
 - `docs/codemap.md`: visão geral, tabela de unidades, integrações, fluxos e divergências de contrato, até 150 linhas;
 - `.claude/rules/kit-codemap.md`, sem `paths:` (carrega em toda sessão), com 2 a 3 linhas apontando para o codemap. O `CLAUDE.md` não é tocado.
 
+**Confirmação de escrita.** O `/kit:map` já traz permissão para gravar só os arquivos dele (`docs/codemap*.md`, `.claude/rules/map-*.md`, `.claude/rules/kit-codemap*.md`), então o `docs/codemap.md` sai sem prompt. A pasta `.claude/`, porém, é um caminho protegido do Claude Code: escrita nela sempre pede confirmação, mesmo com permissão liberada ou em `acceptEdits` (só `bypassPermissions` dispensa). No primeiro prompt, escolha a opção que libera a edição da pasta `.claude` do projeto nesta sessão, e as demais rules saem sem perguntar.
+
 Texto seu entre `<!-- manual -->` e `<!-- /manual -->` sobrevive ao remapeamento. O kit só regrava arquivos com o cabeçalho `kit:map`; rules que você escreveu nunca são tocadas. Os investigadores de `/kit:plan`, `/kit:fix` e `/kit:hunt` leem o codemap antes de explorar e confiam no código quando divergem. Quando o codemap fica mais de 50 commits atrás (`map.stale_after_commits`), o início da sessão sugere `/kit:map --update`.
 
 **Custo.** Cada unidade é um subagent, mais dois transversais e um verificador a cada 8 unidades, em ondas de até 8 em paralelo. Ordem de grandeza: ~50 mil tokens por agent; um projeto de 3 mil arquivos dá ~20 unidades, ~25 agents. Antes de lançar, o `/kit:map` mostra o plano; acima de 30 agents (`map.max_agents`) ele pergunta. Para gastar menos, mapeie uma área ou aumente `map.unit_max_files`/`map.unit_max_loc`. O `--update` só paga as unidades que mudaram.

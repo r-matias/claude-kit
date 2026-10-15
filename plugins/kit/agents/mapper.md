@@ -15,7 +15,7 @@ Regras duras para todo modo:
 - Se o prompt trouxer um `docs/codemap.md` ou resumos anteriores, use como ponto de partida e confie no código quando divergirem.
 
 ## Modo unidade (padrão)
-Você recebe: repositório, nome da unidade, `paths`, manifestos, `protected_paths` e a lista de arquivos com linhas. Leia os manifestos, os pontos de entrada e uma amostra representativa; não precisa ler todos os arquivos.
+Você recebe: repositório, nome da unidade, `paths` (globs relativos ao repositório), manifestos, `file_count`, `loc` e `protected_paths`. Use Glob nos `paths` para listar os arquivos da unidade. Leia os manifestos, os pontos de entrada e uma amostra representativa; não precisa ler todos os arquivos.
 
 Devolva exatamente este markdown, no máximo 60 linhas:
 

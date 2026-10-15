@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 # Passa as fixtures de tests/fixtures pelos scripts do kit e confere decisao, exit code e saidas.
-# Uso: tests/run-tests.sh [filtro-por-nome]
+# Uso: tests/run-tests.sh [--awk <mawk|gawk|busybox>] [filtro-por-nome]
+# --awk roda tudo com aquele awk no lugar do padrao (ex.: mawk, que e o awk do Debian/Ubuntu);
+# se ele nao estiver instalado, a execucao e pulada com aviso.
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 SCRIPTS="$REPO/plugins/kit/scripts"
+AWK_IMPL=""
+if [ "${1:-}" = "--awk" ]; then
+  AWK_IMPL="${2:-}"
+  [ -n "$AWK_IMPL" ] || { echo "uso: --awk <mawk|gawk|busybox>" >&2; exit 2; }
+  shift 2
+fi
 FILTER="${1:-}"
 
 command -v jq >/dev/null 2>&1 || { echo "jq nao encontrado" >&2; exit 1; }
@@ -16,6 +24,20 @@ FAIL=0
 FAILED=()
 TMP_ALL="$(mktemp -d)"
 trap 'rm -rf "$TMP_ALL"' EXIT
+
+if [ -n "$AWK_IMPL" ]; then
+  AWK_BIN="$(command -v "$AWK_IMPL" 2>/dev/null)"
+  [ -n "$AWK_BIN" ] || { echo "pulado: $AWK_IMPL nao instalado"; exit 0; }
+  mkdir -p "$TMP_ALL/awk-bin"
+  if [ "$AWK_IMPL" = "busybox" ]; then
+    printf '#!/bin/sh\nexec "%s" awk "$@"\n' "$AWK_BIN" >"$TMP_ALL/awk-bin/awk"
+  else
+    printf '#!/bin/sh\nexec "%s" "$@"\n' "$AWK_BIN" >"$TMP_ALL/awk-bin/awk"
+  fi
+  chmod +x "$TMP_ALL/awk-bin/awk"
+  export PATH="$TMP_ALL/awk-bin:$PATH"
+  echo "awk: $AWK_IMPL ($AWK_BIN)"
+fi
 
 # Caminho no formato que o Claude Code envia na plataforma atual.
 native_path() {

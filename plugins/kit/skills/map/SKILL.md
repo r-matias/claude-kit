@@ -3,7 +3,7 @@ name: map
 description: Mapeia a arquitetura do codebase com vários subagents em paralelo e grava .claude/rules/map-<unidade>.md por área, .claude/rules/kit-codemap.md e docs/codemap.md, cada afirmação com evidência arquivo:linha conferida por um verificador. Aceita uma área ou --update.
 argument-hint: "[<caminho> | --update]"
 disable-model-invocation: true
-allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/map-partition.sh" *) Bash(git rev-parse *) Bash(git diff *) Bash(git log *) Read(${CLAUDE_PLUGIN_ROOT}/**)
+allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/map-partition.sh" *) Bash(git rev-parse *) Bash(git diff *) Bash(git log *) Read(${CLAUDE_PLUGIN_ROOT}/**) Edit(.claude/rules/map-*.md) Write(.claude/rules/map-*.md) Edit(.claude/rules/kit-codemap*.md) Write(.claude/rules/kit-codemap*.md) Edit(docs/codemap*.md) Write(docs/codemap*.md) Edit(**/.claude/rules/map-*.md) Write(**/.claude/rules/map-*.md) Edit(**/.claude/rules/kit-codemap*.md) Write(**/.claude/rules/kit-codemap*.md) Edit(**/docs/codemap*.md) Write(**/docs/codemap*.md)
 ---
 
 ## Estado atual
