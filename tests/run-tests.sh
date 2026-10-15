@@ -583,12 +583,6 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   if grep -qF 'sem mudança' <<<"$out" && [ "$(ls "$U"/ap.json.bak-kit-* | wc -l | tr -d ' ')" = "1" ]; then
     ok "merge-json --apply: nada a somar não grava nem cria backup"
   else ko "merge-json --apply: nada a somar não grava nem cria backup" "$out"; fi
-  # --prefer: so o caminho indicado troca de valor.
-  out="$("$TBASH" "$M" --apply --prefer '["enabledPlugins","kit@claude-kit"]' "$U/ap.json" "$U/ap-prop.json" 2>&1)"; code=$?
-  if [ "$code" = "0" ] && jq -e '.enabledPlugins["kit@claude-kit"] == false and .model == "opus"' "$U/ap.json" >/dev/null 2>&1 &&
-    grep -qF 'troca: .enabledPlugins."kit@claude-kit" true -> false' <<<"$out" && [ "$(ls "$U"/ap.json.bak-kit-* | wc -l | tr -d ' ')" = "2" ]; then
-    ok "merge-json --apply --prefer: troca só a chave do kit, com novo backup"
-  else ko "merge-json --apply --prefer: troca só a chave do kit, com novo backup" "exit $code, $out"; fi
   # settings.local.json, JSON invalido e arquivo ausente.
   mkdir -p "$U/loc/.claude"
   printf '{"permissions":{"allow":["Z"]}}\n' >"$U/loc/.claude/settings.local.json"
@@ -873,7 +867,6 @@ g_setup() {
 echo "setup"
 if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   SU="$SCRIPTS/setup.sh"
-  TPL_USER="$REPO/plugins/kit/templates/user-settings.json"
   # Stubs de plataforma e versao: uname responde $1, claude responde $2. WSL via WSL_DISTRO_NAME.
   # bwrap e socat existem, salvo com $3 = "sem-sandbox". AppArmor sem restricao, salvo nos casos dele.
   setup_bin() {
@@ -904,105 +897,151 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   }
   NOJQ_PATH="${NOJQ_PATH:-$(path_without jq)}"
 
-  # settings inexistente: a proposta vira o settings, kit ligado em todos.
-  C1="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")/claude"
-  run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" propose todos >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
-  code=$?
-  if [ "$code" = "0" ] && grep -qF '(novo)' "$TMP_ALL/su.out" && [ ! -e "$C1/settings.json" ]; then
-    ok "setup propose: settings inexistente mostra diff e não grava"
-  else ko "setup propose: settings inexistente mostra diff e não grava" "exit $code, $(head -c 300 "$TMP_ALL/su.err")"; fi
-  run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" apply >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
-  code=$?
-  if [ "$code" = "0" ] && jq -e --slurpfile t "$TPL_USER" '.permissions.deny == $t[0].permissions.deny and .sandbox.failIfUnavailable == true
-      and (.permissions.deny | index("PowerShell") == null) and .enabledPlugins["kit@claude-kit"] == true' "$C1/settings.json" >/dev/null 2>&1 &&
-    [ ! -e "$C1/settings.kit-proposta.json" ] && ! ls "$C1"/settings.json.bak-kit-* >/dev/null 2>&1; then
-    ok "setup apply: settings inexistente criado com o template e kit ligado"
-  else ko "setup apply: settings inexistente criado com o template e kit ligado" "exit $code, $(head -c 300 "$TMP_ALL/su.err")"; fi
+  # Settings do usuario nunca e alterado: setup e scripts de apoio do init, com CLAUDE_CONFIG_DIR
+  # apontando para uma fixture e com o padrao ~/.claude (HOME falso).
+  user_hash() { (cd "$1" && find . -type f | LC_ALL=C sort | while IFS= read -r f; do printf '%s %s\n' "$f" "$(cksum <"$f")"; done); }
+  UH="$(mktemp -d "$TMP_ALL/home.XXXXXX")"
+  C1="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
+  mkdir -p "$UH/.claude/plugins" "$C1/plugins"
+  for d in "$UH/.claude" "$C1"; do
+    printf '%s\n' '{"model":"opus","permissions":{"allow":["Bash(curl *)"]},"enabledPlugins":{"kit@claude-kit":true}}' >"$d/settings.json"
+    printf '{"claude-kit":{}}\n' >"$d/plugins/known_marketplaces.json"
+  done
+  PR0="$(mktemp -d "$TMP_ALL/proj.XXXXXX")"
+  git_q init "$PR0"
+  mkdir -p "$PR0/.claude"
+  printf '%s\n' '{"commands":{"test":"true"},"permissions":{"groups":["segredos","push"]},"guards":{"allow_write":["**"]}}' >"$PR0/.claude/kit.json"
+  printf '%s\n' '{"permissions":{"allow":["Bash(npm run *)"]}}' >"$PR0/.claude/settings.json"
+  hu0="$(user_hash "$UH")"
+  hc0="$(user_hash "$C1")"
+  for cfg in "$C1" ""; do
+    for sub in check status groups "permissions segredos,git-destrutivo,push,curl-wget,sandbox $PR0/prop.json" "permissions --kit $PR0/.claude/kit.json $PR0/prop.json" "guards $PR0/.claude/kit.json" "lsp $PR0" "plans $PR0"; do
+      # shellcheck disable=SC2086
+      (cd "$PR0" && env -u WSL_DISTRO_NAME -u CLAUDE_CONFIG_DIR HOME="$UH" ${cfg:+CLAUDE_CONFIG_DIR="$cfg"} PATH="$LINUX_BIN:$NOCLAUDE_PATH" "$TBASH" "$SU" $sub) >/dev/null 2>&1
+    done
+    (cd "$PR0" && env -u CLAUDE_CONFIG_DIR HOME="$UH" ${cfg:+CLAUDE_CONFIG_DIR="$cfg"} "$TBASH" "$SCRIPTS/merge-json.sh" --apply .claude/settings.json prop.json) >/dev/null 2>&1
+    (cd "$PR0" && env -u CLAUDE_CONFIG_DIR HOME="$UH" ${cfg:+CLAUDE_CONFIG_DIR="$cfg"} "$TBASH" "$SCRIPTS/inventory.sh") >/dev/null 2>&1
+    (cd "$PR0" && env -u CLAUDE_CONFIG_DIR HOME="$UH" ${cfg:+CLAUDE_CONFIG_DIR="$cfg"} "$TBASH" "$SCRIPTS/inventory.sh" --net) >/dev/null 2>&1
+  done
+  if [ "$hu0" = "$(user_hash "$UH")" ] && [ "$hc0" = "$(user_hash "$C1")" ] && jq -e '.permissions.deny | index("Read(**/.env)") != null' "$PR0/.claude/settings.json" >/dev/null 2>&1; then
+    ok "setup e scripts do init não alteram o settings de usuário (CLAUDE_CONFIG_DIR e ~/.claude)"
+  else ko "setup e scripts do init não alteram o settings de usuário (CLAUDE_CONFIG_DIR e ~/.claude)" "$(user_hash "$C1") | $(user_hash "$UH")"; fi
 
-  # status: maquina pronta depois do apply; settings ausente ou sem regras do kit pede o setup.
+  # status: so dependencias e marketplace, nada de settings.
   out="$(run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
   code=$?
-  if [ "$code" = "0" ] && grep -qF 'ok settings' <<<"$out" && grep -qF 'aviso marketplace' <<<"$out"; then
-    ok "setup status: settings com as regras do kit está pronto"
-  else ko "setup status: settings com as regras do kit está pronto" "exit $code, $out"; fi
+  if [ "$code" = "0" ] && grep -qF 'ok marketplace claude-kit' <<<"$out" && ! grep -qi 'settings' <<<"$out"; then
+    ok "setup status: confere dependências e marketplace, sem settings de usuário"
+  else ko "setup status: confere dependências e marketplace, sem settings de usuário" "exit $code, $out"; fi
   CS="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
   out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
   code=$?
-  if [ "$code" = "1" ] && grep -qF 'falta settings' <<<"$out"; then ok "setup status: settings inexistente pede /kit:setup"; else ko "setup status: settings inexistente pede /kit:setup" "exit $code, $out"; fi
-  jq '.permissions.deny -= ["Read(~/.kube/**)"] | .sandbox.failIfUnavailable = false' "$C1/settings.json" >"$CS/settings.json"
-  mkdir -p "$CS/plugins"
-  printf '{"claude-kit":{}}\n' >"$CS/plugins/known_marketplaces.json"
-  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
+  if [ "$code" = "0" ] && grep -qF 'aviso marketplace' <<<"$out" && [ -z "$(ls -A "$CS")" ]; then
+    ok "setup status: sem settings de usuário está pronto e não cria nada"
+  else ko "setup status: sem settings de usuário está pronto e não cria nada" "exit $code, $out"; fi
+  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" propose todos 2>&1)"
   code=$?
-  if [ "$code" = "1" ] && grep -qF 'falta settings: 1 regra' <<<"$out" && grep -qF 'ok marketplace claude-kit' <<<"$out"; then
-    ok "setup status: regra removida falta, valor trocado pelo usuário não"
-  else ko "setup status: regra removida falta, valor trocado pelo usuário não" "exit $code, $out"; fi
+  if [ "$code" = "2" ] && [ -z "$(ls -A "$CS")" ]; then ok "setup: propose e apply do settings de usuário não existem mais"; else ko "setup: propose e apply do settings de usuário não existem mais" "exit $code, $out"; fi
 
-  # settings existente: merge so aditivo com backup; valor do usuario mantido; o escopo troca so a chave do kit.
-  C2="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
-  printf '%s' '{"model":"opus","permissions":{"allow":["Bash(ls *)"],"deny":["Bash(rm *)","Bash(curl *)"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"x.sh"}]}]},"enabledPlugins":{"kit@claude-kit":true,"outro@mkt":true},"sandbox":{"enabled":true,"failIfUnavailable":false,"network":{"allowedDomains":["example.com"]}}}' >"$C2/settings.json"
-  cp "$C2/settings.json" "$TMP_ALL/su.before"
-  run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" propose opt-in >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
-  code=$?
-  if [ "$code" = "0" ] && cmp -s "$TMP_ALL/su.before" "$C2/settings.json" && [ -e "$C2/settings.kit-proposta.json" ] &&
-    grep -qF '+      "Read(~/.ssh/**)"' "$TMP_ALL/su.out" && grep -qF 'troca: .enabledPlugins."kit@claude-kit" true -> false' "$TMP_ALL/su.out" &&
-    grep -qF 'conflito: .sandbox.failIfUnavailable mantido false' "$TMP_ALL/su.out" && ! ls "$C2" | grep -q suggested; then
-    ok "setup propose: settings existente intacto, diff com o que soma, troca do escopo e conflito"
-  else ko "setup propose: settings existente intacto, diff com o que soma, troca do escopo e conflito" "exit $code, $(head -c 600 "$TMP_ALL/su.out")"; fi
-  run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" apply >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
-  code=$?
-  bak="$(ls "$C2"/settings.json.bak-kit-* 2>/dev/null | head -n 1)"
-  jq 'del(.enabledPlugins["kit@claude-kit"])' "$TMP_ALL/su.before" >"$TMP_ALL/su.before.nokit"
-  jq 'del(.enabledPlugins["kit@claude-kit"])' "$C2/settings.json" >"$TMP_ALL/su.after.nokit" 2>/dev/null
-  if [ "$code" = "0" ] && [ -n "$bak" ] && cmp -s "$TMP_ALL/su.before" "$bak" && [ ! -e "$C2/settings.kit-proposta.json" ] &&
-    "$TBASH" "$SCRIPTS/merge-json.sh" --check "$TMP_ALL/su.before.nokit" "$TMP_ALL/su.after.nokit" 2>/dev/null &&
-    jq -e --slurpfile t "$TPL_USER" '(.permissions.deny as $d | all($t[0].permissions.deny[]; . as $x | $d | index($x) != null))
-      and (.permissions.deny | index("Bash(curl *)") != null) and .model == "opus" and .sandbox.failIfUnavailable == false
-      and .enabledPlugins == {"kit@claude-kit": false, "outro@mkt": true} and (.hooks.Stop | length) == 1' "$C2/settings.json" >/dev/null 2>&1 &&
-    grep -qF "backup em $bak" "$TMP_ALL/su.out"; then
-    ok "setup apply: settings existente recebe só adições, com backup e a troca do escopo"
-  else ko "setup apply: settings existente recebe só adições, com backup e a troca do escopo" "exit $code, $(cat "$TMP_ALL/su.out" "$TMP_ALL/su.err" | head -c 400)"; fi
-  out="$(run_setup "$C2" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
-  code=$?
-  if [ "$code" = "0" ] && grep -qF 'ok settings' <<<"$out"; then
-    ok "setup status: depois do apply o settings existente está pronto"
-  else ko "setup status: depois do apply o settings existente está pronto" "exit $code, $out"; fi
-  # Settings de usuario com allow coberto por um deny do template: o deny nao entra e o status fica pronto.
-  C3="$TMP_ALL/claude-home3"
-  mkdir -p "$C3"
-  printf '%s' '{"permissions":{"allow":["Bash(git reset --hard origin/main)"]}}' >"$C3/settings.json"
-  run_setup "$C3" "$LINUX_BIN:$NOCLAUDE_PATH" propose todos >/dev/null 2>&1
-  run_setup "$C3" "$LINUX_BIN:$NOCLAUDE_PATH" apply >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
-  out="$(run_setup "$C3" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
-  if grep -qxF 'conflito: deny Bash(git reset --hard *) não aplicado — sombrearia Bash(git reset --hard origin/main) em allow' "$TMP_ALL/su.out" &&
-    jq -e '(.permissions.deny | index("Bash(git reset --hard *)") == null) and (.permissions.deny | index("Bash(git push --force *)") != null)' "$C3/settings.json" >/dev/null 2>&1 &&
-    grep -qF 'ok settings' <<<"$out"; then
-    ok "setup apply: deny do template que sombrearia allow do usuário não entra; status pronto"
-  else ko "setup apply: deny do template que sombrearia allow do usuário não entra; status pronto" "$(cat "$TMP_ALL/su.out" "$TMP_ALL/su.err" | head -c 500) | $out"; fi
-  run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" propose todos >"$TMP_ALL/su.out" 2>&1
-  if grep -qF 'sem mudança' "$TMP_ALL/su.out"; then ok "setup propose: settings completo não muda"; else ko "setup propose: settings completo não muda" "$(cat "$TMP_ALL/su.out")"; fi
+  # groups: PowerShell so no Windows nativo, sandbox so onde existe.
+  NOSB_BIN="$(setup_bin Linux 9.9.9 sem-sandbox)"
+  g_lin="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" groups 2>&1 | cut -f1 | tr '\n' ' ')"
+  g_win="$(run_setup "$CS" "$WIN_BIN:$NOCLAUDE_PATH" groups 2>&1 | cut -f1 | tr '\n' ' ')"
+  g_mac="$(run_setup "$CS" "$MAC_BIN:$NOCLAUDE_PATH" groups 2>&1 | cut -f1 | tr '\n' ' ')"
+  g_wsl="$(WSL_DISTRO_NAME=Ubuntu CLAUDE_CONFIG_DIR="$CS" PATH="$LINUX_BIN:$NOCLAUDE_PATH" "$TBASH" "$SU" groups 2>&1 | cut -f1 | tr '\n' ' ')"
+  g_nosb="$(run_setup "$CS" "$NOSB_BIN:$(PATH="$NOSB_PATH" path_without claude)" groups 2>&1 | cut -f1 | tr '\n' ' ')"
+  if [ "$g_lin" = "segredos git-destrutivo push curl-wget sandbox " ] && [ "$g_win" = "segredos git-destrutivo push curl-wget powershell " ] &&
+    [ "$g_mac" = "$g_lin" ] && [ "$g_wsl" = "$g_lin" ] && [ "$g_nosb" = "segredos git-destrutivo push curl-wget " ]; then
+    ok "setup groups: PowerShell só no Windows nativo, sandbox só no macOS e no Linux/WSL2 com bwrap e socat"
+  else ko "setup groups: PowerShell só no Windows nativo, sandbox só no macOS e no Linux/WSL2 com bwrap e socat" "linux=$g_lin win=$g_win mac=$g_mac wsl=$g_wsl nosb=$g_nosb"; fi
+  if run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" groups 2>&1 | grep -q $'^segredos\tSegredos — Nega Read'; then
+    ok "setup groups: cada grupo com rótulo e uma linha do que faz"
+  else ko "setup groups: cada grupo com rótulo e uma linha do que faz" "$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" groups 2>&1 | head -n 2)"; fi
 
-  # Windows nativo simulado: sem sandbox, failIfUnavailable false; WSL mantem true.
+  # permissions: so os grupos marcados entram na proposta.
+  PP="$(mktemp -d "$TMP_ALL/perm.XXXXXX")"
+  printf '%s\n' '{"permissions":{"allow":["Bash(npm run *)"]}}' >"$PP/p.json"
+  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" permissions segredos,push "$PP/p.json" 2>&1)"
+  code=$?
+  if [ "$code" = "0" ] && jq -e '(.permissions.deny | index("Read(**/.env)") != null) and (.permissions.deny | index("Bash(git reset --hard *)") == null)
+      and (.permissions.deny | index("Bash(curl *)") == null) and .permissions.ask == ["Bash(git push *)"] and (has("sandbox") | not)
+      and .permissions.allow == ["Bash(npm run *)"]' "$PP/p.json" >/dev/null 2>&1 && grep -qF 'grupos: segredos,push' <<<"$out"; then
+    ok "setup permissions: só os grupos marcados entram, proposta existente mantida"
+  else ko "setup permissions: só os grupos marcados entram, proposta existente mantida" "exit $code, $out, $(jq -c . "$PP/p.json")"; fi
+  cp "$PP/p.json" "$PP/p.before"
+  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" permissions - "$PP/p.json" 2>&1)"
+  if jq -e --slurpfile b "$PP/p.before" '. == $b[0]' "$PP/p.json" >/dev/null 2>&1 && grep -qF 'grupos: nenhum' <<<"$out"; then
+    ok "setup permissions: nenhum grupo marcado não acrescenta nada"
+  else ko "setup permissions: nenhum grupo marcado não acrescenta nada" "$out"; fi
+  out="$(run_setup "$CS" "$WIN_BIN:$NOCLAUDE_PATH" permissions sandbox,powershell "$PP/w.json" 2>&1)"
+  if jq -e '(has("sandbox") | not) and .permissions.deny == ["PowerShell"]' "$PP/w.json" >/dev/null 2>&1 && grep -qF 'fora: sandbox' <<<"$out"; then
+    ok "setup permissions: grupo fora da plataforma não entra e vira linha fora:"
+  else ko "setup permissions: grupo fora da plataforma não entra e vira linha fora:" "$out, $(cat "$PP/w.json" 2>&1)"; fi
+  run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" permissions sandbox "$PP/s.json" >/dev/null 2>&1
+  if jq -e '.sandbox.enabled == true and .sandbox.failIfUnavailable == true and (.permissions.ask | index("Bash(dangerouslyDisableSandbox:true)") != null)' "$PP/s.json" >/dev/null 2>&1; then
+    ok "setup permissions: grupo sandbox liga o sandbox com failIfUnavailable e o ask de rodar fora"
+  else ko "setup permissions: grupo sandbox liga o sandbox com failIfUnavailable e o ask de rodar fora" "$(cat "$PP/s.json" 2>&1)"; fi
+  printf '%s\n' '{"permissions":{"ask":["Bash(curl https://api.x.com *)"]}}' >"$PP/c.json"
+  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" permissions curl-wget "$PP/c.json" 2>&1)"
+  if jq -e '.permissions.deny == ["Bash(wget *)"]' "$PP/c.json" >/dev/null 2>&1 &&
+    grep -qF 'conflito: deny Bash(curl *) não aplicado — sombrearia Bash(curl https://api.x.com *) em ask' <<<"$out"; then
+    ok "setup permissions: deny de curl que sombrearia ask da proposta não entra"
+  else ko "setup permissions: deny de curl que sombrearia ask da proposta não entra" "$out, $(jq -c . "$PP/c.json")"; fi
+  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" permissions segredos,nada "$PP/x.json" 2>&1)"
+  code=$?
+  if [ "$code" = "2" ] && [ ! -e "$PP/x.json" ] && grep -qF 'grupo desconhecido: nada' <<<"$out"; then
+    ok "setup permissions: grupo desconhecido recusa e não grava"
+  else ko "setup permissions: grupo desconhecido recusa e não grava" "exit $code, $out"; fi
+
+  # Reparo: permissions.groups do kit.json manda; grupo desmarcado antes nao volta.
+  printf '%s\n' '{"permissions":{"groups":["git-destrutivo"]}}' >"$PP/kit.json"
+  run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" permissions --kit "$PP/kit.json" "$PP/r.json" >/dev/null 2>&1
+  code=$?
+  if [ "$code" = "0" ] && jq -e '.permissions.deny == ["Bash(git push --force *)","Bash(git push -f *)","Bash(git reset --hard *)","Bash(git clean -fdx *)"]
+      and (.permissions | has("ask") | not) and (has("sandbox") | not)' "$PP/r.json" >/dev/null 2>&1; then
+    ok "setup permissions --kit: reparo propõe só os grupos de permissions.groups"
+  else ko "setup permissions --kit: reparo propõe só os grupos de permissions.groups" "exit $code, $(cat "$PP/r.json" 2>&1)"; fi
+  printf '%s\n' '{"permissions":{"groups":[]}}' >"$PP/kit0.json"
+  run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" permissions --kit "$PP/kit0.json" "$PP/r0.json" >/dev/null 2>&1
+  code=$?
+  if [ "$code" = "0" ] && jq -e '. == {}' "$PP/r0.json" >/dev/null 2>&1; then
+    ok "setup permissions --kit: todos desmarcados antes, nada volta"
+  else ko "setup permissions --kit: todos desmarcados antes, nada volta" "exit $code, $(cat "$PP/r0.json" 2>&1)"; fi
+  printf '%s\n' '{"commands":{}}' >"$PP/kit1.json"
+  run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" permissions --kit "$PP/kit1.json" "$PP/r1.json" >/dev/null 2>&1
+  code=$?
+  if [ "$code" = "3" ] && [ ! -e "$PP/r1.json" ]; then ok "setup permissions --kit: sem permissions.groups sai com 3 e não grava"; else ko "setup permissions --kit: sem permissions.groups sai com 3 e não grava" "exit $code"; fi
+
+  # guards: glob largo e segredo em allow_write ignorados; item sem glob e grupo desconhecido invalidos.
+  printf '%s\n' '{"guards":{"allow_write":["**","*","**/*",".env*","*.env","web/gen/strings.ts",".env","config/.env.test","certs/a.pem","secrets/x.yml","keys/k",".env.test.example"],"deny_write":["vendor/**",{"glob":"docs/legal/**","message":"x"},{"message":"sem glob"}]},"permissions":{"groups":["segredos","nada"]}}' >"$PP/g.json"
+  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/g.json" 2>&1)"
+  code=$?
+  g_bad=""
+  for gl in '**' '*' '**/*' '.env*' '*.env'; do grep -qxF "ignorado: guards.allow_write \"$gl\" — glob largo demais; liste o caminho exato" <<<"$out" || g_bad+="$gl "; done
+  for gl in '.env' 'config/.env.test' 'certs/a.pem' 'secrets/x.yml' 'keys/k'; do grep -qxF "ignorado: guards.allow_write \"$gl\" — segredo não tem exceção" <<<"$out" || g_bad+="$gl "; done
+  if [ "$code" = "1" ] && [ -z "$g_bad" ] && ! grep -qF 'web/gen/strings.ts' <<<"$out" && ! grep -qF '.env.test.example' <<<"$out" &&
+    grep -qxF 'inválido: guards.deny_write[2] sem glob' <<<"$out" && grep -qxF 'inválido: permissions.groups "nada" desconhecido' <<<"$out"; then
+    ok "setup guards: glob largo e segredo ignorados, caminho exato e exemplo aceitos, item sem glob e grupo desconhecido"
+  else ko "setup guards: glob largo e segredo ignorados, caminho exato e exemplo aceitos, item sem glob e grupo desconhecido" "exit $code, faltou: $g_bad, $out"; fi
+  printf '%s\n' '{"guards":{"allow_write":["web/gen/strings.ts"],"deny_write":["vendor/**"]},"permissions":{"groups":["segredos"]}}' >"$PP/g2.json"
+  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/g2.json" 2>&1)"
+  code=$?
+  if [ "$code" = "0" ] && [ "$out" = "ok guards" ]; then ok "setup guards: kit.json válido dá ok guards"; else ko "setup guards: kit.json válido dá ok guards" "exit $code, $out"; fi
+
+  # Windows nativo simulado: check avisa que nao ha sandbox.
   C3="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
   out="$(run_setup "$C3" "$WIN_BIN:$NOCLAUDE_PATH" check 2>&1)"
   code=$?
   if [ "$code" = "0" ] && grep -qF 'plataforma: windows nativo — sem sandbox' <<<"$out"; then
     ok "setup check: Windows nativo simulado avisa que não há sandbox"
   else ko "setup check: Windows nativo simulado avisa que não há sandbox" "exit $code, $out"; fi
-  run_setup "$C3" "$WIN_BIN:$NOCLAUDE_PATH" propose todos >/dev/null 2>&1
-  if jq -e '(has("sandbox") | not) and (.permissions.deny | index("PowerShell") != null)
-      and (.permissions.ask | index("Bash(dangerouslyDisableSandbox:true)") == null)' "$C3/settings.kit-proposta.json" >/dev/null 2>&1; then
-    ok "setup propose: Windows nativo simulado nega PowerShell e não tem bloco sandbox"
-  else ko "setup propose: Windows nativo simulado nega PowerShell e não tem bloco sandbox" "$(head -c 300 "$C3/settings.kit-proposta.json" 2>&1)"; fi
   C4="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
   out="$(WSL_DISTRO_NAME=Ubuntu CLAUDE_CONFIG_DIR="$C4" PATH="$LINUX_BIN:$NOCLAUDE_PATH" "$TBASH" "$SU" check 2>&1)"
-  WSL_DISTRO_NAME=Ubuntu CLAUDE_CONFIG_DIR="$C4" PATH="$LINUX_BIN:$NOCLAUDE_PATH" "$TBASH" "$SU" propose todos >/dev/null 2>&1
-  if grep -qF 'plataforma: wsl2' <<<"$out" && jq -e '.sandbox.failIfUnavailable == true and (.permissions.deny | index("PowerShell") == null)' "$C4/settings.kit-proposta.json" >/dev/null 2>&1; then
-    ok "setup: WSL2 simulado mantém failIfUnavailable true"
-  else ko "setup: WSL2 simulado mantém failIfUnavailable true" "$out"; fi
-  rm -f "$C4/settings.kit-proposta.json"
+  if grep -qF 'plataforma: wsl2 — sandbox disponível' <<<"$out"; then
+    ok "setup check: WSL2 simulado com bwrap e socat tem sandbox"
+  else ko "setup check: WSL2 simulado com bwrap e socat tem sandbox" "$out"; fi
 
-  # jq ausente simulado: check falha com o comando de instalacao da plataforma; propose recusa.
+  # jq ausente simulado: check falha com o comando de instalacao da plataforma; permissions recusa.
   out="$(run_setup "$C4" "$WIN_BIN:$NOJQ_PATH" check 2>&1)"
   code=$?
   if [ "$code" = "1" ] && grep -qF 'falta jq — instale: winget install jqlang.jq' <<<"$out" && grep -qF 'ok git' <<<"$out"; then
@@ -1012,42 +1051,46 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   if grep -qF 'falta jq — instale: brew install jq' <<<"$out"; then ok "setup check: jq ausente (macOS) sugere brew install jq"; else ko "setup check: jq ausente (macOS) sugere brew install jq" "$out"; fi
   out="$(run_setup "$C4" "$LINUX_BIN:$NOJQ_PATH" check 2>&1)"
   if grep -qF 'falta jq — instale: sudo apt install jq' <<<"$out"; then ok "setup check: jq ausente (Linux) sugere sudo apt install jq"; else ko "setup check: jq ausente (Linux) sugere sudo apt install jq" "$out"; fi
-  run_setup "$C4" "$LINUX_BIN:$NOJQ_PATH" propose todos >/dev/null 2>&1
+  run_setup "$C4" "$LINUX_BIN:$NOJQ_PATH" permissions segredos "$C4/p.json" >/dev/null 2>&1
   code=$?
-  if [ "$code" = "2" ] && [ ! -e "$C4/settings.json" ] && [ ! -e "$C4/settings.kit-proposta.json" ]; then ok "setup propose: sem jq recusa e não grava"; else ko "setup propose: sem jq recusa e não grava" "exit $code"; fi
+  if [ "$code" = "2" ] && [ ! -e "$C4/p.json" ]; then ok "setup permissions: sem jq recusa e não grava"; else ko "setup permissions: sem jq recusa e não grava" "exit $code"; fi
 
-  # Linux/WSL2 sem bwrap e socat: falta com o comando de instalacao e failIfUnavailable false.
-  NOSB_BIN="$(setup_bin Linux 9.9.9 sem-sandbox)"
+  # Linux/WSL2 sem bwrap e socat: falta com o comando de instalacao.
   C5="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
   out="$(run_setup "$C5" "$NOSB_BIN:$(PATH="$NOSB_PATH" path_without claude)" check 2>&1)"
   code=$?
   if [ "$code" = "1" ] && grep -qF 'falta bwrap (sandbox) — instale: sudo apt install bubblewrap' <<<"$out" &&
-    grep -qF 'falta socat (sandbox) — instale: sudo apt install socat' <<<"$out" && grep -qF 'failIfUnavailable: false até instalar' <<<"$out"; then
+    grep -qF 'falta socat (sandbox) — instale: sudo apt install socat' <<<"$out" && grep -qF 'sandbox exige bwrap e socat' <<<"$out"; then
     ok "setup check: Linux sem bwrap e socat falha com o comando de instalação"
   else ko "setup check: Linux sem bwrap e socat falha com o comando de instalação" "exit $code, $out"; fi
-  run_setup "$C5" "$NOSB_BIN:$(PATH="$NOSB_PATH" path_without claude)" propose todos >/dev/null 2>&1
-  if jq -e '(has("sandbox") | not) and (.permissions.deny | index("PowerShell") == null)' "$C5/settings.kit-proposta.json" >/dev/null 2>&1; then
-    ok "setup propose: Linux sem bwrap e socat fica sem bloco sandbox"
-  else ko "setup propose: Linux sem bwrap e socat fica sem bloco sandbox" "$(head -c 300 "$C5/settings.kit-proposta.json" 2>&1)"; fi
-  C6="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
-  run_setup "$C6" "$MAC_BIN:$NOCLAUDE_PATH" propose todos >/dev/null 2>&1
-  if jq -e '.sandbox.enabled == true and .sandbox.failIfUnavailable == true and (.permissions.deny | index("PowerShell") == null)' "$C6/settings.kit-proposta.json" >/dev/null 2>&1; then
-    ok "setup propose: macOS tem bloco sandbox e não nega PowerShell"
-  else ko "setup propose: macOS tem bloco sandbox e não nega PowerShell" "$(head -c 300 "$C6/settings.kit-proposta.json" 2>&1)"; fi
 
-  # Templates: curl/wget negados no projeto (com os dominios do stack), nunca no usuario.
+  # Templates: regras de permissao so nos grupos; segredos com nomes explicitos, sem o curinga .env.*.
   TPL_PROJ="$REPO/plugins/kit/templates/project-settings.json"
-  if jq -e '[.permissions.deny[] | select(test("curl|wget"))] == []' "$TPL_USER" >/dev/null 2>&1 &&
-    jq -e '(.permissions.deny | index("Bash(curl *)") != null and index("Bash(wget *)") != null) and (.sandbox.network.allowedDomains | length > 0)' "$TPL_PROJ" >/dev/null 2>&1; then
-    ok "templates: curl e wget em deny só no projeto, com allowedDomains"
-  else ko "templates: curl e wget em deny só no projeto, com allowedDomains" "$(jq -c '.permissions.deny' "$TPL_USER" "$TPL_PROJ" | tr '\n' ' ')"; fi
+  TPL_GROUPS="$REPO/plugins/kit/templates/project-permissions.json"
+  if [ ! -e "$REPO/plugins/kit/templates/user-settings.json" ] &&
+    jq -e '(.permissions.deny // []) == [] and (.sandbox.network.allowedDomains | length > 0)' "$TPL_PROJ" >/dev/null 2>&1 &&
+    jq -e '(.groups[] | select(.id == "curl-wget") | .settings.permissions.deny) == ["Bash(curl *)", "Bash(wget *)"]' "$TPL_GROUPS" >/dev/null 2>&1; then
+    ok "templates: sem template de usuário; curl e wget só no grupo curl-wget; projeto com allowedDomains"
+  else ko "templates: sem template de usuário; curl e wget só no grupo curl-wget; projeto com allowedDomains" "$(jq -c '.permissions' "$TPL_PROJ")"; fi
   tpl_miss=""
-  for r in 'Read(**/.env)' 'Read(~/.ssh/**)' 'Read(~/.aws/**)' 'Read(~/.kube/**)' 'Read(~/.git-credentials)' 'Bash(git push --force *)' 'Bash(git push -f *)' 'Bash(git reset --hard *)' 'Bash(git clean -fdx *)'; do
-    jq -e --arg r "$r" '.permissions.deny | index($r) != null' "$TPL_USER" >/dev/null 2>&1 || tpl_miss+="$r "
+  for r in 'Read(**/.env)' 'Read(**/.env.local)' 'Read(**/.env.*.local)' 'Read(**/.env.test)' 'Read(**/.env.production)' 'Read(**/.env.development)' 'Read(**/.env.staging)' \
+    'Read(**/*.pem)' 'Read(**/*.key)' 'Read(**/secrets/**)' 'Read(~/.ssh/**)' 'Read(~/.aws/**)' 'Read(~/.kube/**)' 'Read(~/.git-credentials)' 'Read(~/.npmrc)' \
+    'Read(~/.config/gh/**)' 'Read(~/.docker/config.json)'; do
+    jq -e --arg r "$r" '.groups[] | select(.id == "segredos") | .settings.permissions.deny | index($r) != null' "$TPL_GROUPS" >/dev/null 2>&1 || tpl_miss+="$r "
   done
-  if [ -z "$tpl_miss" ] && jq -e '(.permissions.ask | index("Bash(git push *)") != null) and .permissions.disableBypassPermissionsMode == "disable"' "$TPL_USER" >/dev/null 2>&1; then
-    ok "template de usuário: segredos, git destrutivo, ask de push e bypass desligado"
-  else ko "template de usuário: segredos, git destrutivo, ask de push e bypass desligado" "faltam: $tpl_miss"; fi
+  for r in 'Bash(git push --force *)' 'Bash(git push -f *)' 'Bash(git reset --hard *)' 'Bash(git clean -fdx *)'; do
+    jq -e --arg r "$r" '.groups[] | select(.id == "git-destrutivo") | .settings.permissions.deny | index($r) != null' "$TPL_GROUPS" >/dev/null 2>&1 || tpl_miss+="$r "
+  done
+  # Nenhum Read de segredo casa um arquivo de exemplo (.env*.example etc.).
+  ex_hit="$(jq -r '.groups[] | select(.id == "segredos") | .settings.permissions.deny[] | select(startswith("Read(**/")) | sub("^Read\\(\\*\\*/"; "") | sub("\\)$"; "")' "$TPL_GROUPS" | tr -d '\r' |
+    while IFS= read -r g; do
+      re="$("$TBASH" -c '. "$1/lib.sh"; glob_to_regex "$2"' _ "$SCRIPTS" "$g")"
+      for f in .env.example .env.test.example .env.production.sample .env.local.template .env.dist; do [[ "$f" =~ $re ]] && printf '%s~%s ' "$g" "$f"; done
+    done)"
+  if [ -z "$tpl_miss" ] && [ -z "$ex_hit" ] && ! grep -qF 'Read(**/.env.*)' "$TPL_GROUPS" &&
+    jq -e '(.groups[] | select(.id == "push") | .settings.permissions.ask) == ["Bash(git push *)"]' "$TPL_GROUPS" >/dev/null 2>&1; then
+    ok "template de grupos: segredos por nome (sem .env.*, .env.example legível), git destrutivo e ask de push"
+  else ko "template de grupos: segredos por nome (sem .env.*, .env.example legível), git destrutivo e ask de push" "faltam: $tpl_miss; casam exemplo: $ex_hit"; fi
 
   # lsp: plugin oficial pelos manifestos; binario presente ok, ausente com o comando ou sem instalacao.
   LR="$(mktemp -d "$TMP_ALL/lsp.XXXXXX")"
@@ -1239,10 +1282,41 @@ if [ -z "$FILTER" ]; then
     tr -d '\r' <"$f" | grep -qE '^tools:.*\bBash\b' || continue
     bash_agents=$((bash_agents + 1))
     grep -qF 'Para ler arquivo use Read; para buscar, Grep/Glob.' "$f" && grep -qF 'Bash só para git (`log`, `blame`, `show`, `diff`, `status`)' "$f" &&
-      grep -qF 'Nunca `cat`/`head`/`tail`/`sed`/`grep`/`find` via Bash, nem `cd <repo>;` no início do comando' "$f" || read_bad+="$(basename "$f") "
+      grep -qF 'Nunca `cat`/`head`/`tail`/`sed`/`grep`/`find` via Bash, nem `cd <repo>;` no início do comando' "$f" &&
+      grep -qF 'Um comando por chamada de Bash, sem encadear com `&&`, `;` ou `|`.' "$f" || read_bad+="$(basename "$f") "
   done
-  if [ "$bash_agents" -ge 3 ] && [ -z "$read_bad" ]; then ok "agents com Bash: leitura por Read, busca por Grep/Glob, sem cat nem cd <repo>; ($bash_agents agents)"
-  else ko "agents com Bash: leitura por Read, busca por Grep/Glob, sem cat nem cd <repo>;" "agents=$bash_agents sem instrução: $read_bad"; fi
+  if [ "$bash_agents" -ge 3 ] && [ -z "$read_bad" ]; then ok "agents com Bash: leitura por Read, busca por Grep/Glob, um comando por chamada, sem cat nem cd <repo>; ($bash_agents agents)"
+  else ko "agents com Bash: leitura por Read, busca por Grep/Glob, um comando por chamada, sem cat nem cd <repo>;" "agents=$bash_agents sem instrução: $read_bad"; fi
+
+  # Subagent general-purpose do execute recebe o bloco fixo de regras de leitura e Bash.
+  SUB_RULES="$REPO/plugins/kit/skills/execute/subagent-rules.md"
+  sub_want='Leitura e busca: para ler arquivo use Read; para buscar, Grep/Glob. Bash só para git (log/blame/show/diff/status) e para os comandos do .claude/kit.json. Um comando por chamada de Bash: nunca encadeie com &&, ; ou |. Nunca cat/head/tail/sed/grep/find/ls via Bash, nem `cd <repo>;` no início (use git -C <repo>). Nunca entregue ao usuário comando com placeholder.'
+  sub_bad=""
+  [ "$(tr -d '\r' <"$SUB_RULES" 2>/dev/null)" = "$sub_want" ] || sub_bad+="subagent-rules.md "
+  for f in "$REPO"/plugins/kit/skills/*/SKILL.md; do
+    grep -qF 'general-purpose' "$f" || continue
+    grep -qF '${CLAUDE_SKILL_DIR}/subagent-rules.md' "$f" && grep -qF 'sem mudar uma palavra' "$f" || sub_bad+="$(basename "$(dirname "$f")") "
+  done
+  grep -qF '${CLAUDE_SKILL_DIR}/subagent-rules.md' "$REPO/plugins/kit/skills/execute/SKILL.md" || sub_bad+="execute "
+  if [ -z "$sub_bad" ]; then ok "delegação a general-purpose inclui o bloco de subagent-rules.md"
+  else ko "delegação a general-purpose inclui o bloco de subagent-rules.md" "$sub_bad"; fi
+
+  # Nenhum placeholder em comando entregue ao usuario.
+  ph_bad=""
+  for s in spec plan execute fix hunt init map; do
+    grep -qF 'Nunca entregue ao usuário comando com placeholder (`<...>`, `SEU_X`, `xxx`)' "$REPO/plugins/kit/skills/$s/SKILL.md" || ph_bad+="$s "
+  done
+  grep -qF 'Nunca entregue comando com placeholder' "$REPO/plugins/kit/templates/CLAUDE.project.md" || ph_bad+="CLAUDE.project.md "
+  if [ -z "$ph_bad" ]; then ok "skills e template do CLAUDE.md: nenhum placeholder em comando para o usuário"
+  else ko "skills e template do CLAUDE.md: nenhum placeholder em comando para o usuário" "sem a regra: $ph_bad"; fi
+
+  # O kit nunca escreve no settings do usuario: nada de propose/apply, escopo ou --prefer.
+  usr_bad="$(grep -rnE 'setup\.sh"? (propose|apply)|user-settings\.json|--prefer|Só nos projetos que o habilitam|settings\.kit-proposta' \
+    "$REPO/README.md" "$REPO/CONTRIBUTING.md" "$REPO/docs" "$REPO/plugins/kit" || true)"
+  if [ -z "$usr_bad" ] && grep -qF 'nunca toca no ~/.claude/settings.json' "$REPO/plugins/kit/skills/setup/SKILL.md" &&
+    grep -qF 'Settings do usuário nunca é tocado.' "$INIT_MD" && grep -qF 'multiSelect: true' "$INIT_MD" && grep -qF 'permissions.groups' "$INIT_MD"; then
+    ok "setup e init: settings do usuário nunca escrito; grupos por projeto em multiSelect"
+  else ko "setup e init: settings do usuário nunca escrito; grupos por projeto em multiSelect" "$usr_bad"; fi
 
   # Spec e plano grandes: limites com padrao, pergunta unica de quebra e M8 no revisor.
   SPEC_MD="$REPO/plugins/kit/skills/spec/SKILL.md"

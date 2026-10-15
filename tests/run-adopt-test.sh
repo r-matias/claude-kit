@@ -3,7 +3,8 @@
 # skill, agent, rule e hooks proprios e confere por hash que CLAUDE.md, skills, agents, hooks, rules,
 # MCP e settings.local.json nao mudaram, que o settings.json so ganhou itens (com backup identico ao
 # original), que docs/claude-adoption.md foi gerado e que o deny de curl/wget fica de fora (a fixture
-# tem uma skill que usa curl). Depois roda /kit:init num repositorio novo sem curl/wget: o deny entra.
+# tem uma skill que usa curl). Depois roda /kit:init num repositorio novo sem curl/wget: o deny entra, so os grupos marcados
+# entram (permissions.groups no kit.json) e o settings do usuario nao muda.
 # Custa duas sessoes do Claude Code (alguns minutos cada). Uso: tests/run-adopt-test.sh [--keep]
 set -u
 
@@ -38,10 +39,15 @@ git -C "$P" ls-files | tr -d '\r' >"$W/tracked-before"
 (cd "$P" && tr '\n' '\0' <"$W/tracked-before" | xargs -0 sha256sum) | tr -d '\r' >"$W/hash-before"
 grep -E ' [ *](CLAUDE\.md|\.mcp\.json|\.claude/.*)$' "$W/hash-before" | grep -vE ' [ *]\.claude/settings\.json$' >"$W/hash-config"
 cp "$P/.claude/settings.json" "$W/settings.before"
+# Settings do usuario: o init nunca grava nele.
+USER_SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+user_sum() { if [ -f "$USER_SETTINGS" ]; then cksum <"$USER_SETTINGS"; else echo ausente; fi; }
+USER_SUM0="$(user_sum)"
 
 PROMPT='/kit:init Respostas pré-aprovadas (execução não interativa; não há como perguntar):
 - Classificação das peças: aceite os destinos que você propuser.
-- Máquina: pule a preparação da máquina; não grave nada em ~/.claude.
+- Máquina: não instale dependência.
+- Grupos de permissão: todos os oferecidos.
 - Gravação: sim, grave tudo o que propuser (arquivos do kit, merge aditivo no .claude/settings.json e linhas do .gitignore).
 - Instalação de language server: não instale nada.
 - Mapa: não rode o /kit:map.
@@ -125,7 +131,8 @@ gitn init
 gitn add -A
 gitn commit -m init
 PROMPT_NOVO='/kit:init Respostas pré-aprovadas (execução não interativa; não há como perguntar):
-- Máquina: pule a preparação da máquina; não grave nada em ~/.claude.
+- Máquina: não instale dependência.
+- Grupos de permissão: marque segredos, git-destrutivo, push e curl-wget; desmarque sandbox e powershell.
 - Gravação: sim, grave tudo o que propuser.
 - Instalação de language server: não instale nada.
 - Mapa: não rode o /kit:map.
@@ -138,6 +145,12 @@ if jq -e '(.permissions.deny // []) | (index("Bash(curl *)") != null and index("
 else ko "repositório novo sem curl/wget: settings.json com deny de curl e wget" "$(jq -c '.permissions.deny' "$N/.claude/settings.json" 2>&1)"; fi
 if ! grep -qF 'deny não aplicado' "$W/novo.out"; then ok "repositório novo sem curl/wget: relatório sem aviso de deny não aplicado"
 else ko "repositório novo sem curl/wget: relatório sem aviso de deny não aplicado" "$(grep -F 'deny não aplicado' "$W/novo.out")"; fi
+if jq -e '(.permissions.groups | sort) == ["curl-wget", "git-destrutivo", "push", "segredos"]' "$N/.claude/kit.json" >/dev/null 2>&1 &&
+  jq -e '(has("sandbox") | not) and ((.permissions.deny // []) | index("PowerShell") == null) and ((.permissions.deny // []) | index("Read(**/.env)") != null)' "$N/.claude/settings.json" >/dev/null 2>&1; then
+  ok "repositório novo: só os grupos marcados entram e ficam em permissions.groups"
+else ko "repositório novo: só os grupos marcados entram e ficam em permissions.groups" "$(jq -c '.permissions' "$N/.claude/kit.json" "$N/.claude/settings.json" 2>&1 | tr '
+' ' ')"; fi
+if [ "$(user_sum)" = "$USER_SUM0" ]; then ok "settings do usuário intacto depois dos dois /kit:init"; else ko "settings do usuário intacto depois dos dois /kit:init" "$USER_SETTINGS mudou"; fi
 
 echo
 echo "$PASS passaram, $FAIL falharam"

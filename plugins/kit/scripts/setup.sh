@@ -1,24 +1,28 @@
 #!/usr/bin/env bash
-# Apoio do /kit:setup e do /kit:init. Nao e hook. Settings do usuario: ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json.
-# Settings existente so recebe merge aditivo (merge-json.sh --apply): backup ao lado, nada removido,
-# valor existente mantido. A unica troca possivel e enabledPlugins."kit@claude-kit", pelo escopo escolhido.
+# Apoio do /kit:setup e do /kit:init. Nao e hook. Nunca grava no settings do usuario
+# (${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json): permissao e por projeto, escolhida no /kit:init.
 #
 #   setup.sh check
 #     Plataforma e dependencias (Claude Code >= minima, git, bash, jq; no Linux/WSL2 tambem bwrap e
 #     socat do sandbox). Exit 1 se faltar algo, com o comando de instalacao de cada item.
 #
 #   setup.sh status
-#     check mais as regras de usuario do kit no settings e o marketplace claude-kit. Exit 1 se a
-#     maquina precisa do setup (dependencia faltando, settings ausente ou regra do kit ausente).
+#     check mais o marketplace claude-kit registrado (so leitura). Exit 1 se falta dependencia.
 #     Usado pelo /kit:init antes de configurar o projeto.
 #
-#   setup.sh propose <todos|opt-in>
-#     Template de usuario ajustado a plataforma (PowerShell em deny so no Windows nativo; bloco
-#     sandbox so onde ha sandbox) com enabledPlugins."kit@claude-kit" true em todos, false em opt-in.
-#     Grava a proposta (settings.kit-proposta.json) e imprime o diff do settings como ficaria.
+#   setup.sh groups
+#     Grupos de permissao de templates/project-permissions.json que valem nesta plataforma, um por
+#     linha: "<id><TAB><rotulo> — <descricao>". PowerShell so no Windows nativo; sandbox so no macOS
+#     e no Linux/WSL2 com bwrap e socat.
 #
-#   setup.sh apply
-#     Grava a proposta: cria o settings ou faz o merge aditivo com backup. Exit 1 se o merge perderia algo.
+#   setup.sh permissions <id,id,...|-|--kit <kit.json>> <proposta.json>
+#     Acrescenta a proposta (criada se nao existe) as regras dos grupos escolhidos, pelo merge aditivo
+#     do merge-json.sh. "-" e nenhum grupo. --kit usa permissions.groups do kit.json (reparo); sem a
+#     chave, exit 3. Grupo fora desta plataforma vira "fora: <id> ...". Id desconhecido: exit 2.
+#
+#   setup.sh guards [kit.json]
+#     Valida guards e permissions.groups do kit.json (padrao .claude/kit.json). Cada entrada ignorada
+#     ou invalida vira uma linha; exit 1 se houver alguma. Sem problema: "ok guards".
 #
 #   setup.sh lsp [pasta]
 #     Plugins LSP oficiais das linguagens do projeto (pelos manifestos rastreados), um por linha:
@@ -32,11 +36,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib.sh"
 
 CONFIG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-SETTINGS="$CONFIG/settings.json"
-PROPOSAL="$CONFIG/settings.kit-proposta.json"
-TEMPLATE="$HERE/../templates/user-settings.json"
-PLUGIN_KEY="kit@claude-kit"
-PLUGIN_PATH='["enabledPlugins","kit@claude-kit"]'
+GROUPS_FILE="$HERE/../templates/project-permissions.json"
 LSP_MARKETPLACE="claude-plugins-official"
 
 # Linux e WSL2: o sandbox do Claude Code precisa de bwrap (bubblewrap) e socat. Lista os ausentes.
@@ -59,15 +59,15 @@ cmd_check() {
   p="$(kit_platform)"
   sbm="$(sandbox_missing)"
   case "$p" in
-    windows) echo "plataforma: windows nativo — sem sandbox (failIfUnavailable: false). Para ter sandbox, use o WSL2." ;;
-    macos) echo "plataforma: macos — sandbox disponível (failIfUnavailable: true)" ;;
+    windows) echo "plataforma: windows nativo — sem sandbox; o grupo sandbox do /kit:init não se aplica. Para ter sandbox, use o WSL2." ;;
+    macos) echo "plataforma: macos — sandbox disponível (grupo sandbox do /kit:init)" ;;
     *)
       local name="linux"
       [ "$p" = "wsl" ] && name="wsl2"
       if [ -n "$sbm" ]; then
-        echo "plataforma: $name — sandbox exige bwrap e socat (failIfUnavailable: false até instalar)"
+        echo "plataforma: $name — sandbox exige bwrap e socat (grupo sandbox do /kit:init só depois de instalar)"
       else
-        echo "plataforma: $name — sandbox disponível (failIfUnavailable: true)"
+        echo "plataforma: $name — sandbox disponível (grupo sandbox do /kit:init)"
       fi ;;
   esac
 
@@ -102,51 +102,13 @@ cmd_check() {
   return "$missing"
 }
 
-# Template ajustado a plataforma, gravado em $1. PowerShell em deny so no Windows nativo, onde os
-# guardas do kit nao a cobrem. Bloco sandbox (e o ask de dangerouslyDisableSandbox) so onde ha
-# sandbox: macOS, ou Linux/WSL2 com bwrap e socat; sem ele, failIfUnavailable travaria todo Bash.
-template_for_platform() {
-  local p sb=true
-  p="$(kit_platform)"
-  if [ "$p" = "windows" ] || [ -n "$(sandbox_missing)" ]; then sb=false; fi
-  jq --arg p "$p" --argjson sb "$sb" '
-    (if $p == "windows" then .permissions.deny += ["PowerShell"] else . end)
-    | (if $sb then .sandbox.failIfUnavailable = true
-       else del(.sandbox) | .permissions.ask -= ["Bash(dangerouslyDisableSandbox:true)"] end)' "$TEMPLATE" | tr -d '\r' >"$1"
-}
-
-# Maquina pronta para o kit? check + regras de usuario do template presentes + marketplace conhecido.
-# Valor existente diferente do template conta como escolha do usuario, nao como falta.
+# Maquina pronta para o kit? check mais o marketplace conhecido. O settings do usuario nao conta.
 cmd_status() {
-  local missing=0 tmp lost n mk="$CONFIG/plugins/known_marketplaces.json"
+  local missing=0 mk="$CONFIG/plugins/known_marketplaces.json"
   cmd_check || missing=1
   if ! command -v jq >/dev/null 2>&1; then
-    echo "falta settings: não conferido sem jq"
-    return 1
-  fi
-  tmp="$(mktemp)"
-  template_for_platform "$tmp"
-  if [ ! -f "$SETTINGS" ]; then
-    echo "falta settings: $SETTINGS não existe"
-    missing=1
-  elif ! jq empty "$SETTINGS" >/dev/null 2>&1; then
-    echo "falta settings: $SETTINGS não é JSON válido"
-    missing=1
-  else
-    # Falta o que o merge aditivo acrescentaria; deny que sombrearia allow/ask do usuario nao conta.
-    "${BASH:-bash}" "$HERE/merge-json.sh" "$SETTINGS" "$tmp" >"$tmp.m" 2>/dev/null
-    lost="$("${BASH:-bash}" "$HERE/merge-json.sh" --check "$tmp.m" "$SETTINGS" 2>&1 >/dev/null | grep -E ': removido$|item removido' || true)"
-    rm -f "$tmp.m"
-    n="$(printf '%s' "$lost" | grep -c . || true)"
-    if [ "$n" -eq 0 ]; then
-      echo "ok settings"
-    else
-      echo "falta settings: $n regra(s) de usuário do kit ausentes em $SETTINGS"
-      missing=1
-    fi
-  fi
-  rm -f "$tmp"
-  if [ ! -f "$mk" ]; then
+    echo "aviso marketplace: não conferido sem jq"
+  elif [ ! -f "$mk" ]; then
     echo "aviso marketplace: $mk não encontrado, não conferido"
   elif jq -e 'has("claude-kit")' "$mk" >/dev/null 2>&1; then
     echo "ok marketplace claude-kit"
@@ -156,36 +118,113 @@ cmd_status() {
   return "$missing"
 }
 
-cmd_propose() {
-  local scope="${1:-}" enabled tmp
-  case "$scope" in
-    todos) enabled=true ;;
-    opt-in) enabled=false ;;
-    *) echo "uso: setup.sh propose <todos|opt-in>" >&2; return 2 ;;
-  esac
+# Grupos que valem nesta plataforma, como array JSON. PowerShell so no Windows nativo, onde os
+# guardas do kit nao a cobrem. Sandbox so no macOS e no Linux/WSL2 com bwrap e socat; sem ele,
+# failIfUnavailable travaria todo Bash.
+groups_here() {
+  local p sb=true
+  p="$(kit_platform)"
+  if [ "$p" = "windows" ] || [ -n "$(sandbox_missing)" ]; then sb=false; fi
+  jq -c --arg p "$p" --argjson sb "$sb" '[.groups[]
+    | select((.platforms // null) == null or any(.platforms[]; . == $p))
+    | select(((.requires_sandbox // false) | not) or $sb)]' "$GROUPS_FILE" | tr -d '\r'
+}
+
+cmd_groups() {
   command -v jq >/dev/null 2>&1 || { echo "setup: jq não encontrado; rode setup.sh check" >&2; return 2; }
-  if [ -f "$SETTINGS" ] && ! jq empty "$SETTINGS" >/dev/null 2>&1; then
-    echo "setup: $SETTINGS não é JSON válido; corrija antes" >&2
+  groups_here | jq -r '.[] | "\(.id)\t\(.label) — \(.description)"' | tr -d '\r'
+}
+
+cmd_permissions() {
+  local ids prop here unknown frag id
+  command -v jq >/dev/null 2>&1 || { echo "setup: jq não encontrado; rode setup.sh check" >&2; return 2; }
+  if [ "${1:-}" = "--kit" ]; then
+    [ -f "${2:-}" ] || { echo "setup: kit.json não encontrado: ${2:-}" >&2; return 2; }
+    if ! jq -e '.permissions.groups | type == "array"' "$2" >/dev/null 2>&1; then
+      echo "setup: sem escolha de grupos: permissions.groups ausente em $2" >&2
+      return 3
+    fi
+    ids="$(jq -r '.permissions.groups | map(strings) | join(",")' "$2" | tr -d '\r')"
+    [ -n "$ids" ] || ids="-"
+    shift 2
+  else
+    ids="${1:-}"
+    [ $# -gt 0 ] && shift
+  fi
+  prop="${1:-}"
+  if [ -z "$ids" ] || [ -z "$prop" ]; then
+    echo "uso: setup.sh permissions <id,id,...|-|--kit <kit.json>> <proposta.json>" >&2
     return 2
   fi
-  mkdir -p "$CONFIG"
-  tmp="$(mktemp)"
-  template_for_platform "$tmp"
-  jq --arg k "$PLUGIN_KEY" --argjson e "$enabled" '.enabledPlugins[$k] = $e' "$tmp" | tr -d '\r' >"$PROPOSAL"
-  rm -f "$tmp"
-  "${BASH:-bash}" "$HERE/merge-json.sh" --preview --prefer "$PLUGIN_PATH" "$SETTINGS" "$PROPOSAL"
-  echo "proposta: $PROPOSAL"
+  [ "$ids" = "-" ] && ids=""
+  if [ -f "$prop" ] && ! jq empty "$prop" >/dev/null 2>&1; then
+    echo "setup: $prop não é JSON válido" >&2
+    return 2
+  fi
+  unknown="$(jq -r --arg ids "$ids" '(($ids | split(",")) - [""]) - (.groups | map(.id)) | .[]' "$GROUPS_FILE" | tr -d '\r')"
+  if [ -n "$unknown" ]; then
+    echo "setup: grupo desconhecido: $(printf '%s' "$unknown" | tr '\n' ' ')" >&2
+    return 2
+  fi
+  here="$(groups_here)"
+  for id in ${ids//,/ }; do
+    jq -e --arg id "$id" 'any(.[]; .id == $id)' <<<"$here" >/dev/null || echo "fora: $id (não se aplica nesta plataforma)"
+  done
+  frag="$(mktemp)"
+  jq --arg ids "$ids" '
+    def merge($x; $y):
+      if ($x | type) == "object" and ($y | type) == "object" then
+        reduce ($y | keys_unsorted[]) as $k ($x; .[$k] = (if ($x | has($k)) then merge($x[$k]; $y[$k]) else $y[$k] end))
+      elif ($x | type) == "array" and ($y | type) == "array" then
+        reduce $y[] as $e ($x; if any(.[]; . == $e) then . else . + [$e] end)
+      else $x end;
+    ($ids | split(",")) as $sel
+    | reduce (.[] | select(.id as $i | any($sel[]; . == $i)) | .settings) as $s ({}; merge(.; $s))' \
+    <<<"$here" | tr -d '\r' >"$frag"
+  [ -f "$prop" ] || printf '{}\n' >"$prop"
+  if ! "${BASH:-bash}" "$HERE/merge-json.sh" "$prop" "$frag" >"$frag.m"; then
+    rm -f "$frag" "$frag.m"
+    return 2
+  fi
+  jq . "$frag.m" | tr -d '\r' >"$prop"
+  rm -f "$frag" "$frag.m"
+  echo "grupos: ${ids:-nenhum}"
   return 0
 }
 
-cmd_apply() {
-  local code
-  [ -f "$PROPOSAL" ] || { echo "setup: sem proposta; rode setup.sh propose" >&2; return 2; }
-  jq empty "$PROPOSAL" >/dev/null 2>&1 || { echo "setup: proposta inválida" >&2; return 2; }
-  "${BASH:-bash}" "$HERE/merge-json.sh" --apply --prefer "$PLUGIN_PATH" "$SETTINGS" "$PROPOSAL"
-  code=$?
-  [ "$code" -eq 0 ] && rm -f "$PROPOSAL"
-  return "$code"
+# guards e permissions.groups do kit.json: glob largo ou segredo em allow_write, item sem glob e
+# grupo desconhecido.
+cmd_guards() {
+  local kit="${1:-.claude/kit.json}" out="" g
+  command -v jq >/dev/null 2>&1 || { echo "setup: jq não encontrado; rode setup.sh check" >&2; return 2; }
+  [ -f "$kit" ] || { echo "setup: kit.json não encontrado: $kit" >&2; return 2; }
+  jq empty "$kit" >/dev/null 2>&1 || { echo "setup: $kit não é JSON válido" >&2; return 2; }
+  KIT_JSON="$kit"
+  while IFS= read -r g; do
+    [ -n "$g" ] || continue
+    if kit_glob_broad "$g"; then
+      out+="ignorado: guards.allow_write \"$g\" — glob largo demais; liste o caminho exato"$'\n'
+    elif kit_glob_secret "$g"; then
+      out+="ignorado: guards.allow_write \"$g\" — segredo não tem exceção"$'\n'
+    fi
+  done < <(kit_guard_allow_entries)
+  out+="$(jq -r --slurpfile gr "$GROUPS_FILE" '
+    def noglob: (type != "string") and ((type != "object") or ((.glob // "") | type) != "string" or (.glob // "") == "");
+    (.guards // {}) as $g
+    | (if ($g | type) != "object" then "inválido: guards precisa ser objeto"
+       else (["allow_write", "deny_write"][] as $k | ($g[$k] // []) |
+         if type != "array" then "inválido: guards.\($k) precisa ser lista"
+         else to_entries[] | select(.value | noglob) | "inválido: guards.\($k)[\(.key)] sem glob" end) end),
+      ((.permissions.groups // []) |
+       if type != "array" then "inválido: permissions.groups precisa ser lista"
+       else .[] | select(. as $i | ($gr[0].groups | map(.id) | index($i)) == null) | "inválido: permissions.groups \(tojson) desconhecido" end)' "$kit" 2>/dev/null | tr -d '\r')"
+  out="$(printf '%s\n' "$out" | sed '/^$/d')"
+  if [ -z "$out" ]; then
+    echo "ok guards"
+    return 0
+  fi
+  printf '%s\n' "$out"
+  return 1
 }
 
 # Plugins LSP oficiais por linguagem (marketplace claude-plugins-official), em templates/lsp-plugins.txt:
@@ -236,9 +275,10 @@ cmd_plans() {
 case "${1:-}" in
   check) cmd_check ;;
   status) cmd_status ;;
-  propose) shift; cmd_propose "$@" ;;
-  apply) cmd_apply ;;
+  groups) cmd_groups ;;
+  permissions) shift; cmd_permissions "$@" ;;
+  guards) shift; cmd_guards "$@" ;;
   lsp) shift; cmd_lsp "$@" ;;
   plans) shift; cmd_plans "$@" ;;
-  *) echo "uso: setup.sh check | status | propose <todos|opt-in> | apply | lsp [pasta] | plans [pasta]" >&2; exit 2 ;;
+  *) echo "uso: setup.sh check | status | groups | permissions <grupos> <proposta.json> | guards [kit.json] | lsp [pasta] | plans [pasta]" >&2; exit 2 ;;
 esac

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# PreToolUse/Edit|Write|MultiEdit|NotebookEdit: nega escrita em segredos e em protected_paths do kit.json.
+# PreToolUse/Edit|Write|MultiEdit|NotebookEdit: nega escrita em segredos, em guards.deny_write e em
+# protected_paths do kit.json (este com excecao por guards.allow_write). Nome com sufixo .example,
+# .sample, .template ou .dist nao e segredo.
 # O caminho e normalizado antes de casar (.., //, relativo ao cwd) e, se for symlink, o alvo final
 # tambem e checado. Em Windows e macOS a comparacao ignora maiusculas. Erro inesperado bloqueia.
 set -u
@@ -50,35 +52,64 @@ real_path() {
 NEW_FILE=0
 if [ "$TOOL" = "Write" ] && [ ! -e "$FILE" ]; then NEW_FILE=1; fi
 
+ALLOW_HINT="Se este arquivo não é segredo, adicione o caminho em guards.allow_write no .claude/kit.json."
+EXAMPLE_HINT="Arquivo de exemplo: use o sufixo .example, .sample, .template ou .dist."
+
 check_path() {
-  local file="$1" base cmp root rel glob write message
+  local file="$1" base cmp root rel glob write message allowed=0 broad=""
   base="$(kit_fold "${file##*/}")"
-  case "$base" in
-    .env.example | .env.sample | .env.template | .env.dist) ;;
-    .env | .env.*) kit_deny_pretool "kit: escrita em arquivo de segredo (${file##*/}) bloqueada." ;;
-    *.pem | *.key) kit_deny_pretool "kit: escrita em chave/certificado (${file##*/}) bloqueada." ;;
-  esac
+  if ! kit_is_example_name "$base"; then
+    case "$base" in
+      .env | .env.*) kit_deny_pretool "kit: escrita em arquivo de segredo (${file##*/}) bloqueada. $EXAMPLE_HINT" ;;
+      *.pem | *.key) kit_deny_pretool "kit: escrita em chave/certificado (${file##*/}) bloqueada." ;;
+    esac
+  fi
   case "/$(kit_fold "$file")" in
     */secrets/*) kit_deny_pretool "kit: escrita em diretorio secrets/ bloqueada." ;;
   esac
 
-  # Vale o protected_paths do kit.json mais proximo e o dos kit.json acima dele (pasta-mae).
+  # Valem os guards e o protected_paths do kit.json mais proximo e dos kit.json acima dele (pasta-mae).
+  # guards.deny_write bloqueia sempre; guards.allow_write (sem glob largo nem segredo) libera o protected_paths.
   while IFS= read -r root; do
     [ -n "$root" ] || continue
     kit_use_root "$root"
     rel="$(kit_rel "$file")"
     cmp="$(kit_fold "$rel")"
-    while IFS=$'\t' read -r glob write message; do
+    while IFS=$'	' read -r glob message; do
+      [ -n "$glob" ] || continue
+      glob_match "$(kit_fold "$glob")" "$cmp" || continue
+      [ -n "$message" ] && kit_deny_pretool "kit: $rel é bloqueado. $message"
+      kit_deny_pretool "kit: $rel casa guards.deny_write ($glob) do kit.json."
+    done < <(kit_guard_deny_entries)
+    while IFS= read -r glob; do
+      [ -n "$glob" ] || continue
+      kit_glob_secret "$glob" && continue
+      glob_match "$(kit_fold "$glob")" "$cmp" || continue
+      if kit_glob_broad "$glob"; then broad="$glob"; continue; fi
+      allowed=1
+    done < <(kit_guard_allow_entries)
+  done < <(kit_kit_roots "$file")
+  [ "$allowed" -eq 1 ] && return 0
+  if [ -n "$broad" ]; then
+    ALLOW_HINT="guards.allow_write ignora \"$broad\": glob largo demais; liste o caminho exato."
+  fi
+
+  while IFS= read -r root; do
+    [ -n "$root" ] || continue
+    kit_use_root "$root"
+    rel="$(kit_rel "$file")"
+    cmp="$(kit_fold "$rel")"
+    while IFS=$'	' read -r glob write message; do
       [ -n "$glob" ] || continue
       glob_match "$(kit_fold "$glob")" "$cmp" || continue
       [ "$NEW_FILE" -eq 1 ] && [ "$write" != "deny" ] && continue
       if [ -n "$message" ]; then
-        kit_deny_pretool "kit: $rel é protegido. $message"
+        kit_deny_pretool "kit: $rel é protegido. $message $ALLOW_HINT"
       fi
       if [ "$NEW_FILE" -eq 1 ]; then
-        kit_deny_pretool "kit: $rel casa protected_paths ($glob) com write: deny no kit.json. Nem arquivo novo pode ser criado aqui."
+        kit_deny_pretool "kit: $rel casa protected_paths ($glob) com write: deny no kit.json. Nem arquivo novo pode ser criado aqui. $ALLOW_HINT"
       fi
-      kit_deny_pretool "kit: $rel casa protected_paths ($glob) do kit.json. Gere um arquivo novo ou edite manualmente."
+      kit_deny_pretool "kit: $rel casa protected_paths ($glob) do kit.json. Gere um arquivo novo ou edite manualmente. $ALLOW_HINT"
     done < <(kit_protected_entries)
   done < <(kit_kit_roots "$file")
   return 0

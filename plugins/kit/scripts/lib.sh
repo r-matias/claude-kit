@@ -318,6 +318,54 @@ kit_protected_entries() {
     else empty end | @tsv' "$KIT_JSON" 2>/dev/null | tr -d '\r'
 }
 
+# guards.allow_write como um glob por linha; guards.deny_write como "glob<TAB>message". Item string ou
+# objeto {glob, message}. Mesma normalizacao de glob do protected_paths.
+kit_guard_allow_entries() {
+  [ -n "$KIT_JSON" ] || return 0
+  jq -r 'def norm: gsub("\\\\"; "/") | sub("^(\\./|/)+"; "");
+    (.guards.allow_write // [])[] |
+    if type == "string" then norm elif type == "object" then (.glob // "") | norm else empty end |
+    select(. != "")' "$KIT_JSON" 2>/dev/null | tr -d '\r'
+}
+
+kit_guard_deny_entries() {
+  [ -n "$KIT_JSON" ] || return 0
+  jq -r 'def norm: gsub("\\\\"; "/") | sub("^(\\./|/)+"; "");
+    (.guards.deny_write // [])[] |
+    if type == "string" then [norm, ""]
+    elif type == "object" then [((.glob // "") | norm), (.message // "")]
+    else empty end | select(.[0] != "") | @tsv' "$KIT_JSON" 2>/dev/null | tr -d '\r'
+}
+
+# Nome de arquivo de exemplo: termina em .example, .sample, .template ou .dist.
+kit_is_example_name() {
+  case "$(kit_fold "${1##*/}")" in *.example | *.sample | *.template | *.dist) return 0 ;; esac
+  return 1
+}
+
+# 0 se o glob e largo demais para guards.allow_write (*, **, **/*, .env*, *.env e afins).
+kit_glob_broad() {
+  local g="${1//\\//}"
+  g="${g#./}"
+  g="${g#/}"
+  while [ "${g#\*\*/}" != "$g" ]; do g="${g#\*\*/}"; done
+  case "$g" in '' | '*' | '**' | '*.*' | '.*' | '.env*' | '*.env' | '*.env*') return 0 ;; esac
+  [[ "$g" =~ ^(\*\*?/)*\*\*?$ ]] && return 0
+  return 1
+}
+
+# 0 se o glob aponta para segredo de verdade (.env, .env.<x> sem sufixo de exemplo, *.pem, *.key,
+# secrets/, keys/). Esses caminhos nao tem excecao em guards.allow_write.
+kit_glob_secret() {
+  local g base
+  g="$(kit_fold "${1//\\//}")"
+  case "/$g/" in */secrets/* | */keys/*) return 0 ;; esac
+  base="${g##*/}"
+  kit_is_example_name "$base" && return 1
+  case "$base" in .env | .env.* | *.pem | *.key) return 0 ;; esac
+  return 1
+}
+
 # Chaves folha de um JSON achatadas com ".", uma por linha, ordenadas. Retorna 1 se o JSON for invalido.
 kit_json_keys() {
   local out

@@ -6,6 +6,7 @@ allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
 ---
 
 ## Regras que valem a tarefa inteira
+- Nunca entregue ao usuário comando com placeholder (`<...>`, `SEU_X`, `xxx`): ou o valor está configurado e o comando funciona como está, ou pergunte o valor antes (`AskUserQuestion`) e grave no lugar certo (o que não é segredo na config versionada do projeto, carregada pelo script; segredo em `.env`/`.env.test` carregado pelo script, nunca lido por você).
 - Não escreva código de produção nesta skill. A saída é o PLAN.md e, quando houver, a atualização do doc de referência descrita abaixo.
 - Formato do PLAN.md: [template.md](template.md). Siga as seções e os campos na ordem; não invente seções.
 - Só tarefas, checkpoints e passos da wave final levam caixa `- [ ]`. Truths, artifacts, tests, behavior e decisões são bullets simples: os hooks contam as caixas para mostrar o progresso.

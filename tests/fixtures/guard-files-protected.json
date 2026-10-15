@@ -33,6 +33,29 @@
       "files": { ".claude/kit.json": { "protected_paths": [
         { "glob": "web/src/generated/**", "message": "Gerado a partir de app/src/locales/." } ] } },
       "tool": "Edit", "file": "web/src/generated/strings.ts",
-      "expect": "deny", "reason": "Gerado a partir de app/src/locales/." }
+      "expect": "deny", "reason": "Gerado a partir de app/src/locales/." },
+    { "name": "bloqueio de protected_paths diz como liberar por guards.allow_write", "tool": "Edit", "file": "Migrations/001_Init.cs",
+      "expect": "deny", "reason": "Se este arquivo não é segredo, adicione o caminho em guards.allow_write no .claude/kit.json." },
+    { "name": "guards.allow_write libera exatamente o caminho listado", "kit": { "guards": { "allow_write": ["web/generated/strings.ts"] } },
+      "tool": "Edit", "file": "web/generated/strings.ts", "expect": "allow" },
+    { "name": "guards.allow_write não libera o vizinho", "kit": { "guards": { "allow_write": ["web/generated/strings.ts"] } },
+      "files": { "web/generated/outro.ts": "x\n" },
+      "tool": "Edit", "file": "web/generated/outro.ts", "expect": "deny" },
+    { "name": "guards.allow_write com glob largo é ignorado com mensagem", "kit": { "guards": { "allow_write": ["**"] } },
+      "tool": "Edit", "file": "web/generated/strings.ts", "expect": "deny",
+      "reason": "guards.allow_write ignora \"**\": glob largo demais; liste o caminho exato." },
+    { "name": "guards.allow_write com **/* é ignorado", "kit": { "guards": { "allow_write": ["**/*"] } },
+      "tool": "Edit", "file": "Migrations/001_Init.cs", "expect": "deny" },
+    { "name": "guards.allow_write não libera .env listado", "kit": { "guards": { "allow_write": [".env", ".env.test", "certs/server.pem"] } },
+      "tool": "Write", "file": ".env.test", "expect": "deny", "reason": "arquivo de segredo" },
+    { "name": "guards.allow_write não libera .env", "kit": { "guards": { "allow_write": [".env"] } },
+      "tool": "Edit", "file": ".env", "expect": "deny" },
+    { "name": "guards.deny_write bloqueia com a mensagem do item", "kit": { "guards": { "deny_write": [
+        { "glob": "docs/legal/**", "message": "Texto jurídico: só o time legal altera." } ] } },
+      "tool": "Write", "file": "docs/legal/termos.md", "expect": "deny", "reason": "Texto jurídico: só o time legal altera." },
+    { "name": "guards.deny_write string bloqueia arquivo novo", "kit": { "guards": { "deny_write": ["vendor/**"] } },
+      "tool": "Write", "file": "vendor/lib.js", "expect": "deny", "reason": "casa guards.deny_write (vendor/**)" },
+    { "name": "guards.deny_write vence guards.allow_write", "kit": { "guards": { "deny_write": ["vendor/**"], "allow_write": ["vendor/lib.js"] } },
+      "tool": "Write", "file": "vendor/lib.js", "expect": "deny" }
   ]
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Merge aditivo de JSON usado pelo /kit:init e pelo /kit:setup nos settings. Nao e hook.
+# Merge aditivo de JSON usado pelo /kit:init no settings do projeto. Nao e hook.
 # Aditivo: objetos recursivos, arrays por uniao sem duplicar, chave ausente entra, valor existente
 # sempre vence. A chave "hooks" da proposta e ignorada: hooks do settings nunca sao tocados.
 # Regra nova de permissions.deny que sombrearia uma regra de allow ou ask do mesmo arquivo (mesma
@@ -10,17 +10,14 @@
 #   merge-json.sh <existente.json> <proposta.json>
 #     Imprime no stdout o merge. Cada conflito vai para o stderr. Existente ausente: imprime a proposta.
 #
-#   merge-json.sh --preview [--prefer <caminho>] <existente.json> <proposta.json>
-#     Imprime o diff do arquivo como ficaria, uma linha "conflito:" por valor mantido e uma linha
-#     "troca:" por caminho de --prefer. Nada e gravado. Sem diferenca: "sem mudança: <arquivo>".
+#   merge-json.sh --preview <existente.json> <proposta.json>
+#     Imprime o diff do arquivo como ficaria e uma linha "conflito:" por valor mantido. Nada e
+#     gravado. Sem diferenca: "sem mudança: <arquivo>".
 #
-#   merge-json.sh --apply [--prefer <caminho>] <existente.json> <proposta.json>
+#   merge-json.sh --apply <existente.json> <proposta.json>
 #     Grava o merge no arquivo. Existente ausente: cria com a proposta. Existente: backup antes em
 #     <arquivo>.bak-kit-<AAAA-MM-DD> (ja existindo, com a hora no nome) e recusa se o resultado
-#     perder ou trocar algo fora de --prefer. settings.local.json e recusado sempre.
-#
-#   --prefer <caminho>: caminho jq em JSON (ex.: '["enabledPlugins","kit@claude-kit"]') em que a
-#     proposta vence. So para a chave do proprio kit, quando o usuario escolheu o valor.
+#     perder ou trocar algo. settings.local.json e recusado sempre.
 #
 #   merge-json.sh --check <antes.json> <depois.json>
 #     Exit 0 se "depois" so acrescenta a "antes" (todo valor folha e todo item de array preservados)
@@ -89,17 +86,10 @@ if [ "${1:-}" = "--check" ]; then
 fi
 
 MODE=merge
-PREFER='[]'
 case "${1:-}" in
   --preview | --apply) MODE="${1#--}"; shift ;;
 esac
-while [ "${1:-}" = "--prefer" ]; do
-  [ $# -ge 2 ] || { echo "merge-json: --prefer sem caminho" >&2; exit 2; }
-  PREFER="$(jq -cn --argjson acc "$PREFER" --argjson p "$2" '$acc + [$p]' 2>/dev/null)" ||
-    { echo "merge-json: --prefer espera um caminho jq em JSON, ex.: '[\"a\",\"b\"]'" >&2; exit 2; }
-  shift 2
-done
-[ $# -eq 2 ] || { echo "uso: merge-json.sh [--preview|--apply] [--prefer <caminho>] <existente.json> <proposta.json>" >&2; exit 2; }
+[ $# -eq 2 ] || { echo "uso: merge-json.sh [--preview|--apply] <existente.json> <proposta.json>" >&2; exit 2; }
 EXIST="$1"
 PROP="$2"
 jq empty "$PROP" >/dev/null 2>&1 || { echo "merge-json: proposta invalida: $PROP" >&2; exit 2; }
@@ -111,20 +101,16 @@ fi
 # Proposta sem "hooks" (o kit nunca mexe em hooks do settings).
 proposal() { jq 'if type == "object" then del(.hooks) else . end' "$PROP" | tr -d '\r'; }
 
-# Merge com as trocas de --prefer aplicadas, no stdout.
 merged() {
-  jq -n --slurpfile a "$EXIST" --argjson b0 "$(proposal)" --argjson pf "$PREFER" "$MERGE_DEF"'
-    drop_shadowing($a[0]; $b0) as $b |
-    reduce $pf[] as $p (merge($a[0]; $b);
-      if ($b | getpath($p)) != null then setpath($p; $b | getpath($p)) else . end)' | tr -d '\r'
+  jq -n --slurpfile a "$EXIST" --argjson b0 "$(proposal)" "$MERGE_DEF"'
+    drop_shadowing($a[0]; $b0) as $b | merge($a[0]; $b)' | tr -d '\r'
 }
 
-# Linhas "conflito:" (valor mantido) e "troca:" (caminho de --prefer com valor diferente).
+# Linhas "conflito:" (valor mantido ou deny que sombrearia allow/ask).
 notes() {
-  jq -rn --slurpfile a "$EXIST" --argjson b "$(proposal)" --argjson pf "$PREFER" "$MERGE_DEF"'
+  jq -rn --slurpfile a "$EXIST" --argjson b "$(proposal)" "$MERGE_DEF"'
     (conflicts($a[0]; $b; []) as $c |
-    if any($pf[]; . == $c.path) then "troca: \(dotted($c.path)) \($c.kept | tojson) -> \($c.proposed | tojson)"
-    else "conflito: \(dotted($c.path)) mantido \($c.kept | tojson) (o kit propunha \($c.proposed | tojson))" end),
+    "conflito: \(dotted($c.path)) mantido \($c.kept | tojson) (o kit propunha \($c.proposed | tojson))"),
     shadow_notes($a[0]; $b)' | tr -d '\r'
 }
 
@@ -163,7 +149,7 @@ if [ ! -f "$EXIST" ]; then
   exit 0
 fi
 TMPM="$(mktemp)"
-trap 'rm -f "$TMPM" "$TMPM.a" "$TMPM.b"' EXIT
+trap 'rm -f "$TMPM"' EXIT
 merged >"$TMPM" || exit 2
 jq empty "$TMPM" >/dev/null 2>&1 || { echo "merge-json: falha ao montar o merge; nada foi gravado" >&2; exit 2; }
 if jq -e --slurpfile a "$EXIST" '. == $a[0]' "$TMPM" >/dev/null 2>&1; then
@@ -171,10 +157,8 @@ if jq -e --slurpfile a "$EXIST" '. == $a[0]' "$TMPM" >/dev/null 2>&1; then
   notes
   exit 0
 fi
-# Fora de --prefer, o resultado so pode acrescentar.
-jq --argjson pf "$PREFER" 'reduce $pf[] as $p (.; delpaths([$p]))' "$EXIST" | tr -d '\r' >"$TMPM.a"
-jq --argjson pf "$PREFER" 'reduce $pf[] as $p (.; delpaths([$p]))' "$TMPM" | tr -d '\r' >"$TMPM.b"
-if ! "${BASH:-bash}" "$(dirname "${BASH_SOURCE[0]}")/merge-json.sh" --check "$TMPM.a" "$TMPM.b"; then
+# O resultado so pode acrescentar.
+if ! "${BASH:-bash}" "$(dirname "${BASH_SOURCE[0]}")/merge-json.sh" --check "$EXIST" "$TMPM"; then
   echo "merge-json: o resultado perderia algo de $EXIST; nada foi gravado" >&2
   exit 1
 fi

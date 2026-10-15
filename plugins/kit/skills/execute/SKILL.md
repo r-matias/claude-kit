@@ -3,7 +3,7 @@ name: execute
 description: Executa um PLAN.md wave a wave, com behavior virando teste, done como critério de conclusão, checkpoint com revisão do diff da wave e wave final de revisão independente.
 argument-hint: "[caminho do PLAN.md]"
 disable-model-invocation: true
-allowed-tools: Bash(git status *) Bash(git branch *) Bash(git diff *) Bash(git -C * diff *) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/wave-base.sh") Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/wave-base.sh" *)
+allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**) Bash(git status *) Bash(git branch *) Bash(git diff *) Bash(git -C * diff *) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/wave-base.sh") Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/wave-base.sh" *)
 ---
 
 ## Estado atual
@@ -17,6 +17,7 @@ allowed-tools: Bash(git status *) Bash(git branch *) Bash(git diff *) Bash(git -
 - Comandos vêm de `.claude/kit.json`; não invente comandos do stack. Mudança em `Interfaces` exige registro em Decisões.
 - Decisão técnica pequena que surgir (nome, parâmetro, flag, pasta, biblioteca já prevista): decida pelo padrão mais simples coerente com a SPEC e o código, registre em Decisões do PLAN.md (`- <data> · kit · <decisão> — <motivo>`), atualize o doc de referência se houver um, e siga.
 - Pare e pergunte só em: decisão de produto (o que o usuário vê, regra de negócio), escopo fora da SPEC, decisão cara de reverter (schema público, contrato de API, dependência nova) ou ação irreversível (deploy, push, chamada a serviço externo real, migração em banco real). Na dúvida entre técnica e produto, conta como produto. A resposta entra em Decisões com `· usuário ·`.
+- Nunca entregue ao usuário comando com placeholder (`<...>`, `SEU_X`, `xxx`). Ou o valor está configurado e o comando funciona como está, ou pergunte o valor antes (`AskUserQuestion`) e grave no lugar certo: o que não é segredo (user-agent, host, porta) na config versionada do projeto, carregada pelo próprio script; segredo em `.env`/`.env.test` carregado pelo script (`--env-file-if-exists`, `loadEnv`), nunca lido por você, com a mensagem de falta dizendo qual arquivo e qual chave criar.
 - Após duas tentativas falhas na mesma tarefa, pare, resuma o que tentou e recomende `/clear` com um prompt melhor.
 - Plano no formato antigo (sem waves): cada tarefa é uma wave sequencial e a verificação final do plano faz o papel da wave final.
 
@@ -26,7 +27,7 @@ allowed-tools: Bash(git status *) Bash(git branch *) Bash(git diff *) Bash(git -
    - **Vários repositórios** (pasta-mãe com repositórios filhos, ou `repos` no `kit.json`): o script vale para um repositório por vez. Rode `bash "${CLAUDE_PLUGIN_ROOT}/scripts/wave-base.sh" <repo>` para cada repositório que a wave toca e grave `Base: <repo>=<hash> <repo>=<hash>`, com `<repo>` relativo à pasta da sessão.
    - **Antes da primeira wave**, grave também a base do plano inteiro, uma vez, logo abaixo do título: `Base do plano: <hash>` (ou `<repo>=<hash> ...`). A wave final compara contra ela.
 3. **Paralelo.** Antes de disparar as tarefas da linha `Paralelo:`, compare os `files` delas:
-   - Disjuntos: delegue todas ao mesmo tempo, uma por subagent `general-purpose`, numa única mensagem. Cada subagent recebe a SPEC e os `files`, `behavior`, `action`, `verify` e `done` da sua tarefa, implementa, roda o `verify` e devolve o resultado; ele não edita o PLAN.md. Espere todos voltarem antes de qualquer outro passo da wave.
+   - Disjuntos: delegue todas ao mesmo tempo, uma por subagent `general-purpose`, numa única mensagem. Cada subagent recebe a SPEC e os `files`, `behavior`, `action`, `verify` e `done` da sua tarefa, implementa, roda o `verify` e devolve o resultado; ele não edita o PLAN.md. O prompt de cada subagent inclui, sem mudar uma palavra, o bloco de [subagent-rules.md](subagent-rules.md) (`${CLAUDE_SKILL_DIR}/subagent-rules.md`). Espere todos voltarem antes de qualquer outro passo da wave.
    - Com interseção: execute essas tarefas em sequência, na ordem do plano, e registre em Decisões: `- <data> · kit · Tarefas N e M em sequência — files em comum: <arquivo>`.
    - As demais tarefas da wave rodam em sequência, na ordem do plano.
 4. **Cada tarefa** (feita por você ou devolvida por um subagent):

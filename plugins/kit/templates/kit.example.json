@@ -88,5 +88,25 @@
     "unit_max_loc": 20000,
     "max_agents": 30,
     "primary": "app"
+  },
+  "guards": {
+    "allow_write": [
+      "web/src/i18n/generated/README.md"
+    ],
+    "deny_write": [
+      {
+        "glob": "docs/legal/**",
+        "message": "Texto jurídico: só o time legal altera."
+      }
+    ]
+  },
+  "permissions": {
+    "groups": [
+      "segredos",
+      "git-destrutivo",
+      "push",
+      "curl-wget",
+      "sandbox"
+    ]
   }
 }

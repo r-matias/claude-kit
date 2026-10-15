@@ -1,22 +1,20 @@
 ---
 name: setup
-description: Prepara a máquina para o kit, uma vez por máquina. Confere Claude Code, git, bash e jq, ajusta o sandbox à plataforma e cria ou completa o ~/.claude/settings.json com as regras de usuário do kit (merge só aditivo, com backup e confirmação).
+description: Confere se a máquina está pronta para o kit. Verifica Claude Code mínimo, git, bash, jq, bwrap e socat no Linux/WSL2, a plataforma e o sandbox. Só verifica: não grava nada e nunca toca no ~/.claude/settings.json.
 disable-model-invocation: true
-allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" *) Read(${CLAUDE_PLUGIN_ROOT}/**)
+allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" check) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" status)
 ---
 
 ## Regras que valem a tarefa inteira
-- O `/kit:init` executa os passos 1 a 3 quando o `setup.sh status` aponta falta e junta a proposta à confirmação única dele; ao terminar, ele segue para o projeto.
-- O `~/.claude/settings.json` existente só recebe merge aditivo: o kit acrescenta itens em arrays e chaves ausentes, nunca remove, nunca troca valor existente e nunca mexe em `hooks`. Antes de gravar, `setup.sh apply` faz backup em `settings.json.bak-kit-<data>`. Única troca: `enabledPlugins."kit@claude-kit"`, pela resposta de escopo. Conflito fica com o valor do usuário e vira uma linha no resumo.
-- Todo passo usa `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" <subcomando>`. Não edite o settings à mão.
-- O settings fica em `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json`; o script já resolve isso.
+- Só verificação. O kit nunca escreve no settings do usuário (`~/.claude/settings.json` ou `CLAUDE_CONFIG_DIR`): permissão é por projeto, e o `/kit:init` pergunta quais grupos entram no `.claude/settings.json` do projeto.
+- Todo passo usa `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" <subcomando>`.
+- Nunca entregue ao usuário comando com placeholder (`<...>`, `SEU_X`, `xxx`). Os comandos de instalação vêm prontos do script.
 
 ## Passos
-1. **Dependências.** Rode `setup.sh check`. Cada linha `falta` traz o comando de instalação: ele entra na confirmação (passo 4) e roda se aprovado. Linhas `aviso` não param o setup; repita-as no resumo.
-2. **Plataforma.** Guarde a linha `plataforma:` do check. No Windows nativo, o resumo diz em uma linha que não há sandbox (disco e rede sem isolamento; valem `permissions.deny` e os guardas do kit) e que o WSL2 mantém o sandbox.
-3. **Proposta.** Rode `setup.sh propose todos`. A saída é o arquivo novo, o diff do merge aditivo ou `sem mudança`, mais as linhas `conflito:` e `troca:`.
-4. **Confirmação.** Mostre os comandos de instalação e o diff e faça **uma** chamada de `AskUserQuestion` com duas perguntas:
-   - "Gravar?": Gravar (recomendado) / Cancelar.
-   - Escopo: "Todos os projetos" (o kit fica ligado em toda sessão desta máquina) ou "Só nos projetos que o habilitam" (desligado no usuário; cada projeto liga no próprio `.claude/settings.json`, que o `/kit:init` cria ou completa).
-5. **Gravar.** Rode os comandos de instalação aprovados e `setup.sh check` de novo; dependência que continuar faltando para aqui com um aviso de uma linha. Com escopo "Só nos projetos que o habilitam", rode `setup.sh propose opt-in`. Depois `setup.sh apply` e mostre a linha `criado:` ou `gravado: ... (backup em ...)`.
-6. **Resumo**, em até 6 linhas: dependências e versões, plataforma e sandbox, escopo escolhido, o que foi gravado (com o backup), conflitos mantidos, cada `conflito: deny ... não aplicado` como `não aplicado: deny <regra> (sombrearia <regra> em <allow|ask>)` e avisos. Última linha: `Pronto. Próximo: /kit:init no repositório.`
+1. Rode `setup.sh status`: dependências, plataforma e marketplace `claude-kit`.
+2. **Resumo**, em até 6 linhas:
+   - Cada linha `ok` em uma linha só (versões).
+   - Plataforma e sandbox: no Windows nativo, uma linha dizendo que não há sandbox (disco e rede sem isolamento; valem as permissões do projeto e os guardas do kit) e que o WSL2 tem sandbox.
+   - Cada linha `falta` como está, com o comando de instalação que ela traz.
+   - Cada linha `aviso` como está.
+   - Última linha: `Pronto. Próximo: /kit:init no repositório.` (com algo em `falta`: `Faltam dependências; o /kit:init instala com a sua confirmação.`).

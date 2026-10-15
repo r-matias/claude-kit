@@ -1,0 +1,67 @@
+{
+  "groups": [
+    {
+      "id": "segredos",
+      "label": "Segredos",
+      "description": "Nega Read de .env, .env.local/test/production/..., *.pem, *.key, secrets/ e credenciais em ~ (.ssh, .aws, .kube, gh, docker, npm, git). .env*.example continua legível.",
+      "settings": {
+        "permissions": {
+          "deny": [
+            "Read(**/.env)", "Read(**/.env.local)", "Read(**/.env.*.local)", "Read(**/.env.test)",
+            "Read(**/.env.production)", "Read(**/.env.development)", "Read(**/.env.staging)",
+            "Read(**/*.pem)", "Read(**/*.key)", "Read(**/secrets/**)",
+            "Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.kube/**)",
+            "Read(~/.git-credentials)", "Read(~/.npmrc)", "Read(~/.config/gh/**)", "Read(~/.docker/config.json)"
+          ]
+        }
+      }
+    },
+    {
+      "id": "git-destrutivo",
+      "label": "Git destrutivo",
+      "description": "Nega git push --force/-f, git reset --hard e git clean -fdx.",
+      "settings": {
+        "permissions": {
+          "deny": ["Bash(git push --force *)", "Bash(git push -f *)", "Bash(git reset --hard *)", "Bash(git clean -fdx *)"]
+        }
+      }
+    },
+    {
+      "id": "push",
+      "label": "Push com confirmação",
+      "description": "Todo git push pede confirmação.",
+      "settings": { "permissions": { "ask": ["Bash(git push *)"] } }
+    },
+    {
+      "id": "curl-wget",
+      "label": "curl/wget",
+      "description": "Nega curl e wget pelo Bash; o registry do stack segue liberado em allowedDomains.",
+      "settings": { "permissions": { "deny": ["Bash(curl *)", "Bash(wget *)"] } }
+    },
+    {
+      "id": "powershell",
+      "label": "PowerShell",
+      "description": "Nega a ferramenta PowerShell, que os guardas do kit não cobrem.",
+      "platforms": ["windows"],
+      "settings": { "permissions": { "deny": ["PowerShell"] } }
+    },
+    {
+      "id": "sandbox",
+      "label": "Sandbox",
+      "description": "Liga o sandbox do Bash (falha se indisponível), esconde ~/.ssh, ~/.aws, GITHUB_TOKEN e NPM_TOKEN e pede confirmação para rodar fora dele.",
+      "platforms": ["macos", "linux", "wsl"],
+      "requires_sandbox": true,
+      "settings": {
+        "permissions": { "ask": ["Bash(dangerouslyDisableSandbox:true)"] },
+        "sandbox": {
+          "enabled": true,
+          "failIfUnavailable": true,
+          "credentials": {
+            "files": [{ "path": "~/.ssh", "mode": "deny" }, { "path": "~/.aws", "mode": "deny" }],
+            "envVars": [{ "name": "GITHUB_TOKEN", "mode": "deny" }, { "name": "NPM_TOKEN", "mode": "deny" }]
+          }
+        }
+      }
+    }
+  ]
+}

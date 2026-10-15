@@ -5,8 +5,7 @@
   "enabledPlugins": { "kit@claude-kit": true, "csharp-lsp@claude-plugins-official": true },
   "permissions": {
     "allow": ["Bash(dotnet build *)", "Bash(dotnet test *)", "Bash(dotnet format *)", "Bash(npm run *)"],
-    "ask": ["Bash(dotnet add package *)", "Bash(npm install *)", "Bash(dotnet ef database update *)"],
-    "deny": ["Bash(curl *)", "Bash(wget *)"]
+    "ask": ["Bash(dotnet add package *)", "Bash(npm install *)", "Bash(dotnet ef database update *)"]
   },
   "sandbox": { "network": { "allowedDomains": ["api.nuget.org", "registry.npmjs.org"] } }
 }

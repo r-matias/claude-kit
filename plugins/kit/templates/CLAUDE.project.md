@@ -3,6 +3,7 @@
 
 ## Comandos
 Ver .claude/kit.json. Subir local: <comando>. Banco local: <comando>.
+Nunca entregue comando com placeholder: valor que falta é perguntado antes e gravado na config do projeto (segredo em .env, carregado pelo script).
 
 ## Arquitetura (só o não óbvio)
 - <decisão que o código não explica>

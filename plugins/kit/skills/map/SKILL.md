@@ -11,6 +11,7 @@ allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/map-partition.sh" *) Bas
 !`git log -1 --format=%H 2>/dev/null || echo "(sem commits)"`
 
 ## Regras que valem a tarefa inteira
+- Nunca entregue ao usuário comando com placeholder (`<...>`, `SEU_X`, `xxx`): ou o valor está configurado e o comando funciona como está, ou pergunte o valor antes (`AskUserQuestion`) e grave no lugar certo (o que não é segredo na config versionada do projeto, carregada pelo script; segredo em `.env`/`.env.test` carregado pelo script, nunca lido por você).
 - Argumento: $ARGUMENTS. Vazio: mapeia tudo. `--update`: só o que mudou desde o último mapa. Outro valor: caminho de uma área, relativo à pasta da sessão.
 - Os mapeadores e o verificador são `kit:mapper` e `kit:map-verifier`: somente leitura, sem Bash, sem rede. Você também não roda build, teste nem comando do projeto nesta skill.
 - Nunca leia nem cite `.env*`, `secrets/`, `keys/`, chaves ou `protected_paths`. Env var entra pelo nome.

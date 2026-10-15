@@ -6,6 +6,7 @@ allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
 ---
 
 ## Regras que valem a tarefa inteira
+- Nunca entregue ao usuário comando com placeholder (`<...>`, `SEU_X`, `xxx`): ou o valor está configurado e o comando funciona como está, ou pergunte o valor antes (`AskUserQuestion`) e grave no lugar certo (o que não é segredo na config versionada do projeto, carregada pelo script; segredo em `.env`/`.env.test` carregado pelo script, nunca lido por você).
 - Não escreva código de produção nesta skill. A saída é só a SPEC.md.
 - Leia o CLAUDE.md e explore o código relevante antes de perguntar; não pergunte o que o código responde.
 - Perguntas só sobre decisões reais: implementação, UX, casos de borda, trade-offs. Nada óbvio, nada genérico.
