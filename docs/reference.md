@@ -41,6 +41,8 @@ Detalhe completo de configuração e comportamento. Para instalar e usar, comece
   ],
   "plan_dirs": [".claude/plans"],
   "inject_plan_on_prompt": false,
+  "spec": { "max_scope_items": 8, "max_files": 25 },
+  "plan": { "max_tasks": 15, "max_waves": 6 },
   "map": { "stale_after_commits": 50, "unit_max_files": 150, "unit_max_loc": 20000, "max_agents": 30 }
 }
 ```
@@ -89,6 +91,19 @@ A descoberta tem cache por sessão em `$TMPDIR`, invalidado quando o `kit.json` 
 - **`session-context`**: branch e alterados de cada repositório, até 15 linhas por repositório.
 - Repositório único: comportamento idêntico ao da v0.1.0.
 
+### `spec` e `plan`
+
+Limites de tamanho, todos opcionais:
+
+| Chave | Padrão | Efeito |
+| --- | --- | --- |
+| `spec.max_scope_items` | 8 | Itens de Escopo acima disso: o `/kit:spec` não grava uma SPEC única e pergunta |
+| `spec.max_files` | 25 | Arquivos afetados (contados pelo `kit:investigator`) acima disso: idem |
+| `plan.max_tasks` | 15 | Tarefas numeradas acima disso: o `/kit:plan` não grava e pergunta |
+| `plan.max_waves` | 6 | Waves (sem a wave final) acima disso: idem |
+
+Mais de 2 repositórios tocados também conta como acima do limite no `/kit:spec`. A pergunta é única, com três opções: quebrar em fatias via `/kit:epic` (recomendada, com as fatias já sugeridas), manter numa só ou reduzir escopo. Na quebra, a skill segue os passos de gravação do `/kit:epic` (`EPIC.md` e uma SPEC por fatia) sem nova entrevista. Manter grava e registra em Decisões `- <data> · usuário · tamanho: manter ... — acima do limite`; o `/kit:plan` e o `kit:plan-reviewer` (regra M8) aceitam essa linha na SPEC.md ou no PLAN.md.
+
 ### `map`
 
 Limites do `/kit:map`, todos opcionais, lidos do `kit.json` da pasta da sessão:
@@ -119,7 +134,7 @@ O total de agents é unidades + 2 transversais + um verificador a cada 8 unidade
 
 ## Plan e execute
 
-O `/kit:plan` não pede revisão do plano. Lacuna técnica (nome de campo, parâmetro, flag, pasta, biblioteca já prevista) ele decide pelo padrão mais simples coerente com os docs, registra em "Decisões" do PLAN.md com data, origem e motivo e atualiza o doc de referência quando houver. Ele só pergunta em decisão de produto (o que o usuário vê, regra de negócio), escopo fora da SPEC ou decisão cara de reverter (schema público, contrato de API, dependência nova). Antes de entregar, o `kit:plan-reviewer` confere o plano contra a SPEC e a skill corrige o que ele apontar; você recebe um resumo de até 5 linhas.
+O `/kit:plan` não pede revisão do plano. Lacuna técnica (nome de campo, parâmetro, flag, pasta, biblioteca já prevista) ele decide pelo padrão mais simples coerente com os docs, registra em "Decisões" do PLAN.md com data, origem e motivo e atualiza o doc de referência quando houver. Ele só pergunta em decisão de produto (o que o usuário vê, regra de negócio), escopo fora da SPEC ou decisão cara de reverter (schema público, contrato de API, dependência nova). Plano acima de `plan.max_tasks` (15) ou `plan.max_waves` (6) não é gravado sem a escolha do usuário (ver [`spec` e `plan`](#spec-e-plan)). Antes de entregar, o `kit:plan-reviewer` confere o plano contra a SPEC e a skill corrige o que ele apontar; você recebe um resumo de até 5 linhas.
 
 ### Severidade dos revisores
 
@@ -127,11 +142,11 @@ O `kit:plan-reviewer`, o `kit:code-reviewer` e o `kit:security-reviewer` não cl
 
 | Revisor | BLOCKER | MAJOR |
 | --- | --- | --- |
-| `plan-reviewer` | B1 tarefa usa algo da mesma wave ou de wave posterior · B2 tarefas de `Paralelo:` com arquivo em comum · B3 Escopo, caso de borda ou Verificação ponta a ponta sem truth · B4 decisão de produto, fora da SPEC ou cara de reverter com origem `kit` · B5 migração ou alteração de dados persistentes sem backup ou rollback na própria tarefa · B6 `verify` com chave fora do `kit.json` · B7 Interfaces divergem da SPEC · B8 caixa `- [ ]` fora de tarefa, checkpoint ou wave final | M1 truth sem teste ou artifact fora de `files` · M2 caso de borda sem behavior/teste · M3 behavior só manual quando dá para automatizar · M4 molde `arquivo:linha` inexistente · M5 tarefa grande demais · M6 tarefa sem um dos campos ou `done` não testável · M7 doc de referência ou `coupled_changes` afetado sem tarefa |
+| `plan-reviewer` | B1 tarefa usa algo da mesma wave ou de wave posterior · B2 tarefas de `Paralelo:` com arquivo em comum · B3 Escopo, caso de borda ou Verificação ponta a ponta sem truth · B4 decisão de produto, fora da SPEC ou cara de reverter com origem `kit` · B5 migração ou alteração de dados persistentes sem backup ou rollback na própria tarefa · B6 `verify` com chave fora do `kit.json` · B7 Interfaces divergem da SPEC · B8 caixa `- [ ]` fora de tarefa, checkpoint ou wave final | M1 truth sem teste ou artifact fora de `files` · M2 caso de borda sem behavior/teste · M3 behavior só manual quando dá para automatizar · M4 molde `arquivo:linha` inexistente · M5 tarefa grande demais · M6 tarefa sem um dos campos ou `done` não testável · M7 doc de referência ou `coupled_changes` afetado sem tarefa · M8 plano acima de `plan.max_tasks`/`max_waves` sem Decisão do usuário |
 | `code-reviewer` | B1 requisito da tarefa/SPEC não implementado · B2 segredo exposto ou entrada não validada em fronteira · B3 teste quebrado, removido ou enfraquecido · B4 mudança fora do escopo que altera comportamento · B5 contrato de Interfaces alterado sem registro em Decisões | M1 caso de borda sem teste · M2 erro engolido ou sem tratamento · M3 arquivo acoplado (`coupled_changes`/`key_parity`) não atualizado · M4 `done` marcado sem evidência |
 | `security-reviewer` | B1 injeção com entrada externa · B2 path traversal ou SSRF · B3 operação sem checagem de permissão ou IDOR · B4 segredo no código | M1 dado sensível em log ou resposta · M2 stack trace exposto · M3 validação de entrada incompleta sem caminho de injeção |
 
-O `tests/run-reviewers-live-test.sh` calibra os revisores com um plano e um diff com defeitos plantados (precisam sair com o id certo e `reprovado`) e um plano e um diff limpos (precisam sair `aprovado`).
+O `tests/run-reviewers-live-test.sh` calibra os revisores com um plano e um diff com defeitos plantados (precisam sair com o id certo e `reprovado`) e um plano e um diff limpos (precisam sair `aprovado`); o plano limpo com `plan.max_tasks` baixo precisa sair com `MAJOR [M8]`, e com a Decisão `tamanho: manter` do usuário, `aprovado`.
 O PLAN.md ([template](../plugins/kit/skills/plan/template.md)) é derivado de trás para frente: `must_haves` no topo (truths verificáveis, artifacts com o que cada arquivo provê, tests com o que cada teste cobre), depois `Interfaces` com assinaturas, rotas, schemas e códigos de erro exatos. As tarefas ficam agrupadas em waves por dependência, com a linha `Paralelo:` dizendo quais podem rodar ao mesmo tempo, e cada uma tem `files`, `behavior` (cada linha vira teste), `action` (com o molde `arquivo:linha`), `verify` (chave do `kit.json`) e `done` (assertiva testável). Toda wave termina num checkpoint. A wave final é fixa: revisão pelo `kit:code-reviewer` e pelo `kit:security-reviewer`, correção de BLOCKER/MAJOR com nova revisão, verificação ponta a ponta da SPEC e `smoke` se o `kit.json` tiver. Só tarefas, checkpoints e passos da wave final levam caixa `- [ ]`, que é o que os hooks contam como progresso.
 O `/kit:execute` segue as waves e só marca `[x]` com o `done` comprovado. No início de cada wave grava `Base: <hash>` no PLAN.md (`scripts/wave-base.sh`: uma árvore git do estado da pasta, sem commit e sem mexer no index). Antes de disparar as tarefas da linha `Paralelo:`, confere que os `files` são disjuntos: se forem, delega cada uma a um subagent, todas na mesma mensagem; se houver interseção, roda em sequência e registra em Decisões. O checkpoint só começa quando todas voltaram: re-roda os `verify` da wave, confere os `done`, chama o `kit:code-reviewer` sobre o diff da wave (`git diff <base> <agora>`) e corrige BLOCKER/MAJOR com nova revisão, e avalia o contexto: acima de ~70%, para e recomenda `/compact` seguido de `/kit:execute`, que retoma da próxima caixa. Plano no formato antigo (sem waves) roda tarefa a tarefa.
 O `/kit:execute` segue a mesma regra para decisões que surgem na execução e também para antes de ação irreversível (deploy, push, chamada a serviço externo real, migração em banco real).

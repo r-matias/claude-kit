@@ -74,6 +74,14 @@
     ".claude/plans"
   ],
   "inject_plan_on_prompt": false,
+  "spec": {
+    "max_scope_items": 8,
+    "max_files": 25
+  },
+  "plan": {
+    "max_tasks": 15,
+    "max_waves": 6
+  },
   "map": {
     "stale_after_commits": 50,
     "unit_max_files": 150,

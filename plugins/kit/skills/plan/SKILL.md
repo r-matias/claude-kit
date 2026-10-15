@@ -2,6 +2,7 @@
 name: plan
 description: Transforma uma SPEC.md em PLAN.md derivado de must_haves, com interfaces exatas, tarefas em waves (files, behavior, action, verify, done), checkpoints e wave final de revisão, já revisado por um subagent. Use depois de /kit:spec ou quando houver uma spec pronta para planejar.
 argument-hint: "[caminho da SPEC.md]"
+allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
 ---
 
 ## Regras que valem a tarefa inteira
@@ -41,6 +42,12 @@ A resposta entra em Decisões como `- <data> · usuário · <decisão> — <perg
    - `done`: assertiva testável que fecha a tarefa.
 7. **Waves:** agrupe por dependência. Uma tarefa só usa o que waves anteriores criam. Na linha `Paralelo:` da wave, liste as tarefas que não compartilham arquivo com nenhuma outra da mesma wave. Termine cada wave com a caixa de checkpoint do template.
 8. **Wave final**, fixa, como no template. Remova o passo F4 se o `kit.json` não tiver `smoke`.
-9. Grave `PLAN.md` ao lado da SPEC.md.
-10. Chame o `kit:plan-reviewer` com os caminhos da SPEC.md e do PLAN.md. Cada achado vem com o id da regra e a severidade fixa dele. Corrija todo achado BLOCKER e MAJOR no PLAN.md e chame de novo, até a última linha ser `aprovado` (no máximo 3 rodadas; se sobrar BLOCKER, diga qual, com o id).
-11. A resposta final é só o resumo, no máximo 5 linhas não vazias, sem título, introdução nem fecho, uma linha por item: caminho do PLAN.md; número de waves e tarefas; decisões (quantas e a principal); resultado da revisão; próximo passo (`/kit:execute <caminho>`).
+9. **Tamanho**, antes de gravar. Conte as tarefas numeradas e as waves (sem a wave final). Limites: `plan.max_tasks` (padrão 15) e `plan.max_waves` (padrão 6) do `.claude/kit.json`. Dentro dos limites, siga. Acima de qualquer um:
+   - Se a seção Decisões da SPEC.md (ou do PLAN.md que você está refazendo) já tem uma linha de origem usuário com `tamanho: manter`, siga sem perguntar e copie essa linha para Decisões do plano.
+   - Senão, não grave o PLAN.md. Faça uma pergunta, uma vez só, com `AskUserQuestion` (decisão de escopo é do usuário), citando os números e o limite. Opções: **Quebrar em fatias via /kit:epic (Recomendado)**, com as fatias já sugeridas na descrição (nome e itens de Escopo da SPEC de cada uma); **Manter num plano só**; **Reduzir escopo**, com o corte proposto (o que fica e o que vai para Fora de escopo). Sem `AskUserQuestion` disponível, faça a pergunta no texto com as três opções e pare sem gravar nada.
+   - Quebrar: leia `${CLAUDE_PLUGIN_ROOT}/skills/epic/SKILL.md` e siga os passos 4 a 6 dele com o slug da SPEC como épico e as fatias propostas, sem nova entrevista e sem nova confirmação. Não grave PLAN.md; recomende `/kit:plan` na SPEC da fatia 1.
+   - Manter: siga e registre em Decisões `- <data de hoje> · usuário · tamanho: manter num plano só (<N> tarefas, <W> waves) — acima do limite de <max_tasks> tarefas / <max_waves> waves`.
+   - Reduzir: mova o corte para Fora de escopo da SPEC.md, registre lá em Decisões e refaça os passos 4 a 8 com a SPEC reduzida.
+10. Grave `PLAN.md` ao lado da SPEC.md.
+11. Chame o `kit:plan-reviewer` com os caminhos da SPEC.md e do PLAN.md. Cada achado vem com o id da regra e a severidade fixa dele. Corrija todo achado BLOCKER e MAJOR no PLAN.md e chame de novo, até a última linha ser `aprovado` (no máximo 3 rodadas; se sobrar BLOCKER, diga qual, com o id).
+12. A resposta final é só o resumo, no máximo 5 linhas não vazias, sem título, introdução nem fecho, uma linha por item: caminho do PLAN.md; número de waves e tarefas; decisões (quantas e a principal); resultado da revisão; próximo passo (`/kit:execute <caminho>`). Na quebra em fatias: caminho do EPIC.md, as fatias em uma linha e o próximo passo (`/kit:plan` da fatia 1).

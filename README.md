@@ -77,6 +77,8 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 
 **Épico** (algo grande demais para uma feature): `/kit:epic` quebra em fatias que entregam valor sozinhas e grava `docs/specs/<epico>/EPIC.md`; cada fatia vira uma feature.
 
+**`/kit:epic` ou `/kit:spec`?** Use `/kit:spec` para uma entrega que cabe num plano revisável: até 8 itens de Escopo, ~25 arquivos e 2 repositórios. Acima disso, comece pelo `/kit:epic`. Se você começar pelo `/kit:spec` e passar do limite, ele não grava uma SPEC única: pergunta uma vez se quebra em fatias (recomendado, já com as fatias sugeridas, seguindo o `/kit:epic`), mantém numa spec só ou reduz o escopo. O `/kit:plan` faz a mesma pergunta quando o plano passa de 15 tarefas ou 6 waves; se você escolher manter, a escolha fica em Decisões e o revisor não reclama mais (sem ela, acusa `MAJOR [M8]`). Os limites são configuráveis em `spec` e `plan` no `kit.json`.
+
 - `/kit:epic portal do cliente com login, faturas e suporte`
 - `/kit:epic migrar o checkout para o novo gateway de pagamento`
 
@@ -237,6 +239,8 @@ O `/kit:init` gera este arquivo. Todas as chaves são opcionais; chave ausente �
 | `plan_dirs` | Pastas extras onde o projeto guarda planos | `[".claude/plans"]` |
 | `inject_plan_on_prompt` | Repete a linha do plano ativo a cada mensagem (custa contexto) | `false` |
 | `repos` | Na pasta-mãe de vários repositórios, quais filhos considerar | `["app", "web"]` |
+| `spec` | Limites de tamanho do `/kit:spec`: `max_scope_items` (8), `max_files` (25) | `{ "max_scope_items": 12 }` |
+| `plan` | Limites de tamanho do `/kit:plan`: `max_tasks` (15), `max_waves` (6) | `{ "max_tasks": 20 }` |
 | `map` | Limites do `/kit:map`: `stale_after_commits` (50), `unit_max_files` (150), `unit_max_loc` (20000), `max_agents` (30), `primary` (repositório do codemap) | `{ "stale_after_commits": 100 }` |
 
 Exemplo completo em [`plugins/kit/templates/kit.example.json`](plugins/kit/templates/kit.example.json); todas as regras (globs, monorepo, vários repositórios, `kit-skip`) em [docs/reference.md](docs/reference.md).

@@ -3,7 +3,8 @@
 # mesma wave, Paralelo com arquivo em comum, migracao sem backup, caso de borda sem teste) precisam
 # sair com o id e a severidade certos e veredito "reprovado"; plano e diff limpos precisam sair
 # "aprovado" (pega rigidez excessiva). Le a resposta do subagent no transcript (stream-json).
-# Custa quatro sessoes do Claude Code, em paralelo. Uso: tests/run-reviewers-live-test.sh [--keep]
+# Plano acima de plan.max_tasks sem Decisao do usuario sai com [M8]; com a Decisao, aprovado.
+# Custa seis sessoes do Claude Code, em paralelo. Uso: tests/run-reviewers-live-test.sh [--keep]
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,6 +37,18 @@ setup_case() {
     git -C "$d" -c core.autocrlf=false add -A
     git -C "$d" -c core.autocrlf=false -c user.name=kit-test -c user.email=kit@test commit -qm "tarefa 2"
   fi
+}
+
+# Uso: shrink_limit <nome> [linha em Decisões]. Baixa plan.max_tasks para 2 (o plano limpo tem 3
+# tarefas) e, com a linha, registra a Decisão do usuário no PLAN.md. Refaz o commit base.
+shrink_limit() {
+  local d="$W/$1" p="$W/$1/docs/specs/apelido/PLAN.md"
+  jq '.plan = { "max_tasks": 2 }' "$d/.claude/kit.json" >"$d/kit.tmp" && mv "$d/kit.tmp" "$d/.claude/kit.json"
+  if [ -n "${2:-}" ]; then
+    awk -v l="$2" '{ print } /^## Decisões/ { print l }' "$p" >"$p.tmp" && mv "$p.tmp" "$p"
+  fi
+  git -C "$d" -c core.autocrlf=false add -A
+  git -C "$d" -c core.autocrlf=false -c user.name=kit-test -c user.email=kit@test commit -q --amend -m base
 }
 
 # Uso: run_review <nome> <prompt>. Grava o transcript em $W/<nome>.jsonl.
@@ -112,9 +125,12 @@ setup_case plano-ruim ruim
 setup_case plano-limpo limpo
 setup_case diff-ruim limpo ruim
 setup_case diff-limpo limpo limpo
-echo "rodando as quatro revisões em $W (alguns minutos)..."
-run_review plano-ruim "$PLAN_PROMPT" &
-run_review plano-limpo "$PLAN_PROMPT" &
+setup_case plano-grande limpo
+shrink_limit plano-grande
+setup_case plano-grande-decidido limpo
+shrink_limit plano-grande-decidido "- 2026-10-01 · usuário · tamanho: manter num plano só (3 tarefas, 2 waves) — acima do limite de 2 tarefas"
+echo "rodando as seis revisões em $W (alguns minutos)..."
+for c in plano-ruim plano-limpo plano-grande plano-grande-decidido; do run_review "$c" "$PLAN_PROMPT" & done
 for c in diff-ruim diff-limpo; do
   base="$(git -C "$W/$c" rev-parse HEAD~1 | tr -d '\r')"
   run_review "$c" "Chame o subagent kit:code-reviewer para revisar o diff da tarefa 2 (wave 1) do plano $PLAN, com a SPEC em $SPEC. O diff é \`git diff $base HEAD\` e contém só a tarefa 2; a tarefa 1 fica num diff separado e está fora desta revisão. Não revise você mesmo e não edite nada. Quando ele responder, repita a resposta dele literalmente, sem comentar." &
@@ -125,12 +141,16 @@ echo "plano com defeitos"
 expect_bad "plano ruim" "$(review_text "$W/plano-ruim.jsonl" kit:plan-reviewer)" B1 B2 B5
 echo "plano limpo"
 expect_clean "plano limpo" "$(review_text "$W/plano-limpo.jsonl" kit:plan-reviewer)"
+echo "plano acima de plan.max_tasks sem decisão"
+expect_bad "plano grande" "$(review_text "$W/plano-grande.jsonl" kit:plan-reviewer)" M8
+echo "plano acima de plan.max_tasks com Decisão do usuário"
+expect_clean "plano grande decidido" "$(review_text "$W/plano-grande-decidido.jsonl" kit:plan-reviewer)"
 echo "diff com caso de borda sem teste"
 expect_bad "diff ruim" "$(review_text "$W/diff-ruim.jsonl" kit:code-reviewer)" M1
 echo "diff limpo"
 expect_clean "diff limpo" "$(review_text "$W/diff-limpo.jsonl" kit:code-reviewer)"
 
-for c in plano-ruim plano-limpo diff-ruim diff-limpo; do
+for c in plano-ruim plano-limpo plano-grande plano-grande-decidido diff-ruim diff-limpo; do
   if git -C "$W/$c" diff --quiet HEAD && [ -z "$(git -C "$W/$c" status --porcelain | tr -d '\r')" ]; then ok "$c: nenhum arquivo alterado"; else ko "$c: nenhum arquivo alterado" "$(git -C "$W/$c" status --short | tr '\n' ' ')"; fi
 done
 

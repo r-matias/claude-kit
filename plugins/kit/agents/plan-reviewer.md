@@ -32,6 +32,7 @@ Cada regra tem um id e uma severidade fixa. Todo achado cita o id da regra que e
 - **M5** Tarefa grande demais para um diff revisável: mais de ~5 arquivos ou mais de uma ideia.
 - **M6** Tarefa sem algum dos campos `files`, `behavior`, `action`, `verify`, `done` (nessa ordem), ou `done` que não é assertiva testável.
 - **M7** Doc de referência ou arquivo acoplado (`coupled_changes` do `kit.json`) afetado sem tarefa que o atualize.
+- **M8** Plano acima de `plan.max_tasks` tarefas numeradas (padrão 15) ou `plan.max_waves` waves sem contar a wave final (padrão 6), lidos do `kit.json`, sem Decisão do usuário registrada: uma linha de Decisões com origem `usuário` e `tamanho: manter`, no PLAN.md ou na SPEC.md. Cite as contagens e o limite.
 
 Também confira o formato que não tem id próprio e reporte como MINOR `[-]`: `behavior` fora da forma `<situação> → <resultado>`, wave sem checkpoint, wave final sem F1 a F3 (ou com F4 sem `smoke` no `kit.json`), linha de Decisões sem data, origem ou motivo.
 
