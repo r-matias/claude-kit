@@ -4,8 +4,8 @@
 # ao lado a sugestao do que somaria (kit-settings.suggested.json) para o usuario aplicar.
 #
 #   setup.sh check
-#     Plataforma e dependencias (Claude Code >= minima, git, bash, jq). Exit 1 se faltar algo,
-#     com o comando de instalacao de cada item.
+#     Plataforma e dependencias (Claude Code >= minima, git, bash, jq; no Linux/WSL2 tambem bwrap e
+#     socat do sandbox). Exit 1 se faltar algo, com o comando de instalacao de cada item.
 #
 #   setup.sh status
 #     check mais as regras de usuario do kit no settings e o marketplace claude-kit. Exit 1 se a
@@ -13,7 +13,7 @@
 #     sugestao gerada). Usado pelo /kit:init antes de configurar o projeto.
 #
 #   setup.sh propose <todos|opt-in>
-#     Template de usuario (sandbox.failIfUnavailable pela plataforma, enabledPlugins."kit@claude-kit"
+#     Template de usuario (sandbox.failIfUnavailable pela plataforma e pelo bwrap/socat no Linux, enabledPlugins."kit@claude-kit"
 #     true em todos, false em opt-in). Settings ausente: grava a proposta (settings.kit-proposta.json)
 #     e imprime o diff. Settings existente: grava kit-settings.suggested.json so com o que somaria
 #     (mais a troca de enabledPlugins do kit, se o escopo pedir) e imprime o diff do resultado.
@@ -31,14 +31,36 @@ SUGGESTED="$CONFIG/kit-settings.suggested.json"
 TEMPLATE="$HERE/../templates/user-settings.json"
 PLUGIN_KEY="kit@claude-kit"
 
+# Linux e WSL2: o sandbox do Claude Code precisa de bwrap (bubblewrap) e socat. Lista os ausentes.
+sandbox_missing() {
+  local t out=""
+  case "$(kit_platform)" in linux | wsl) ;; *) return 0 ;; esac
+  for t in bwrap socat; do command -v "$t" >/dev/null 2>&1 || out+="$t "; done
+  printf '%s' "${out% }"
+}
+
+# Ubuntu 24.04+ restringe user namespaces sem privilegio via AppArmor; o bwrap pode falhar mesmo instalado.
+USERNS_SYSCTL="${KIT_USERNS_SYSCTL:-/proc/sys/kernel/apparmor_restrict_unprivileged_userns}"
+userns_restricted() {
+  case "$(kit_platform)" in linux | wsl) ;; *) return 1 ;; esac
+  [ "$(cat "$USERNS_SYSCTL" 2>/dev/null | tr -d '[:space:]')" = "1" ]
+}
+
 cmd_check() {
-  local p v missing=0 t
+  local p v missing=0 t sbm
   p="$(kit_platform)"
+  sbm="$(sandbox_missing)"
   case "$p" in
     windows) echo "plataforma: windows nativo — sem sandbox (failIfUnavailable: false). Para ter sandbox, use o WSL2." ;;
-    wsl) echo "plataforma: wsl2 — sandbox disponível (failIfUnavailable: true)" ;;
     macos) echo "plataforma: macos — sandbox disponível (failIfUnavailable: true)" ;;
-    *) echo "plataforma: linux — sandbox disponível (failIfUnavailable: true)" ;;
+    *)
+      local name="linux"
+      [ "$p" = "wsl" ] && name="wsl2"
+      if [ -n "$sbm" ]; then
+        echo "plataforma: $name — sandbox exige bwrap e socat (failIfUnavailable: false até instalar)"
+      else
+        echo "plataforma: $name — sandbox disponível (failIfUnavailable: true)"
+      fi ;;
   esac
 
   v="$(kit_claude_version)"
@@ -62,13 +84,22 @@ cmd_check() {
       missing=1
     fi
   done
+  for t in $sbm; do
+    echo "falta $t (sandbox) — instale: $(kit_install_hint "$t" "$p")"
+    missing=1
+  done
+  if userns_restricted; then
+    echo "aviso sandbox: o AppArmor restringe user namespaces (Ubuntu 24.04+) e o bwrap pode falhar; veja a seção de sandbox no Linux da documentação do Claude Code"
+  fi
   return "$missing"
 }
 
 # Template ajustado a plataforma (failIfUnavailable), gravado em $1.
 template_for_platform() {
   local fail
-  if [ "$(kit_platform)" = "windows" ]; then fail=false; else fail=true; fi
+  # Sem sandbox possivel (Windows nativo, ou Linux/WSL sem bwrap e socat), failIfUnavailable
+  # true travaria toda chamada de Bash.
+  if [ "$(kit_platform)" = "windows" ] || [ -n "$(sandbox_missing)" ]; then fail=false; else fail=true; fi
   jq --argjson f "$fail" '.sandbox.failIfUnavailable = $f' "$TEMPLATE" | tr -d '\r' >"$1"
 }
 

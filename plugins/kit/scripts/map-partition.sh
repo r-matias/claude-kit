@@ -119,11 +119,11 @@ fi
 
 if [ "$STATUS" -eq 1 ]; then
   found=0
-  for d in "$ROOT" "${REPOS[@]}"; do
+  for d in "$ROOT" ${REPOS[@]+"${REPOS[@]}"}; do
     [ -f "$d/docs/codemap.md" ] && head -n 5 "$d/docs/codemap.md" | grep -qF 'kit:map v' && found=1
   done
   [ "$found" -eq 1 ] || { echo "codemap: ausente"; exit 1; }
-  note="$(kit_codemap_note "$ROOT" "${REPOS[@]}")"
+  note="$(kit_codemap_note "$ROOT" ${REPOS[@]+"${REPOS[@]}"})"
   [ -z "$note" ] || { printf '%s\n' "$note"; exit 1; }
   echo "codemap: em dia"
   exit 0
@@ -131,7 +131,7 @@ fi
 
 : >"$TMPD/units.tsv"
 : >"$TMPD/repos.tsv"
-for repo in "${REPOS[@]}"; do
+for repo in ${REPOS[@]+"${REPOS[@]}"}; do
   rel="$(kit_rel_to "$ROOT" "$repo")"
   commit="$(git -C "$repo" rev-parse HEAD 2>/dev/null | tr -d '\r')"
   printf '%s\t%s\t%s\n' "$rel" "$repo" "$commit" >>"$TMPD/repos.tsv"
@@ -179,7 +179,7 @@ for repo in "${REPOS[@]}"; do
   : >"$W/changed"
   if [ "${#SINCE[@]}" -gt 0 ]; then
     since=""
-    for s in "${SINCE[@]}"; do
+    for s in ${SINCE[@]+"${SINCE[@]}"}; do
       case "$s" in
         *=*) [ "${s%%=*}" = "$rel" ] && since="${s#*=}" ;;
         *) [ "$MULTI" -eq 0 ] && since="$s" ;;

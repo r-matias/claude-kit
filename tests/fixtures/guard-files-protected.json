@@ -20,6 +20,12 @@
       "expect": "deny", "reason": "Banco local. Use a CLI de admin." },
     { "name": "protected string na mesma lista continua igual a v0.1.0", "tool": "Edit", "file": "Migrations/001_Init.cs",
       "expect": "deny", "reason": "casa protected_paths (**/Migrations/**) do kit.json. Gere um arquivo novo ou edite manualmente." },
+    { "name": "protected com ./ no glob e normalizado", "kit": { "protected_paths": ["./web/generated/**"] },
+      "tool": "Edit", "file": "web/generated/strings.ts", "expect": "deny" },
+    { "name": "protected com / inicial no glob e normalizado", "kit": { "protected_paths": ["/web/generated/**"] },
+      "tool": "Edit", "file": "web/generated/strings.ts", "expect": "deny" },
+    { "name": "protected com \\ no glob e normalizado", "kit": { "protected_paths": ["web\\generated\\**"] },
+      "tool": "Edit", "file": "web/generated/strings.ts", "expect": "deny" },
     { "name": "protected string: migration nova continua liberada", "tool": "Write", "file": "Migrations/002_Nova.cs", "expect": "allow" },
     { "name": "protected da pasta-mae vale para repositorio filho com kit.json proprio",
       "workspace": { "repos": {

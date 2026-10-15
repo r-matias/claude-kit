@@ -114,12 +114,12 @@ O `/kit:init` já chama os dois comandos abaixo quando precisa. Use-os sozinhos 
 
 Prepara a máquina, uma vez por máquina:
 
-- confere as dependências; se faltar alguma, mostra o comando de instalação do seu sistema (`winget`, `brew`, `apt` ou `claude update`) e para. Instale, reabra o Claude Code e rode de novo;
+- detecta Windows nativo, WSL2, macOS ou Linux e ajusta o sandbox (no Windows nativo não há sandbox, e ele avisa; no Linux e no WSL2 confere `bwrap` e `socat` e avisa se o AppArmor restringe user namespaces);
 - detecta Windows nativo, WSL2, macOS ou Linux e ajusta o sandbox (no Windows nativo não há sandbox, e ele avisa);
 - pergunta se o kit fica ligado em **todos os projetos** ou **só nos projetos que o habilitam** (nesse caso, `claude plugin list` mostra o kit como `disabled` no escopo `user`, e cada projeto o liga pelo próprio `.claude/settings.json`);
 - sem `~/.claude/settings.json`, mostra o arquivo e só cria depois que você confirmar. Se ele já existe, não é alterado: o setup grava `~/.claude/kit-settings.suggested.json` só com o que somaria e mostra o diff.
 
-Prefere configurar à mão? Mescle [`plugins/kit/templates/user-settings.json`](plugins/kit/templates/user-settings.json) no seu `~/.claude/settings.json` e, no Windows nativo, troque `sandbox.failIfUnavailable` para `false`.
+Prefere configurar à mão? Mescle [`plugins/kit/templates/user-settings.json`](plugins/kit/templates/user-settings.json) no seu `~/.claude/settings.json` e, no Windows nativo ou num Linux sem `bwrap` e `socat`, troque `sandbox.failIfUnavailable` para `false`.
 
 ### `/kit:map`
 
@@ -246,14 +246,15 @@ Exemplo completo em [`plugins/kit/templates/kit.example.json`](plugins/kit/templ
   | `claude plugin validate` | 2.1.47 ou anterior (`/plugin validate` desde 2.0.12); 2.1.233 passou a checar `.claude/skills` | Sem validação de manifesto pela CLI |
 
   Fonte: [changelog oficial](https://code.claude.com/docs/en/changelog) e [referência de hooks](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails).
-- **`bash`, `git` e `jq`.** No Windows, Git for Windows (traz Git Bash) e `jq` no PATH.
+- **`bash` 3.2 ou mais novo, `git` e `jq`.** Os scripts rodam no `/bin/bash` 3.2 do macOS, sem `realpath` nem `readlink -f`. No Windows, Git for Windows (traz Git Bash) e `jq` no PATH.
+- **Linux e WSL2: `bwrap` e `socat`** para o sandbox (`sudo apt install bubblewrap socat`). Sem eles, o `/kit:setup` acusa a falta e grava `failIfUnavailable: false` até a instalação. No Ubuntu 24.04 ou mais novo, o AppArmor pode restringir os user namespaces que o `bwrap` usa; o `/kit:setup` avisa quando isso acontece.
 - **Plataformas:**
 
   | Plataforma | Sandbox | Observação |
   | --- | --- | --- |
   | macOS | Sim | |
-  | Linux | Sim | |
-  | WSL2 | Sim | Recomendado no Windows |
+  | Linux | Sim | Precisa de `bwrap` e `socat` |
+  | WSL2 | Sim | Recomendado no Windows; precisa de `bwrap` e `socat` |
   | Windows nativo | Não | O `/kit:setup` grava `failIfUnavailable: false`; valem só `permissions.deny` e os guardas |
 
 Para contribuir com o kit (estrutura do repositório, testes, publicação), veja [CONTRIBUTING.md](CONTRIBUTING.md). Decisões de desenho em [docs/design.md](docs/design.md).

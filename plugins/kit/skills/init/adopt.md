@@ -60,13 +60,13 @@ Obrigatória para toda sugestão "Desativar a do projeto" ou "Declarar no `kit.j
   ```
 
   Equivalente = os dois bloqueiam (exit 2, ou JSON com `permissionDecision: "deny"`). Repita para cada caso que o hook original cobre, inclusive um caso que deve passar.
-- **Hook ou agent virando `coupled_changes`/`key_parity`**: prove num worktree descartável, sem tocar na árvore de trabalho.
+- **Hook ou agent virando `coupled_changes`/`key_parity`**: prove num worktree descartável, sem tocar na árvore de trabalho. O worktree fica dentro do repositório, em `.kit-proof/`: o sandbox só libera escrita na pasta do projeto, e `../` ficaria fora dele. Enquanto existir, `.kit-proof/` aparece como não rastreado; não edite o `.gitignore` por isso, só remova o worktree no fim e confira que `git status` voltou ao que era. Se mesmo assim o sandbox recusar a criação, pule a prova, marque a linha como "não provado (sandbox)" e siga.
 
   ```bash
-  git worktree add --detach ../<repo>-kit-proof HEAD
-  # copiar o kit.json proposto para ../<repo>-kit-proof/.claude/kit.json e fazer a mudança que dispara a regra
-  printf '{"hook_event_name":"Stop","stop_hook_active":false,"cwd":"%s"}' "$(cd ../<repo>-kit-proof && pwd)" | bash "<raiz-do-plugin>/scripts/verify-gate.sh"; echo "exit=$?"
-  git worktree remove --force ../<repo>-kit-proof
+  git worktree add --detach .kit-proof HEAD
+  # copiar o kit.json proposto para .kit-proof/.claude/kit.json e fazer a mudança que dispara a regra
+  printf '{"hook_event_name":"Stop","stop_hook_active":false,"cwd":"%s"}' "$(cd .kit-proof && pwd)" | bash "<raiz-do-plugin>/scripts/verify-gate.sh"; echo "exit=$?"
+  git worktree remove --force .kit-proof
   ```
 
   Equivalente = exit 2 com a mensagem da regra no cenário que o original pegava, e exit 0 no cenário corrigido.

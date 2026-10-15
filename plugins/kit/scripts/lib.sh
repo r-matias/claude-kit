@@ -30,6 +30,62 @@ kit_norm_path() {
   printf '%s' "${1//\\//}"
 }
 
+# Caminho absoluto normalizado sem tocar no disco e sem realpath: \ vira /, // colapsa, . e ..
+# resolvidos (mesmo por pasta inexistente). Relativo e resolvido contra $2. Aceita /x, C:/x e C:.
+# Uso: kit_path_norm <caminho> [base]
+kit_path_norm() {
+  local p="${1//\\//}" base="${2:-/}" prefix="" part IFS=/
+  local -a parts=() stack=()
+  case "$p" in [A-Za-z]:) p="$p/" ;; esac
+  case "$p" in
+    /* | [A-Za-z]:/*) ;;
+    *) base="${base//\\//}"; p="${base%/}/$p" ;;
+  esac
+  case "$p" in [A-Za-z]:/*) prefix="${p:0:2}"; p="${p:2}" ;; esac
+  read -r -a parts <<<"$p"
+  for part in ${parts[@]+"${parts[@]}"}; do
+    case "$part" in
+      '' | .) ;;
+      ..) [ "${#stack[@]}" -gt 0 ] && unset "stack[$((${#stack[@]} - 1))]" ;;
+      *) stack+=("$part") ;;
+    esac
+  done
+  printf '%s/%s' "$prefix" "${stack[@]+"${stack[*]}"}"
+}
+
+# Sistema pelo uname; sem uname no PATH, pelo $OSTYPE do proprio bash.
+kit_uname() {
+  local u
+  u="$(uname -s 2>/dev/null)"
+  if [ -z "$u" ]; then
+    case "${OSTYPE:-}" in
+      msys* | cygwin* | win*) u="MINGW" ;;
+      darwin*) u="Darwin" ;;
+      *) u="Linux" ;;
+    esac
+  fi
+  printf '%s' "$u"
+}
+
+# Verdadeiro em Windows e macOS, onde o sistema de arquivos padrao nao diferencia maiusculas.
+KIT_CI=""
+kit_case_insensitive() {
+  if [ -z "$KIT_CI" ]; then
+    case "$(kit_uname)" in MINGW* | MSYS* | CYGWIN* | Darwin) KIT_CI=1 ;; *) KIT_CI=0 ;; esac
+  fi
+  [ "$KIT_CI" = "1" ]
+}
+
+# Texto em minusculas onde o sistema de arquivos nao diferencia maiusculas; igual nos demais.
+kit_fold() {
+  if kit_case_insensitive; then printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; else printf '%s' "$1"; fi
+}
+
+# Guardas: saida inesperada (erro, variavel nao definida) bloqueia com exit 2, nunca libera.
+kit_guard_fail_closed() {
+  trap 'kit_rc=$?; if [ "$kit_rc" -ne 0 ] && [ "$kit_rc" -ne 2 ]; then echo "kit: erro interno no guarda (status $kit_rc); chamada bloqueada" >&2; exit 2; fi' EXIT
+}
+
 kit_cwd() {
   local c
   c="$(kit_field '.cwd')"
@@ -196,12 +252,13 @@ kit_rule_str() {
 }
 
 # protected_paths como linhas "glob<TAB>write<TAB>message". Aceita string (write=allow, sem
-# mensagem) ou objeto {glob, message, write: allow|deny}.
+# mensagem) ou objeto {glob, message, write: allow|deny}. O glob perde ./ e / iniciais e \ vira /.
 kit_protected_entries() {
   [ -n "$KIT_JSON" ] || return 0
-  jq -r '(.protected_paths // [])[] |
-    if type == "string" then [., "allow", ""]
-    elif type == "object" then [(.glob // ""), (.write // "allow"), (.message // "")]
+  jq -r 'def norm: gsub("\\\\"; "/") | sub("^(\\./|/)+"; "");
+    (.protected_paths // [])[] |
+    if type == "string" then [norm, "allow", ""]
+    elif type == "object" then [((.glob // "") | norm), (.write // "allow"), (.message // "")]
     else empty end | @tsv' "$KIT_JSON" 2>/dev/null | tr -d '\r'
 }
 
@@ -248,6 +305,22 @@ glob_match() {
   return 1
 }
 
+# Filtra os caminhos do stdin (um por linha) que casam algum glob dos argumentos, com a mesma regra
+# do glob_match. Cada glob vira regex uma vez so; o casamento roda num unico awk.
+kit_glob_filter() {
+  local g spec=""
+  for g in "$@"; do
+    [ -n "$g" ] || continue
+    case "$g" in */*) spec+="P " ;; *) spec+="B " ;; esac
+    spec+="$(glob_to_regex "$g")"$'\n'
+  done
+  [ -n "$spec" ] || return 0
+  KIT_GLOB_SPEC="$spec" awk 'BEGIN { n = split(ENVIRON["KIT_GLOB_SPEC"], L, "\n")
+      for (i = 1; i <= n; i++) if (L[i] != "") { k++; T[k] = substr(L[i], 1, 1); R[k] = substr(L[i], 3) } }
+    { b = $0; sub(/.*\//, "", b)
+      for (i = 1; i <= k; i++) if ($0 ~ R[i] || (T[i] == "B" && b ~ R[i])) { print; break } }'
+}
+
 # Caminho relativo a KIT_ROOT (ou o proprio caminho se estiver fora).
 kit_rel() {
   local p
@@ -266,8 +339,13 @@ kit_quote() {
 
 # Substitui {files} por argumentos ja citados.
 kit_subst_files() {
-  local cmd="$1" files="$2"
-  printf '%s' "${cmd//\{files\}/$files}"
+  local cmd="$1" files="$2" out=""
+  # Sem ${cmd//...}: no bash 5.2 o & da substituicao vira o texto casado (patsub_replacement).
+  while [[ "$cmd" == *"{files}"* ]]; do
+    out+="${cmd%%"{files}"*}$files"
+    cmd="${cmd#*"{files}"}"
+  done
+  printf '%s' "$out$cmd"
 }
 
 # Executa um comando do manifesto na raiz do kit. Saida combinada vai para o arquivo $2.
@@ -276,7 +354,8 @@ kit_run() {
 }
 
 kit_deny_pretool() {
-  jq -cn --arg r "$1" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
+  jq -cn --arg r "$1" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}' ||
+    { echo "$1" >&2; exit 2; }
   exit 0
 }
 
@@ -305,7 +384,7 @@ kit_claude_version() {
 
 # windows (Git Bash/MSYS no Windows nativo), wsl, macos ou linux.
 kit_platform() {
-  case "$(uname -s 2>/dev/null)" in
+  case "$(kit_uname)" in
     MINGW* | MSYS* | CYGWIN*) echo windows ;;
     Darwin) echo macos ;;
     Linux)
@@ -314,12 +393,14 @@ kit_platform() {
   esac
 }
 
-# Comando de instalacao de uma dependencia (jq, git, bash, claude) na plataforma dada.
+# Comando de instalacao de uma dependencia (jq, git, bash, claude, bwrap, socat) na plataforma dada.
 kit_install_hint() {
   case "$1" in
     claude) echo "claude update"; return 0 ;;
   esac
   case "$2:$1" in
+    *:bwrap) echo "sudo apt install bubblewrap" ;;
+    *:socat) echo "sudo apt install socat" ;;
     windows:jq) echo "winget install jqlang.jq" ;;
     windows:*) echo "winget install Git.Git" ;;
     macos:*) echo "brew install $1" ;;

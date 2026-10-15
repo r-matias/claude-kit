@@ -26,7 +26,7 @@ plans_line() {
   while IFS=$'\t' read -r d t f; do
     [ -n "$f" ] || continue
     line+="${line:+; }$(kit_rel_to "$ROOT" "$f") ($d/$t)"
-  done < <(kit_active_plans "$ROOT" "${REPOS[@]}" | head -n 3)
+  done < <(kit_active_plans "$ROOT" ${REPOS[@]+"${REPOS[@]}"} | head -n 3)
   printf '%s' "$line"
 }
 
@@ -48,7 +48,7 @@ fi
 
 echo "## Contexto do kit"
 [ -n "$NOTES" ] && printf '%s\n' "$NOTES"
-MAPNOTE="$(kit_codemap_note "$ROOT" "${REPOS[@]}")"
+MAPNOTE="$(kit_codemap_note "$ROOT" ${REPOS[@]+"${REPOS[@]}"})"
 [ -n "$MAPNOTE" ] && printf '%s\n' "$MAPNOTE"
 if [ "${#REPOS[@]}" -eq 1 ]; then
   BRANCH="$(git -C "${REPOS[0]}" branch --show-current 2>/dev/null | tr -d '\r')"
@@ -60,7 +60,7 @@ if [ "${#REPOS[@]}" -eq 1 ]; then
     printf '%s\n' "$STATUS"
   fi
 else
-  for repo in "${REPOS[@]}"; do
+  for repo in ${REPOS[@]+"${REPOS[@]}"}; do
     name="$(kit_rel_to "$CWD" "$repo")"
     [ "$name" = "." ] && name="${repo##*/}"
     BRANCH="$(git -C "$repo" branch --show-current 2>/dev/null | tr -d '\r')"
@@ -71,7 +71,7 @@ else
   done
 fi
 
-PLANS="$(kit_active_plans "$ROOT" "${REPOS[@]}" | head -n 3)"
+PLANS="$(kit_active_plans "$ROOT" ${REPOS[@]+"${REPOS[@]}"} | head -n 3)"
 if [ -n "$PLANS" ]; then
   echo
   echo "Planos ativos (feitas/total):"

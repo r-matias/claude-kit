@@ -1,4 +1,8 @@
 {
+  "repos": [
+    "app",
+    "web"
+  ],
   "commands": {
     "build": "dotnet build --nologo -v q",
     "test": "dotnet test --nologo",
@@ -74,6 +78,7 @@
     "stale_after_commits": 50,
     "unit_max_files": 150,
     "unit_max_loc": 20000,
-    "max_agents": 30
+    "max_agents": 30,
+    "primary": "app"
   }
 }

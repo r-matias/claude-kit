@@ -3,7 +3,7 @@ name: execute
 description: Executa um PLAN.md wave a wave, com behavior virando teste, done como critério de conclusão, checkpoint com revisão do diff da wave e wave final de revisão independente.
 argument-hint: "[caminho do PLAN.md]"
 disable-model-invocation: true
-allowed-tools: Bash(git status *) Bash(git branch *)
+allowed-tools: Bash(git status *) Bash(git branch *) Bash(git diff *) Bash(git -C * diff *) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/wave-base.sh") Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/wave-base.sh" *)
 ---
 
 ## Estado atual
@@ -22,7 +22,9 @@ allowed-tools: Bash(git status *) Bash(git branch *)
 
 ## Passos
 1. Plano: $ARGUMENTS. Sem argumento, use o PLAN.md mais recente em `docs/specs/`. Leia o PLAN.md e a SPEC.md ao lado. Retome da primeira caixa `- [ ]`.
-2. **Início da wave.** Se a wave ainda não tem linha `Base:`, rode `bash "${CLAUDE_PLUGIN_ROOT}/scripts/wave-base.sh"` e grave `Base: <hash>` logo abaixo da linha `Paralelo:` (em workspace com vários repositórios, uma base por repositório: `Base: <repo>=<hash> <repo>=<hash>`). O hash é uma árvore git do estado atual; não cria commit nem mexe no index.
+2. **Início da wave.** Se a wave ainda não tem linha `Base:`, rode `bash "${CLAUDE_PLUGIN_ROOT}/scripts/wave-base.sh"` e grave `Base: <hash>` logo abaixo da linha `Paralelo:`. O hash é uma árvore git do estado atual (rastreados e não rastreados); não cria commit nem mexe no index.
+   - **Vários repositórios** (pasta-mãe com repositórios filhos, ou `repos` no `kit.json`): o script vale para um repositório por vez. Rode `bash "${CLAUDE_PLUGIN_ROOT}/scripts/wave-base.sh" <repo>` para cada repositório que a wave toca e grave `Base: <repo>=<hash> <repo>=<hash>`, com `<repo>` relativo à pasta da sessão.
+   - **Antes da primeira wave**, grave também a base do plano inteiro, uma vez, logo abaixo do título: `Base do plano: <hash>` (ou `<repo>=<hash> ...`). A wave final compara contra ela.
 3. **Paralelo.** Antes de disparar as tarefas da linha `Paralelo:`, compare os `files` delas:
    - Disjuntos: delegue todas ao mesmo tempo, uma por subagent `general-purpose`, numa única mensagem. Cada subagent recebe a SPEC e os `files`, `behavior`, `action`, `verify` e `done` da sua tarefa, implementa, roda o `verify` e devolve o resultado; ele não edita o PLAN.md. Espere todos voltarem antes de qualquer outro passo da wave.
    - Com interseção: execute essas tarefas em sequência, na ordem do plano, e registre em Decisões: `- <data> · kit · Tarefas N e M em sequência — files em comum: <arquivo>`.
@@ -34,11 +36,11 @@ allowed-tools: Bash(git status *) Bash(git branch *)
 5. **Checkpoint** (caixa `Checkpoint wave N`), só depois que todas as tarefas da wave, inclusive as paralelas, voltaram:
    1. Re-rode os `verify` de todas as tarefas da wave juntos; falha reabre a tarefa (`- [ ]`) e volta ao passo 4.
    2. Confirme que cada `done` da wave continua valendo.
-   3. Rode `wave-base.sh` de novo para obter o hash de agora e chame o `kit:code-reviewer` com os caminhos da SPEC e do PLAN, o número da wave e o diff da wave: `git diff <base> <agora>`, ignorando o PLAN.md. Corrija todo BLOCKER e MAJOR, re-rode os `verify` afetados e chame de novo, até não sobrar nenhum. MINOR fica anotado.
+   3. Rode `wave-base.sh` de novo para obter o hash de agora (por repositório, se houver vários) e chame o `kit:code-reviewer` com os caminhos da SPEC e do PLAN, o número da wave e o diff da wave: `git -C <repo> diff <base> <agora>` em cada repositório, ignorando o PLAN.md. Corrija todo BLOCKER e MAJOR, re-rode os `verify` afetados e chame de novo, até não sobrar nenhum. MINOR fica anotado.
    4. Avalie o contexto. Acima de ~70% de uso, marque o checkpoint, pare e recomende `/compact` seguido de `/kit:execute <caminho>`: o PLAN.md guarda o estado e a execução retoma da próxima caixa.
    5. Marque o checkpoint `- [x]` e acrescente abaixo `  - Evidência: <verify da wave> → <resultado>` e `  - Revisão: kit:code-reviewer → <aprovado | N achados corrigidos>`.
 6. **Wave final**, passo a passo:
-   1. F1: chame o `kit:code-reviewer` (caminhos da SPEC e do PLAN, diff inteiro: `git diff` contra o estado de antes da primeira wave, ou `git diff --name-only` se não houver base) e o `kit:security-reviewer` (lista de todos os arquivos alterados).
+   1. F1: rode `wave-base.sh` de novo (por repositório) e chame o `kit:code-reviewer` com os caminhos da SPEC e do PLAN e o diff inteiro: `git -C <repo> diff <base do plano> <agora>` em cada repositório. Comparar árvores inclui os arquivos novos ainda não rastreados, que um `git diff` simples não mostra. Plano sem `Base do plano:`: use a `Base:` da primeira wave; sem nenhuma base, `git -C <repo> diff HEAD` mais `git -C <repo> ls-files --others --exclude-standard` em cada repositório. Chame também o `kit:security-reviewer` com a lista de todos os arquivos alterados e novos (`git -C <repo> diff --name-only <base do plano> <agora>`).
    2. F2: corrija todo BLOCKER e MAJOR e chame de novo o revisor que apontou, até não sobrar nenhum. MINOR fica anotado.
    3. F3: rode a verificação ponta a ponta da SPEC.
    4. F4 (se existir): rode `smoke` do `kit.json`.

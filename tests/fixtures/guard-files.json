@@ -11,6 +11,21 @@
     { "name": "Write sobre migration existente negado", "tool": "Write", "file": "Migrations/001_Init.cs", "expect": "deny" },
     { "name": "Write de migration nova liberado", "tool": "Write", "file": "Migrations/002_AddUsers.cs", "expect": "allow" },
     { "name": "Edit em codigo comum liberado", "tool": "Edit", "file": "src/App.cs", "expect": "allow" },
-    { "name": "Edit fora de projeto com kit liberado", "tool": "Edit", "file": "__NOKIT__/notes.md", "expect": "allow" }
+    { "name": "Edit fora de projeto com kit liberado", "tool": "Edit", "file": "__NOKIT__/notes.md", "expect": "allow" },
+    { "name": "caminho relativo ao cwd casa protected_paths", "tool": "Edit", "raw_file": "Migrations/001_Init.cs", "expect": "deny" },
+    { "name": "relativo com ./ casa protected_paths", "tool": "Edit", "raw_file": "./src/../Migrations/001_Init.cs", "expect": "deny" },
+    { "name": ".. por pasta inexistente casa protected_paths", "tool": "Edit", "file": "nao-existe/../Migrations/001_Init.cs", "expect": "deny" },
+    { "name": "// no caminho casa protected_paths", "tool": "Edit", "file": "Migrations//001_Init.cs", "expect": "deny" },
+    { "name": ".env relativo negado", "tool": "Write", "raw_file": "config/../.env", "expect": "deny" },
+    { "name": "NotebookEdit em secrets/ negado", "tool": "NotebookEdit", "file": "secrets/analise.ipynb", "expect": "deny" },
+    { "name": "NotebookEdit em notebook comum liberado", "tool": "NotebookEdit", "file": "notebooks/analise.ipynb", "expect": "allow" },
+    { "name": ".ENV maiusculo negado (Windows/macOS)", "platforms": ["windows", "macos"], "tool": "Edit", "file": ".ENV", "expect": "deny" },
+    { "name": "x.KEY maiusculo negado (Windows/macOS)", "platforms": ["windows", "macos"], "tool": "Write", "file": "x.KEY", "expect": "deny" },
+    { "name": "Secrets/ maiusculo negado (Windows/macOS)", "platforms": ["windows", "macos"], "tool": "Edit", "file": "deploy/Secrets/db.yaml", "expect": "deny" },
+    { "name": "migrations/ minusculo casa **/Migrations/** (Windows/macOS)", "platforms": ["windows", "macos"], "tool": "Edit", "file": "migrations/001_Init.cs", "expect": "deny" },
+    { "name": ".env com espaco no fim negado (Windows)", "platforms": ["windows"], "tool": "Write", "file": ".env ", "expect": "deny" },
+    { "name": ".env com ponto no fim negado (Windows)", "platforms": ["windows"], "tool": "Write", "file": ".env.", "expect": "deny" },
+    { "name": ".env::$DATA negado (Windows)", "platforms": ["windows"], "tool": "Write", "file": ".env::$DATA", "expect": "deny" },
+    { "name": "Migrations/x.cs:fluxo negado (Windows)", "platforms": ["windows"], "tool": "Edit", "file": "Migrations/001_Init.cs:zone", "expect": "deny" }
   ]
 }

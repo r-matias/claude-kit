@@ -9,7 +9,7 @@
         ]
       },
       {
-        "matcher": "Edit|Write|MultiEdit",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard-files.sh\"", "timeout": 10, "onFailure": "block" }
         ]

@@ -21,7 +21,7 @@ SNAP="$ROOT/.claude/state/kit-snapshot.md"
     echo
     echo "Nenhum repositório git na sessão."
   fi
-  for repo in "${REPOS[@]}"; do
+  for repo in ${REPOS[@]+"${REPOS[@]}"}; do
     name="$(kit_rel_to "$CWD" "$repo")"
     [ "$name" = "." ] && name="${repo##*/}"
     echo
@@ -31,7 +31,7 @@ SNAP="$ROOT/.claude/state/kit-snapshot.md"
     echo "Modificados: ${mod:+$'\n'}${mod:-nenhum}"
     echo "Staged: ${stg:+$'\n'}${stg:-nenhum}"
   done
-  PLANS="$(kit_active_plans "$ROOT" "${REPOS[@]}" | head -n 3)"
+  PLANS="$(kit_active_plans "$ROOT" ${REPOS[@]+"${REPOS[@]}"} | head -n 3)"
   if [ -n "$PLANS" ]; then
     echo
     echo "Planos ativos (feitas/total):"

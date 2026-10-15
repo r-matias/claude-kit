@@ -43,6 +43,6 @@ while IFS= read -r root; do
 done < <(kit_kit_roots "$FILE")
 
 [ "${#NOTES[@]}" -gt 0 ] || exit 0
-jq -cn --arg c "$(printf '%s\n' "${NOTES[@]}")" \
+jq -cn --arg c "$(printf '%s\n' ${NOTES[@]+"${NOTES[@]}"})" \
   '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: ($c | rtrimstr("\n"))}}'
 exit 0

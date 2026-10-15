@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
 # Passa as fixtures de tests/fixtures pelos scripts do kit e confere decisao, exit code e saidas.
-# Uso: tests/run-tests.sh [--awk <mawk|gawk|busybox>] [filtro-por-nome]
-# --awk roda tudo com aquele awk no lugar do padrao (ex.: mawk, que e o awk do Debian/Ubuntu);
-# se ele nao estiver instalado, a execucao e pulada com aviso.
+# Uso: tests/run-tests.sh [--awk <mawk|gawk|busybox>] [--bash <caminho>] [filtro]
+# --awk roda tudo com aquele awk no lugar do padrao (ex.: mawk, o awk do Debian/Ubuntu).
+# --bash roda os scripts com outro bash (ex.: /bin/bash 3.2 do macOS). Se o awk ou o bash pedido
+# nao existir, a execucao e pulada com aviso. O filtro casa o nome do caso ou do script.
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 SCRIPTS="$REPO/plugins/kit/scripts"
 AWK_IMPL=""
-if [ "${1:-}" = "--awk" ]; then
-  AWK_IMPL="${2:-}"
-  [ -n "$AWK_IMPL" ] || { echo "uso: --awk <mawk|gawk|busybox>" >&2; exit 2; }
-  shift 2
-fi
+BASH_IMPL=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --awk) AWK_IMPL="${2:-}"; [ -n "$AWK_IMPL" ] || { echo "uso: --awk <mawk|gawk|busybox>" >&2; exit 2; }; shift 2 ;;
+    --bash) BASH_IMPL="${2:-}"; [ -n "$BASH_IMPL" ] || { echo "uso: --bash <caminho>" >&2; exit 2; }; shift 2 ;;
+    *) break ;;
+  esac
+done
 FILTER="${1:-}"
 
 command -v jq >/dev/null 2>&1 || { echo "jq nao encontrado" >&2; exit 1; }
@@ -25,18 +29,23 @@ FAILED=()
 TMP_ALL="$(mktemp -d)"
 trap 'rm -rf "$TMP_ALL"' EXIT
 
+# Troca um comando do PATH por outro executavel: shim_cmd <nome> <executavel> [argumento fixo]
+shim_cmd() {
+  mkdir -p "$TMP_ALL/shim-bin"
+  printf '#!/bin/sh\nexec "%s" %s "$@"\n' "$2" "${3:-}" >"$TMP_ALL/shim-bin/$1"
+  chmod +x "$TMP_ALL/shim-bin/$1"
+  case ":$PATH:" in *":$TMP_ALL/shim-bin:"*) ;; *) export PATH="$TMP_ALL/shim-bin:$PATH" ;; esac
+}
 if [ -n "$AWK_IMPL" ]; then
   AWK_BIN="$(command -v "$AWK_IMPL" 2>/dev/null)"
   [ -n "$AWK_BIN" ] || { echo "pulado: $AWK_IMPL nao instalado"; exit 0; }
-  mkdir -p "$TMP_ALL/awk-bin"
-  if [ "$AWK_IMPL" = "busybox" ]; then
-    printf '#!/bin/sh\nexec "%s" awk "$@"\n' "$AWK_BIN" >"$TMP_ALL/awk-bin/awk"
-  else
-    printf '#!/bin/sh\nexec "%s" "$@"\n' "$AWK_BIN" >"$TMP_ALL/awk-bin/awk"
-  fi
-  chmod +x "$TMP_ALL/awk-bin/awk"
-  export PATH="$TMP_ALL/awk-bin:$PATH"
+  if [ "$AWK_IMPL" = "busybox" ]; then shim_cmd awk "$AWK_BIN" awk; else shim_cmd awk "$AWK_BIN"; fi
   echo "awk: $AWK_IMPL ($AWK_BIN)"
+fi
+if [ -n "$BASH_IMPL" ]; then
+  [ -x "$BASH_IMPL" ] || { echo "pulado: $BASH_IMPL nao encontrado"; exit 0; }
+  shim_cmd bash "$BASH_IMPL"
+  echo "bash: $("$BASH_IMPL" -c 'echo $BASH_VERSION') ($BASH_IMPL)"
 fi
 
 # Caminho no formato que o Claude Code envia na plataforma atual.
@@ -87,6 +96,12 @@ case_path() {
   chmod +x "$ws/bin/claude"
   printf '%s' "$ws/bin:$NOCLAUDE_PATH"
 }
+
+case "$(uname -s 2>/dev/null)" in
+  MINGW* | MSYS* | CYGWIN*) TEST_PLATFORM=windows ;;
+  Darwin) TEST_PLATFORM=macos ;;
+  *) if grep -qi microsoft /proc/version 2>/dev/null; then TEST_PLATFORM=wsl; else TEST_PLATFORM=linux; fi ;;
+esac
 
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); FAILED+=("$1: $2"); printf '  FALHA %s -- %s\n' "$1" "$2"; }
@@ -194,7 +209,12 @@ resolve_token() {
 run_case() {
   local script="$1" case_json="$2" name ws base input out err code cwd file tool sid
   name="$(jq -r '.name' <<<"$case_json")"
-  if [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]]; then return; fi
+  # platforms: o caso so roda nas plataformas listadas (windows, macos, linux, wsl).
+  if jq -e 'has("platforms")' <<<"$case_json" >/dev/null 2>&1 &&
+    ! jq -e --arg p "$TEST_PLATFORM" '.platforms | index($p) != null' <<<"$case_json" >/dev/null 2>&1; then
+    return
+  fi
+  if [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]] && [[ "$script" != *"$FILTER"* ]]; then return; fi
 
   ws="$(setup_ws "$case_json")"
   base="$(case_base "$ws" "$case_json")"
@@ -210,14 +230,23 @@ run_case() {
 
   case "$script" in
     guard-bash.sh)
-      input="$(jq -cn --arg c "$(jq -r '.command' <<<"$case_json")" --arg d "$cwd" \
+      local gcmd
+      gcmd="$(jq -r '.command' <<<"$case_json" | tr -d '\r')"
+      gcmd="${gcmd//__PROJ__/$(native_path "$base")}"
+      input="$(jq -cn --arg c "$gcmd" --arg d "$cwd" \
         '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: $c}, cwd: $d}')" ;;
     guard-files.sh | format.sh | advise.sh)
       tool="$(jq -r '.tool' <<<"$case_json")"
-      file="$(resolve_token "$(jq -r '.file' <<<"$case_json")" "$ws" "$base")"
-      local ev="PreToolUse"; [ "$script" != "guard-files.sh" ] && ev="PostToolUse"
-      input="$(jq -cn --arg t "$tool" --arg f "$file" --arg d "$cwd" --arg e "$ev" --arg s "$sid" \
-        '{hook_event_name: $e, session_id: $s, tool_name: $t, tool_input: {file_path: $f}, cwd: $d}')" ;;
+      # raw_file vai como esta (relativo, com .., //); file e juntado ao caminho do projeto.
+      if jq -e 'has("raw_file")' <<<"$case_json" >/dev/null; then
+        file="$(jq -r '.raw_file' <<<"$case_json" | tr -d '\r')"
+      else
+        file="$(resolve_token "$(jq -r '.file' <<<"$case_json")" "$ws" "$base")"
+      fi
+      local ev="PreToolUse" fkey="file_path"; [ "$script" != "guard-files.sh" ] && ev="PostToolUse"
+      [ "$tool" = "NotebookEdit" ] && fkey="notebook_path"
+      input="$(jq -cn --arg t "$tool" --arg f "$file" --arg d "$cwd" --arg e "$ev" --arg s "$sid" --arg k "$fkey" \
+        '{hook_event_name: $e, session_id: $s, tool_name: $t, tool_input: {($k): $f}, cwd: $d}')" ;;
     verify-gate.sh)
       input="$(jq -cn --arg d "$cwd" --arg s "$sid" --argjson a "$(jq '.stop_hook_active // false' <<<"$case_json")" \
         '{hook_event_name: "Stop", session_id: $s, stop_hook_active: $a, cwd: $d}')" ;;
@@ -632,14 +661,24 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   SU="$SCRIPTS/setup.sh"
   TPL_USER="$REPO/plugins/kit/templates/user-settings.json"
   # Stubs de plataforma e versao: uname responde $1, claude responde $2. WSL via WSL_DISTRO_NAME.
+  # bwrap e socat existem, salvo com $3 = "sem-sandbox". AppArmor sem restricao, salvo nos casos dele.
   setup_bin() {
     local d
     d="$(mktemp -d "$TMP_ALL/setup-bin.XXXXXX")"
     printf '#!/usr/bin/env bash\necho "%s"\n' "$1" >"$d/uname"
     printf '#!/usr/bin/env bash\necho "%s (Claude Code)"\n' "${2:-9.9.9}" >"$d/claude"
     chmod +x "$d/uname" "$d/claude"
+    if [ "${3:-}" != "sem-sandbox" ]; then
+      printf '#!/usr/bin/env bash\nexit 0\n' >"$d/bwrap"
+      printf '#!/usr/bin/env bash\nexit 0\n' >"$d/socat"
+      chmod +x "$d/bwrap" "$d/socat"
+    fi
     printf '%s' "$d"
   }
+  printf '0\n' >"$TMP_ALL/userns-0"
+  printf '1\n' >"$TMP_ALL/userns-1"
+  export KIT_USERNS_SYSCTL="$TMP_ALL/userns-0"
+  NOSB_PATH="$(PATH="$(path_without bwrap)" path_without socat)"
   LINUX_BIN="$(setup_bin Linux)"
   WIN_BIN="$(setup_bin MINGW64_NT-10.0-26100)"
   MAC_BIN="$(setup_bin Darwin)"
@@ -744,6 +783,24 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   code=$?
   if [ "$code" = "2" ] && [ ! -e "$C4/settings.json" ] && [ ! -e "$C4/settings.kit-proposta.json" ]; then ok "setup propose: sem jq recusa e não grava"; else ko "setup propose: sem jq recusa e não grava" "exit $code"; fi
 
+  # Linux/WSL2 sem bwrap e socat: falta com o comando de instalacao e failIfUnavailable false.
+  NOSB_BIN="$(setup_bin Linux 9.9.9 sem-sandbox)"
+  C5="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
+  out="$(run_setup "$C5" "$NOSB_BIN:$(PATH="$NOSB_PATH" path_without claude)" check 2>&1)"
+  code=$?
+  if [ "$code" = "1" ] && grep -qF 'falta bwrap (sandbox) — instale: sudo apt install bubblewrap' <<<"$out" &&
+    grep -qF 'falta socat (sandbox) — instale: sudo apt install socat' <<<"$out" && grep -qF 'failIfUnavailable: false até instalar' <<<"$out"; then
+    ok "setup check: Linux sem bwrap e socat falha com o comando de instalação"
+  else ko "setup check: Linux sem bwrap e socat falha com o comando de instalação" "exit $code, $out"; fi
+  run_setup "$C5" "$NOSB_BIN:$(PATH="$NOSB_PATH" path_without claude)" propose todos >/dev/null 2>&1
+  if jq -e '.sandbox.failIfUnavailable == false' "$C5/settings.kit-proposta.json" >/dev/null 2>&1; then
+    ok "setup propose: Linux sem bwrap e socat usa failIfUnavailable false"
+  else ko "setup propose: Linux sem bwrap e socat usa failIfUnavailable false" "$(head -c 300 "$C5/settings.kit-proposta.json" 2>&1)"; fi
+  out="$(KIT_USERNS_SYSCTL="$TMP_ALL/userns-1" run_setup "$C5" "$LINUX_BIN:$NOCLAUDE_PATH" check 2>&1)"
+  if grep -qF 'aviso sandbox: o AppArmor restringe user namespaces' <<<"$out"; then ok "setup check: AppArmor restringindo userns gera aviso"; else ko "setup check: AppArmor restringindo userns gera aviso" "$out"; fi
+  out="$(KIT_USERNS_SYSCTL="$TMP_ALL/userns-1" run_setup "$C5" "$MAC_BIN:$NOCLAUDE_PATH" check 2>&1)"
+  if ! grep -qF 'aviso sandbox' <<<"$out"; then ok "setup check: aviso de AppArmor só no Linux"; else ko "setup check: aviso de AppArmor só no Linux" "$out"; fi
+
   # Claude Code abaixo da minima: check falha com claude update.
   OLD_BIN="$(setup_bin Linux 2.1.200)"
   out="$(run_setup "$C4" "$OLD_BIN:$NOCLAUDE_PATH" check 2>&1)"
@@ -751,6 +808,47 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   if [ "$code" = "1" ] && grep -qF 'falta claude >= 2.1.295 (atual 2.1.200) — rode: claude update' <<<"$out"; then
     ok "setup check: Claude Code antigo falha com claude update"
   else ko "setup check: Claude Code antigo falha com claude update" "exit $code, $out"; fi
+fi
+
+echo "guardas e gate: casos de sistema de arquivos"
+if [ -z "$FILTER" ] || [[ "guardas" == *"$FILTER"* ]]; then
+  # Erro inesperado num guarda bloqueia (exit 2), nunca libera.
+  out="$(bash -c '. "$1/lib.sh"; kit_guard_fail_closed; set -u; echo "$KIT_VARIAVEL_INEXISTENTE"' _ "$SCRIPTS" 2>"$TMP_ALL/fc.err")"; code=$?
+  if [ "$code" = "2" ] && grep -q 'erro interno no guarda' "$TMP_ALL/fc.err"; then ok "guardas: variavel nao definida bloqueia com exit 2"
+  else ko "guardas: variavel nao definida bloqueia com exit 2" "exit $code, stderr=$(head -c 200 "$TMP_ALL/fc.err")"; fi
+  out="$(bash -c '. "$1/lib.sh"; kit_guard_fail_closed; false; exit 1' _ "$SCRIPTS" 2>/dev/null)"; code=$?
+  [ "$code" = "2" ] && ok "guardas: exit 1 inesperado vira exit 2" || ko "guardas: exit 1 inesperado vira exit 2" "exit $code"
+
+  # Symlink: o alvo final tambem e checado.
+  G="$(mktemp -d "$TMP_ALL/sym.XXXXXX")"
+  mkdir -p "$G/p/.claude" "$G/p/src"
+  printf '{"protected_paths":["**/Migrations/**"]}\n' >"$G/p/.claude/kit.json"
+  printf 'X=1\n' >"$G/p/.env"
+  git_q init "$G/p"
+  if MSYS=winsymlinks:nativestrict ln -s "$G/p/.env" "$G/p/src/config.txt" 2>/dev/null && [ -L "$G/p/src/config.txt" ]; then
+    out="$(jq -cn --arg f "$(native_path "$G/p/src/config.txt")" --arg d "$(native_path "$G/p")" \
+      '{tool_name: "Edit", tool_input: {file_path: $f}, cwd: $d}' | bash "$SCRIPTS/guard-files.sh" 2>&1)"
+    if jq -e '.hookSpecificOutput.permissionDecision == "deny"' <<<"$out" >/dev/null 2>&1; then ok "guard-files: symlink para .env negado"
+    else ko "guard-files: symlink para .env negado" "$out"; fi
+  else
+    echo "  pulado guard-files: symlink (sistema sem symlink de verdade)"
+  fi
+
+  # verify-gate com 2000 arquivos nao rastreados: uma chamada de kit_kit_roots por pasta e
+  # source_globs lido uma vez. Nome com & e apostrofo chega intacto no {files}.
+  G="$(mktemp -d "$TMP_ALL/big.XXXXXX")"
+  mkdir -p "$G/.claude"
+  printf '%s\n' '{"commands":{"test":"printf \"%s\\n\" {files} > out.txt"},"source_globs":["src/**/*.ts"],"verify_on_stop":["test"],"coupled_changes":[{"when":["src/api/**"],"require":["docs/api.md"],"level":"block"}]}' >"$G/.claude/kit.json"
+  git_q init "$G"; git_q -C "$G" add -A; git_q -C "$G" commit -m init
+  for d in $(seq 1 40); do mkdir -p "$G/src/m$d"; for f in $(seq 1 50); do : >"$G/src/m$d/f$f.ts"; done; done
+  mkdir -p "$G/src/a&b"; : >"$G/src/a&b/x&y.ts"; : >"$G/src/it's.ts"
+  t0="$(date +%s)"
+  jq -cn --arg d "$(native_path "$G")" '{cwd: $d, session_id: "grande"}' | TMPDIR="$G" bash "$SCRIPTS/verify-gate.sh" >/dev/null 2>"$TMP_ALL/big.err"; code=$?
+  t1="$(date +%s)"
+  if [ "$code" = "0" ] && [ "$(wc -l <"$G/out.txt" | tr -d ' ')" = "2002" ] && grep -qxF 'src/a&b/x&y.ts' "$G/out.txt" && grep -qxF "src/it's.ts" "$G/out.txt"; then
+    ok "verify-gate: 2002 arquivos, & e apostrofo no {files} ($((t1 - t0))s)"
+  else ko "verify-gate: 2002 arquivos, & e apostrofo no {files}" "exit $code, $(wc -l <"$G/out.txt" 2>/dev/null) linhas, $(head -c 300 "$TMP_ALL/big.err")"; fi
+  [ "$((t1 - t0))" -le 30 ] && ok "verify-gate: 2002 arquivos em ate 30s ($((t1 - t0))s)" || ko "verify-gate: 2002 arquivos em ate 30s" "$((t1 - t0))s"
 fi
 
 echo "checagens estaticas"
@@ -770,6 +868,22 @@ if [ -z "$FILTER" ]; then
     jq empty "$f" >/dev/null 2>&1 || bad_json+="$f "
   done < <(find "$REPO" -name '*.json' -not -path '*/.git/*' -not -path '*/node_modules/*')
   if [ -z "$bad_json" ]; then ok "todos os JSON do repositorio sao validos"; else ko "JSON invalido" "$bad_json"; fi
+
+  # bash 3.2 (macOS): sem arrays associativos, mapfile/readarray, ${x,,}/${x^^}, local -n, [[ -v ]],
+  # |& nem ;&. Expansao de array precisa da forma ${a[@]+"${a[@]}"}: no bash < 4.4 com set -u,
+  # "${a[@]}" de array vazio aborta o script.
+  b4="$(grep -nE 'declare -A|local -A|typeset -A|mapfile|readarray|\$\{[A-Za-z_]+(,,|\^\^)|local -n|declare -n|\[\[ -v |[[:space:]]\|&[[:space:]]|[[:space:]];;?&([[:space:]]|$)' "$SCRIPTS"/*.sh | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+  if [ -z "$b4" ]; then ok "bash 3.2: nenhum recurso de bash 4 nos scripts"; else ko "bash 3.2: nenhum recurso de bash 4 nos scripts" "$b4"; fi
+  arr_bad="$(grep -nE '"\$\{[A-Za-z_]+\[@\]' "$SCRIPTS"/*.sh | grep -vE '\$\{([A-Za-z_]+)\[@\]\+"\$\{\1\[[@*]\]' || true)"
+  # Excecoes conferidas: arrays com tamanho testado na linha ou preenchidos com "$@" de chamada nao vazia.
+  arr_bad="$(printf '%s\n' "$arr_bad" | grep -vE '# array nao vazio|\[ "\$\{#[A-Za-z_]+\[@\]\}" -gt 0 \]|"\$\{(w|c|violations|FAILS|globs|when|require)\[@\]' | sed '/^$/d' || true)"
+  if [ -z "$arr_bad" ]; then ok "bash 3.2: expansao de array protegida contra set -u"; else ko "bash 3.2: expansao de array protegida contra set -u" "$arr_bad"; fi
+  # Exclamacao seguida de crase no meio do texto de uma skill vira injecao de comando e, sem
+  # permissao, impede a skill de carregar. So pode aparecer no inicio da linha (Estado atual).
+  inj="$(grep -rnE '.!`|`!`' "$REPO/plugins/kit/skills" --include='*.md' || true)"
+  if [ -z "$inj" ]; then ok "skills: injecao de comando so no inicio da linha"; else ko "skills: injecao de comando so no inicio da linha" "$inj"; fi
+  nort="$(grep -nE 'realpath|readlink -f|readlink -m' "$SCRIPTS"/*.sh | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+  if [ -z "$nort" ]; then ok "nenhum script depende de realpath ou readlink -f (ausentes no macOS antigo)"; else ko "nenhum script depende de realpath ou readlink -f" "$nort"; fi
 
   if command -v claude >/dev/null 2>&1; then
     if claude plugin validate "$REPO/plugins/kit" >"$TMP_ALL/validate" 2>&1; then ok "claude plugin validate plugins/kit"; else ko "claude plugin validate plugins/kit" "$(tail -n 20 "$TMP_ALL/validate")"; fi

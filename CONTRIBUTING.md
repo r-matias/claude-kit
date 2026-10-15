@@ -46,8 +46,12 @@ claude-kit/
 bash tests/run-tests.sh            # todos
 bash tests/run-tests.sh "rm -rf"   # filtra por nome do caso
 KIT_TEST_DEBUG=1 bash tests/run-tests.sh "<caso>"   # mostra input, stdout e stderr
+bash tests/run-tests.sh guard-bash.sh   # o filtro também casa o nome do script da fixture
 bash tests/run-tests.sh --awk mawk # roda com o mawk (awk do Debian/Ubuntu) no lugar do awk; pula se nao houver
+bash tests/run-tests.sh --bash /bin/bash   # no macOS, roda os scripts com o bash 3.2 do sistema
 ```
+
+Bash mínimo: 3.2. Sem arrays associativos, `mapfile`/`readarray`, `${x,,}`, `local -n` nem `[[ -v ]]`; expansão de array sempre como `${a[@]+"${a[@]}"}` (no bash < 4.4 com `set -u`, `"${a[@]}"` de array vazio aborta); nada de `realpath` nem `readlink -f`. As checagens estáticas da suíte acusam esses usos. Os guardas chamam `kit_guard_fail_closed`: qualquer saída inesperada vira exit 2.
 
 Os scripts usam só awk POSIX. Em especial, não escreva `X[k] = (k in X) ? ... : ...`: no mawk o lado esquerdo cria a chave antes do teste. Use `if (k in X) ...; else ...`.
 
@@ -58,6 +62,7 @@ bash tests/run-adopt-test.sh [--keep]   # aceite ao vivo do modo adotar
 bash tests/run-skills-live-test.sh      # skills carregam sem commits e fora de repo git; deny de skill/agent do kit
 bash tests/run-guards-live-test.sh      # guarda ausente bloqueia (onFailure), com controle e contraprova
 bash tests/run-plan-live-test.sh [--keep]   # /kit:plan decide lacuna técnica e pergunta lacuna de produto
+bash tests/run-permissions-live-test.sh [--keep]   # ${CLAUDE_PLUGIN_ROOT} e ${CLAUDE_SKILL_DIR} em allowed-tools; Agent(plugin:x) em deny
 bash tests/run-execute-live-test.sh [--keep]   # /kit:execute: paralelo disjunto, serialização, checkpoint com revisão
 ```
 

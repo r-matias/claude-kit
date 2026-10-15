@@ -9,6 +9,7 @@ allowed-tools: Bash(git rev-parse *) Bash(git ls-files *) Read(${CLAUDE_PLUGIN_R
 ## Estado atual
 !`git rev-parse --show-toplevel 2>/dev/null || echo "(não é repo git)"`
 !`git ls-files -co --exclude-standard -- .claude CLAUDE.md .mcp.json 2>/dev/null || echo "(não é repo git)"`
+!`git ls-files -oi --exclude-standard -- .claude CLAUDE.md .mcp.json 2>/dev/null || echo "(não é repo git)"`
 !`git ls-files "*.sln" "*.csproj" "*.fsproj" "package.json" "pyproject.toml" "requirements*.txt" "setup.py" "go.mod" "Cargo.toml" "pom.xml" "build.gradle" "build.gradle.kts" "Gemfile" "composer.json" "mix.exs" "deno.json" 2>/dev/null || echo "(não é repo git)"`
 
 ## Ordem
@@ -19,13 +20,13 @@ O init é a porta de entrada: o usuário não precisa conhecer `/kit:setup` nem 
 
 ## Modo
 - Se `.claude/kit.json` já existe: **modo reparo** (seção abaixo).
-- Se a lista de configuração acima trouxer qualquer coisa em `.claude/`, `CLAUDE.md` ou `.mcp.json`: **modo adotar**. Leia [adopt.md](adopt.md) agora e siga-o; ele envolve os passos abaixo.
+- Se qualquer das duas listas de configuração acima trouxer algo em `.claude/`, `CLAUDE.md` ou `.mcp.json`: **modo adotar**. A segunda lista os arquivos ignorados pelo `.gitignore`, como `.claude/settings.local.json`, que a primeira esconde. Leia [adopt.md](adopt.md) agora e siga-o; ele envolve os passos abaixo.
 - Caso contrário: repositório novo, siga só os passos abaixo.
 - **Workspace:** se a pasta não for repositório git, mas tiver repositórios filhos (diretórios com `.git` até 3 níveis, fora de `node_modules`, `target`, `dist`, `build`, `vendor`, `.venv`), rode os passos para cada filho (cada um com seu `.claude/kit.json`) e proponha também um `.claude/kit.json` na pasta-mãe só com o que cruza repositórios: `repos` (lista explícita, opcional; sem ela os hooks descobrem os filhos) e regras `coupled_changes`/`key_parity` com caminhos relativos à pasta-mãe (`app/src/**` → `web/docs/**`). A pasta-mãe também recebe o `.claude/settings.json` que habilita o plugin, porque a sessão roda nela.
 
 ## Modo reparo
 Projeto já configurado pelo kit. Não refaça a entrevista; confira e proponha só o que falta, pelas mesmas regras de escrita (arquivo de Claude Code existente nunca é alterado):
-- `.claude/kit.json`: JSON válido (`jq . .claude/kit.json`), chaves conhecidas (as de `templates/kit.example.json`), cada chave de `verify_on_stop` presente em `commands`, cada comando ainda existente no projeto (script do manifesto, target, ferramenta configurada).
+- `.claude/kit.json`: JSON válido (`jq . .claude/kit.json`), chaves conhecidas (as de `templates/kit.example.json`, inclusive as de `map`; `repos` e `map.primary` só fazem sentido no `kit.json` da pasta-mãe), cada chave de `verify_on_stop` presente em `commands`, cada comando ainda existente no projeto (script do manifesto, target, ferramenta configurada).
 - `.claude/settings.json`: plugin habilitado (`enabledPlugins` e `extraKnownMarketplaces` do kit) e um `Bash(<prefixo> *)` em `permissions.allow` por comando. O que faltar vai para `.claude/kit-settings.suggested.json` (passo 5), nunca para o settings.
 - `.gitignore` com `.claude/state/` (se faltar, sugestão no relatório).
 - Rode uma vez cada comando de `verify_on_stop` e relate o resultado.
@@ -37,16 +38,17 @@ Projeto já configurado pelo kit. Não refaça a entrevista; confira e proponha 
 - Arquivos do kit podem ser regravados: `.claude/kit.json`, `.claude/kit-settings.suggested.json`, `docs/claude-adoption.md` e os do `/kit:map` (`.claude/rules/map-*.md`, `.claude/rules/kit-codemap.md`, `docs/codemap.md`, com o cabeçalho `kit:map`).
 - `CLAUDE.md` e `.claude/settings.json` ausentes podem ser criados. Existentes: o que o kit acrescentaria vira sugestão (passos 5 e 7) e aparece no relatório final; o usuário aplica se quiser.
 - Sobreposição com o kit (hook, skill ou agent do projeto que faz o mesmo) só é relatada no fim, com a sugestão de qual desativar e como. Nunca edite nem desative a peça do projeto.
-- Nada é gravado antes da confirmação explícita do usuário. Mostre o arquivo novo (ou o diff, se for arquivo do kit que já existia) antes.
+- Nada é gravado antes da confirmação explícita do usuário. Mostre o arquivo novo (ou o diff, se for arquivo do kit que já existia) antes. Única exceção: os arquivos do `/kit:map` no passo 10 (`.claude/rules/map-*.md`, `.claude/rules/kit-codemap.md`, `docs/codemap.md`), que o mapa grava sem perguntar, como no `/kit:map` avulso: só arquivos do kit, com cabeçalho `kit:map`, reversíveis pelo git.
 - Comandos propostos precisam existir no projeto: confira scripts do `package.json`, targets do Makefile, ferramentas já configuradas (lint, formatter, test runner). Não proponha ferramenta que o projeto não usa.
 - Se `$ARGUMENTS` trouxer respostas pré-aprovadas (execução não interativa), use-as no lugar das perguntas correspondentes e não pergunte de novo. O que não foi respondido e depende de decisão fica de fora e é listado no resumo final. Nenhum argumento autoriza alterar arquivo existente.
 - Raiz do plugin, chamada de `<raiz-do-plugin>` em [adopt.md](adopt.md): `${CLAUDE_PLUGIN_ROOT}`
+- **Skills do kit lidas com Read** (setup no passo de máquina, map no passo 10): o arquivo vem cru, sem as substituições que o Claude Code faz quando a skill é chamada. Ao seguir o texto, troque `${CLAUDE_PLUGIN_ROOT}` e `${CLAUDE_SKILL_DIR}/../..` pela raiz do plugin acima, e `$ARGUMENTS` pelo argumento indicado aqui (vazio no setup e no mapa completo, `--update` no reparo). Os comandos da seção "Estado atual" daquela skill (as linhas que começam com exclamação) não rodam sozinhos: rode cada um com Bash antes de seguir.
 - Templates em `${CLAUDE_PLUGIN_ROOT}/templates/`. Tabela de stacks em [stacks.md](stacks.md).
 
 ## Passos
 1. **Detectar stacks.** Use a lista de manifestos acima (inclui subpastas de monorepo). Para cada manifesto, leia o suficiente para saber runner de teste, linter, formatter e se há migrações de banco. Leia também Makefile, `justfile`, `Taskfile.yml` e CI (`.github/workflows/*`) se existirem: o CI costuma ter os comandos reais.
 2. **Monorepo.** Se houver pacotes com stacks diferentes em subpastas, pergunte se prefere um `kit.json` na raiz (comandos com `--prefix`/`cd`) ou um por pacote (os hooks usam o mais próximo do arquivo editado).
-3. **Propor `.claude/kit.json`** a partir de `templates/kit.example.json` e de [stacks.md](stacks.md):
+3. **Propor `.claude/kit.json`** a partir de `templates/kit.example.json` e de [stacks.md](stacks.md). O exemplo é de uma pasta-mãe com dois repositórios: num repositório único, deixe `repos` e `map.primary` de fora:
    - `commands`: `build`, `test`, `test_related` (com `{files}` só se o runner aceitar caminhos), `lint`, `typecheck` e, se o projeto tiver um teste rápido do sistema rodando (script de smoke, health check), `smoke`. Chave sem comando real fica de fora.
    - `format`: um glob por formatter já configurado no projeto.
    - `protected_paths`: migrações, código gerado, lockfiles se fizer sentido. Quando houver o que fazer em vez de editar, use a forma objeto com mensagem: `{ "glob": "<gerado>/**", "message": "Gerado por <comando>. Edite em <fonte> e rode <comando>." }`; `"write": "deny"` para binários, bancos locais e artefatos que nem devem ser criados.
