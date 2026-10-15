@@ -133,7 +133,10 @@ cmd_status() {
     echo "falta settings: $SETTINGS não é JSON válido"
     missing=1
   else
-    lost="$(bash "$HERE/merge-json.sh" --check "$tmp" "$SETTINGS" 2>&1 >/dev/null | grep -E ': removido$|item removido' || true)"
+    # Falta o que o merge aditivo acrescentaria; deny que sombrearia allow/ask do usuario nao conta.
+    bash "$HERE/merge-json.sh" "$SETTINGS" "$tmp" >"$tmp.m" 2>/dev/null
+    lost="$(bash "$HERE/merge-json.sh" --check "$tmp.m" "$SETTINGS" 2>&1 >/dev/null | grep -E ': removido$|item removido' || true)"
+    rm -f "$tmp.m"
     n="$(printf '%s' "$lost" | grep -c . || true)"
     if [ "$n" -eq 0 ]; then
       echo "ok settings"

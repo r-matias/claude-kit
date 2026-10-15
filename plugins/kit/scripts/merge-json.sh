@@ -2,6 +2,10 @@
 # Merge aditivo de JSON usado pelo /kit:init e pelo /kit:setup nos settings. Nao e hook.
 # Aditivo: objetos recursivos, arrays por uniao sem duplicar, chave ausente entra, valor existente
 # sempre vence. A chave "hooks" da proposta e ignorada: hooks do settings nunca sao tocados.
+# Regra nova de permissions.deny que sombrearia uma regra de allow ou ask do mesmo arquivo (mesma
+# ferramenta e o padrao do deny casa com o padrao existente, ex.: deny Bash(curl *) cobre ask
+# Bash(curl *x.com*)) nao entra: deny vence allow/ask e o comportamento mudaria. Vira a linha
+# "conflito: deny <regra> não aplicado — sombrearia <regra existente> em <allow|ask>".
 #
 #   merge-json.sh <existente.json> <proposta.json>
 #     Imprime no stdout o merge. Cada conflito vai para o stderr. Existente ausente: imprime a proposta.
@@ -19,8 +23,9 @@
 #     proposta vence. So para a chave do proprio kit, quando o usuario escolheu o valor.
 #
 #   merge-json.sh --check <antes.json> <depois.json>
-#     Exit 0 se "depois" so acrescenta a "antes" (todo valor folha e todo item de array preservados).
-#     Exit 1 listando no stderr o que foi removido ou alterado.
+#     Exit 0 se "depois" so acrescenta a "antes" (todo valor folha e todo item de array preservados)
+#     sem deny novo sombreando regra de allow/ask de "antes". Exit 1 listando no stderr o que foi
+#     removido, alterado ou sombreado.
 set -uo pipefail
 command -v jq >/dev/null 2>&1 || { echo "merge-json: jq nao encontrado" >&2; exit 2; }
 
@@ -38,13 +43,30 @@ MERGE_DEF='
     elif ($x | type) == "array" and ($y | type) == "array" then empty
     elif $x == $y then empty
     else {path: $p, kept: $x, proposed: $y} end;
-  def dotted($p): $p | map(if test("^[A-Za-z_][A-Za-z0-9_]*$") then "." + . else ".\"" + . + "\"" end) | join("");'
+  def dotted($p): $p | map(if test("^[A-Za-z_][A-Za-z0-9_]*$") then "." + . else ".\"" + . + "\"" end) | join("");
+  def rparse:
+    if test("^[^()]+\\(.*\\)$") then {tool: sub("\\(.*$"; ""), pat: (sub("^[^(]*\\("; "") | sub("\\)$"; "") | sub(":\\*$"; " *"))}
+    else {tool: ., pat: null} end;
+  def glob_re: gsub("(?<c>[.+?^${}()|\\[\\]\\\\])"; "\\\(.c)") | gsub("\\*"; ".*") | "^" + . + "$";
+  def covers($d; $r): ($d | rparse) as $D | ($r | rparse) as $R |
+    $D.tool == $R.tool and ($D.pat == null or $D.pat == "*" or ($R.pat != null and ($R.pat | test($D.pat | glob_re))));
+  def perms($x): if ($x | type) == "object" and ($x.permissions | type) == "object" then $x.permissions else {} end;
+  def strs: if type == "array" then .[] | strings else empty end;
+  def shadowed($x; $d): [perms($x) as $p | ("allow", "ask") as $k | $p[$k] | strs | select(covers($d; .)) | {kind: $k, rule: .}] | .[0] // empty;
+  def new_denies($x; $y): perms($y).deny | strs | . as $d | select(any(perms($x).deny | strs; . == $d) | not);
+  def shadow_notes($x; $y): new_denies($x; $y) as $d | shadowed($x; $d) | "conflito: deny \($d) não aplicado — sombrearia \(.rule) em \(.kind)";
+  def drop_shadowing($x; $y):
+    if (perms($y).deny | type) == "array" then
+      $y | .permissions.deny |= map(. as $d | select((type != "string") or any(perms($x).deny | strs; . == $d) or ([shadowed($x; $d)] | length == 0)))
+      | if .permissions.deny == [] and (perms($x).deny | type) != "array" then del(.permissions.deny) else . end
+      | if .permissions == {} and (perms($x) == {}) and (($x | type) != "object" or ($x | has("permissions") | not)) then del(.permissions) else . end
+    else $y end;'
 
 if [ "${1:-}" = "--check" ]; then
   [ $# -eq 3 ] || { echo "uso: merge-json.sh --check <antes.json> <depois.json>" >&2; exit 2; }
   [ -f "$2" ] || exit 0
   [ -f "$3" ] || { echo "removido: arquivo inteiro" >&2; exit 1; }
-  lost="$(jq -rn --slurpfile a "$2" --slurpfile b "$3" '
+  lost="$(jq -rn --slurpfile a "$2" --slurpfile b "$3" "$MERGE_DEF"'
     def lost($x; $y; $p):
       if ($x | type) == "object" then
         if ($y | type) != "object" then "\($p): tipo mudou"
@@ -57,7 +79,8 @@ if [ "${1:-}" = "--check" ]; then
         end
       elif $x != $y then "\($p): \($x | tojson) -> \($y | tojson)"
       else empty end;
-    lost($a[0]; $b[0]; "$")' 2>&1 | tr -d '\r')" || { echo "merge-json: JSON invalido: $lost" >&2; exit 2; }
+    lost($a[0]; $b[0]; "$"),
+    (new_denies($a[0]; $b[0]) as $d | shadowed($a[0]; $d) | "$.permissions.deny[]: \($d | tojson) sombreia \(.rule | tojson) em \(.kind)")' 2>&1 | tr -d '\r')" || { echo "merge-json: JSON invalido: $lost" >&2; exit 2; }
   if [ -n "$lost" ]; then
     printf '%s\n' "$lost" >&2
     exit 1
@@ -90,7 +113,8 @@ proposal() { jq 'if type == "object" then del(.hooks) else . end' "$PROP" | tr -
 
 # Merge com as trocas de --prefer aplicadas, no stdout.
 merged() {
-  jq -n --slurpfile a "$EXIST" --argjson b "$(proposal)" --argjson pf "$PREFER" "$MERGE_DEF"'
+  jq -n --slurpfile a "$EXIST" --argjson b0 "$(proposal)" --argjson pf "$PREFER" "$MERGE_DEF"'
+    drop_shadowing($a[0]; $b0) as $b |
     reduce $pf[] as $p (merge($a[0]; $b);
       if ($b | getpath($p)) != null then setpath($p; $b | getpath($p)) else . end)' | tr -d '\r'
 }
@@ -98,9 +122,10 @@ merged() {
 # Linhas "conflito:" (valor mantido) e "troca:" (caminho de --prefer com valor diferente).
 notes() {
   jq -rn --slurpfile a "$EXIST" --argjson b "$(proposal)" --argjson pf "$PREFER" "$MERGE_DEF"'
-    conflicts($a[0]; $b; []) as $c |
+    (conflicts($a[0]; $b; []) as $c |
     if any($pf[]; . == $c.path) then "troca: \(dotted($c.path)) \($c.kept | tojson) -> \($c.proposed | tojson)"
-    else "conflito: \(dotted($c.path)) mantido \($c.kept | tojson) (o kit propunha \($c.proposed | tojson))" end' | tr -d '\r'
+    else "conflito: \(dotted($c.path)) mantido \($c.kept | tojson) (o kit propunha \($c.proposed | tojson))" end),
+    shadow_notes($a[0]; $b)' | tr -d '\r'
 }
 
 if [ "$MODE" = "merge" ]; then
@@ -122,6 +147,7 @@ if [ "$MODE" = "preview" ]; then
   out="$(merged)" || exit 2
   if jq -e --slurpfile a "$EXIST" '. == $a[0]' <<<"$out" >/dev/null 2>&1; then
     echo "sem mudança: $EXIST"
+    notes
     exit 0
   fi
   diff -u --label "$EXIST" --label "$EXIST (com o kit)" <(jq . "$EXIST" | tr -d '\r') <(printf '%s\n' "$out")
@@ -142,6 +168,7 @@ merged >"$TMPM" || exit 2
 jq empty "$TMPM" >/dev/null 2>&1 || { echo "merge-json: falha ao montar o merge; nada foi gravado" >&2; exit 2; }
 if jq -e --slurpfile a "$EXIST" '. == $a[0]' "$TMPM" >/dev/null 2>&1; then
   echo "sem mudança: $EXIST"
+  notes
   exit 0
 fi
 # Fora de --prefer, o resultado so pode acrescentar.

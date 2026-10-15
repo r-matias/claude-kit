@@ -44,7 +44,7 @@ Na configuração do projeto:
 
 - **Repositório sem configuração do Claude Code:** o init detecta o stack (manifestos, Makefile, CI) e cria:
   - `.claude/kit.json` com os comandos reais do projeto;
-  - `.claude/settings.json`, que liga o plugin e o LSP, libera os comandos do `kit.json`, pergunta antes de instalar dependência e nega `curl`/`wget` (o registry do stack fica liberado no sandbox). Se o projeto já usa `curl` ou `wget` (skills, agents, commands, hooks, scripts do `package.json`, `Makefile`, `justfile`), o deny fica de fora e o relatório diz quantos arquivos usam;
+  - `.claude/settings.json`, que liga o plugin e o LSP, libera os comandos do `kit.json`, pergunta antes de instalar dependência e nega `curl`/`wget` (o registry do stack fica liberado no sandbox). Se o projeto já usa `curl` ou `wget` (skills, agents, commands, hooks, scripts do `package.json`, `Makefile`, `justfile`), o deny fica de fora e o relatório diz quantos arquivos usam. Regra sua em `allow` ou `ask` que um deny do kit cobriria (ex.: `ask` de `Bash(curl *meusite.com*)`) também deixa o deny de fora, porque deny vence e você perderia a chance de autorizar;
   - um `CLAUDE.md` curto;
   - as linhas `.claude/state/` e `.claude/*.bak-kit-*` no `.gitignore`.
 - **Repositório que já tem `.claude/`, `CLAUDE.md` ou `.mcp.json` (modo adotar):** o init faz o inventário de hooks, skills, agents e rules, aponta sobreposições com o kit, soma ao `.claude/settings.json` o que falta e grava o relatório em `docs/claude-adoption.md`.

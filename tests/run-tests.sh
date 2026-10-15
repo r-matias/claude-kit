@@ -555,7 +555,7 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   if [ -z "$risk_miss" ]; then ok "inventory: sobreposicoes, aviso mudo, falha aberta e riscos de configuracao"; else ko "inventory: sobreposicoes, aviso mudo, falha aberta e riscos de configuracao" "$risk_miss"; fi
 
   # curl/wget usados pelo projeto: o init deixa o deny de fora.
-  out="$(bash "$SCRIPTS/inventory.sh" --net "$U/adopt" 2>&1)"
+  out="$(HOME="$U/home" bash "$SCRIPTS/inventory.sh" --net "$U/adopt" 2>&1)"
   if [ "$out" = ".claude/skills/status-api/SKILL.md" ] && grep -qF -- '- usados por 1 arquivos' "$U/inv" && grep -qF -- '`.claude/skills/status-api/SKILL.md`' "$U/inv"; then
     ok "inventory --net: skill da fixture de adoção que usa curl"
   else ko "inventory --net: skill da fixture de adoção que usa curl" "$out"; fi
@@ -571,12 +571,57 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   printf '%s\n' '---' 'name: leitor' '---' 'Leia os arquivos.' >"$N/.claude/agents/leitor.md"
   printf '%s' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/scripts-hook.sh\""}]}],"PostToolUse":[{"hooks":[{"type":"command","command":"curl -s localhost:9/notify"},{"type":"command","command":"bash .claude/hooks/quieto.sh"}]}]}}' >"$N/.claude/settings.json"
   git_q init "$N"
-  out="$(bash "$SCRIPTS/inventory.sh" --net "$N" 2>&1 | LC_ALL=C sort | paste -sd' ' -)"
+  out="$(HOME="$U/home" bash "$SCRIPTS/inventory.sh" --net "$N" 2>&1 | LC_ALL=C sort | paste -sd' ' -)"
   if [ "$out" = ".claude/commands/baixa.md .claude/settings.json Makefile package.json scripts-hook.sh" ]; then
     ok "inventory --net: commands, comando e script de hook, package.json scripts e Makefile; sem falso positivo"
   else ko "inventory --net: commands, comando e script de hook, package.json scripts e Makefile; sem falso positivo" "$out"; fi
-  out="$(bash "$SCRIPTS/inventory.sh" --net "$HERE/sample" 2>&1)"
+  out="$(HOME="$U/home" bash "$SCRIPTS/inventory.sh" --net "$HERE/sample" 2>&1)"
   if [ -z "$out" ]; then ok "inventory --net: projeto sem curl/wget não lista nada (o deny entra)"; else ko "inventory --net: projeto sem curl/wget não lista nada (o deny entra)" "$out"; fi
+  NR="$U/netrules"
+  mkdir -p "$NR/.claude" "$U/home/.claude"
+  printf '%s' '{"permissions":{"ask":["Bash(curl *rubinot.com.br*)"]}}' >"$NR/.claude/settings.json"
+  printf '%s' '{"permissions":{"allow":["Bash(wget -q *)"]}}' >"$NR/.claude/settings.local.json"
+  printf '%s' '{"permissions":{"allow":["Bash(curl https://api.x/*)"]}}' >"$U/home/.claude/settings.json"
+  out="$(HOME="$U/home" bash "$SCRIPTS/inventory.sh" --net "$NR" 2>&1 | paste -sd' ' -)"
+  if [ "$out" = ".claude/settings.json .claude/settings.local.json ~/.claude/settings.json" ]; then
+    ok "inventory --net: regras de allow/ask com curl/wget (projeto, local e usuário) contam como uso"
+  else ko "inventory --net: regras de allow/ask com curl/wget (projeto, local e usuário) contam como uso" "$out"; fi
+  rm -f "$U/home/.claude/settings.json"
+
+  # Merge aditivo nao sombreia: deny novo que cobre regra de allow/ask do arquivo nao entra.
+  SH="$U/shadow"
+  mkdir -p "$SH"
+  printf '%s' '{"permissions":{"deny":["Bash(curl *)","Bash(wget *)"]}}' >"$SH/prop.json"
+  # Uso: shadow_case <rotulo> <settings> <deny esperado (jq)> <conflitos esperados, separados por |>
+  shadow_case() {
+    local f="$SH/s.json" out want miss=""
+    printf '%s' "$2" >"$f"
+    rm -f "$f".bak-kit-*
+    out="$(bash "$M" --apply "$f" "$SH/prop.json" 2>&1)"
+    if [ -n "$4" ]; then
+      while IFS= read -r want; do grep -qxF -- "$want" <<<"$out" || miss+="[$want] "; done <<<"$(tr '|' '\n' <<<"$4")"
+    elif grep -qF 'não aplicado' <<<"$out"; then miss="conflito inesperado"; fi
+    if [ -z "$miss" ] && jq -e "$3" "$f" >/dev/null 2>&1 && bash "$M" --check "$SH/s.json".bak-kit-* "$f" 2>/dev/null; then ok "$1"
+    else ko "$1" "${miss:-arquivo: $(jq -c . "$f")}; saída: $out"; fi
+  }
+  shadow_case "merge-json: deny Bash(curl *) não entra sobre ask Bash(curl *x.com*); wget entra" \
+    '{"permissions":{"ask":["Bash(curl *x.com*)"]}}' '.permissions.deny == ["Bash(wget *)"] and .permissions.ask == ["Bash(curl *x.com*)"]' \
+    'conflito: deny Bash(curl *) não aplicado — sombrearia Bash(curl *x.com*) em ask'
+  shadow_case "merge-json: deny não entra sobre allow (Bash(curl:*) e Bash(wget -q *))" \
+    '{"permissions":{"allow":["Bash(curl:*)","Bash(wget -q *)"]}}' '(.permissions | has("deny") | not) and (.permissions.allow | length) == 2' \
+    'conflito: deny Bash(curl *) não aplicado — sombrearia Bash(curl:*) em allow|conflito: deny Bash(wget *) não aplicado — sombrearia Bash(wget -q *) em allow'
+  shadow_case "merge-json: settings sem curl/wget recebe os dois deny" \
+    '{"permissions":{"ask":["Bash(git push *)"],"allow":["Read"]}}' '.permissions.deny == ["Bash(curl *)","Bash(wget *)"]' ''
+  shadow_case "merge-json: deny já presente não vira conflito" \
+    '{"permissions":{"ask":["Bash(curl *x.com*)"],"deny":["Bash(curl *)"]}}' '.permissions.deny == ["Bash(curl *)","Bash(wget *)"]' ''
+  out="$(printf '%s' '{"permissions":{"ask":["Bash(curl *x.com*)"]}}' >"$SH/s.json"; bash "$M" --preview "$SH/s.json" "$SH/prop.json" 2>&1)"
+  if grep -qxF 'conflito: deny Bash(curl *) não aplicado — sombrearia Bash(curl *x.com*) em ask' <<<"$out" && ! grep -q '^+.*Bash(curl \*)' <<<"$out" && grep -q '^+.*Bash(wget \*)' <<<"$out"; then
+    ok "merge-json --preview: diff sem o deny sombreado e linha de não aplicado"
+  else ko "merge-json --preview: diff sem o deny sombreado e linha de não aplicado" "$out"; fi
+  printf '%s' '{"permissions":{"ask":["Bash(curl *x.com*)"],"deny":["Bash(curl *)"]}}' >"$SH/after.json"
+  if ! bash "$M" --check "$SH/s.json" "$SH/after.json" 2>"$SH/err" && grep -qF '"Bash(curl *)" sombreia "Bash(curl *x.com*)" em ask' "$SH/err"; then
+    ok "merge-json --check: deny novo que sombreia ask é mudança de comportamento"
+  else ko "merge-json --check: deny novo que sombreia ask é mudança de comportamento" "$(cat "$SH/err")"; fi
 fi
 
 echo "wave-base"
@@ -830,6 +875,18 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   if [ "$code" = "0" ] && grep -qF 'ok settings' <<<"$out"; then
     ok "setup status: depois do apply o settings existente está pronto"
   else ko "setup status: depois do apply o settings existente está pronto" "exit $code, $out"; fi
+  # Settings de usuario com allow coberto por um deny do template: o deny nao entra e o status fica pronto.
+  C3="$TMP_ALL/claude-home3"
+  mkdir -p "$C3"
+  printf '%s' '{"permissions":{"allow":["Bash(git reset --hard origin/main)"]}}' >"$C3/settings.json"
+  run_setup "$C3" "$LINUX_BIN:$NOCLAUDE_PATH" propose todos >/dev/null 2>&1
+  run_setup "$C3" "$LINUX_BIN:$NOCLAUDE_PATH" apply >"$TMP_ALL/su.out" 2>"$TMP_ALL/su.err"
+  out="$(run_setup "$C3" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
+  if grep -qxF 'conflito: deny Bash(git reset --hard *) não aplicado — sombrearia Bash(git reset --hard origin/main) em allow' "$TMP_ALL/su.out" &&
+    jq -e '(.permissions.deny | index("Bash(git reset --hard *)") == null) and (.permissions.deny | index("Bash(git push --force *)") != null)' "$C3/settings.json" >/dev/null 2>&1 &&
+    grep -qF 'ok settings' <<<"$out"; then
+    ok "setup apply: deny do template que sombrearia allow do usuário não entra; status pronto"
+  else ko "setup apply: deny do template que sombrearia allow do usuário não entra; status pronto" "$(cat "$TMP_ALL/su.out" "$TMP_ALL/su.err" | head -c 500) | $out"; fi
   run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" propose todos >"$TMP_ALL/su.out" 2>&1
   if grep -qF 'sem mudança' "$TMP_ALL/su.out"; then ok "setup propose: settings completo não muda"; else ko "setup propose: settings completo não muda" "$(cat "$TMP_ALL/su.out")"; fi
 

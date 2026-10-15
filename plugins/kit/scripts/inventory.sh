@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Inventario da configuracao Claude Code de um repositorio, usado pelo modo adotar do /kit:init. Nao e hook.
 # Uso: inventory.sh [diretorio-do-projeto]
-#      inventory.sh --net [diretorio-do-projeto]   so os arquivos do projeto que usam curl/wget, um por linha
+#      inventory.sh --net [diretorio-do-projeto]   so os arquivos que usam curl/wget, um por linha (inclui
+#        regras de allow/ask do settings do projeto, local e do usuario)
 set -u
 command -v jq >/dev/null 2>&1 || { echo "inventory: jq nao encontrado" >&2; exit 2; }
 
@@ -21,7 +22,8 @@ hook_script() {
 }
 
 # Arquivos do projeto que usam curl ou wget: skills, agents, commands e hooks do .claude, comandos
-# de hook nos settings e os scripts que eles chamam, scripts do package.json, Makefile e justfile.
+# de hook nos settings e os scripts que eles chamam, regras de allow/ask dos settings, scripts do
+# package.json, Makefile e justfile.
 net_users() {
   local f s cmd
   {
@@ -35,6 +37,13 @@ net_users() {
         f="$(hook_script "$cmd")"
         [ -n "$f" ] && grep -Eq -- "$NET_RE" "$f" 2>/dev/null && printf '%s\n' "$f"
       done < <(jq -r '(.hooks // {})[][]?.hooks[]? | "\(.command // "")\(if .args then " " + (.args | join(" ")) else "" end)"' "$s" 2>/dev/null | tr -d '\r')
+    done
+    # Regra de allow/ask com curl/wget: um deny de curl/wget a sombrearia (deny vence em qualquer escopo).
+    for s in .claude/settings.json .claude/settings.local.json "$HOME/.claude/settings.json"; do
+      [ -f "$s" ] || continue
+      if jq -r '(.permissions // {}) | [.allow, .ask] | map(. // []) | add | .[] | strings' "$s" 2>/dev/null | tr -d '\r' | grep -Eq -- "$NET_RE"; then
+        case "$s" in "$HOME"/*) printf '%s\n' "~/${s#"$HOME"/}" ;; *) printf '%s\n' "$s" ;; esac
+      fi
     done
     {
       git ls-files -co --exclude-standard -- package.json '*/package.json' Makefile '*/Makefile' justfile '*/justfile' 2>/dev/null

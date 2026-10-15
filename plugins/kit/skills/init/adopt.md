@@ -101,7 +101,7 @@ O kit não alterou `CLAUDE.md`, skills, agents, rules, hooks nem `settings.local
 | sobreposição | skill fix | a do projeto tem disable-model-invocation: true e a do kit não; o Claude escolheria kit:fix sozinho | `Skill(kit:fix)` em permissions.deny (gravado no .claude/settings.json) |
 
 ## Acrescentado ao settings
-- `.claude/settings.json`: <resumo do que somou> (diff abaixo); conflitos mantidos: <chave: valor do usuário>
+- `.claude/settings.json`: <resumo do que somou> (diff abaixo); conflitos mantidos: <chave: valor do usuário>; não aplicado: <deny que sombrearia uma regra de allow/ask>
 
 ## Promover ao kit
 - <peça>: <o que faria no kit e por que é genérica>
