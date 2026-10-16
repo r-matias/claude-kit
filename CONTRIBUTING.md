@@ -15,7 +15,7 @@ claude-kit/
 │   ├── skills/map/output.md             # formato das rules e do codemap gerados
 │   ├── agents/{investigator,code-reviewer,plan-reviewer,security-reviewer,test-writer,mapper,map-verifier}.md
 │   ├── hooks/hooks.json
-│   ├── scripts/{lib.sh,guard-bash.sh,guard-files.sh,format.sh,advise.sh,verify-gate.sh,session-context.sh,pre-compact.sh}
+│   ├── scripts/{lib.sh,guard-bash.sh,guard-files.sh,format.sh,advise.sh,verify-gate.sh,session-context.sh,pre-compact.sh,notify.sh}
 │   ├── scripts/{inventory.sh,merge-json.sh}   # apoio do /kit:init, não são hooks
 │   ├── scripts/setup.sh                 # apoio do /kit:setup e do /kit:init: dependências, plataforma, grupos de permissão, guards, LSP e planos parados
 │   ├── scripts/map-partition.sh         # apoio do /kit:map e do /kit:init: unidades de mapeamento e estado do codemap

@@ -41,6 +41,8 @@ Detalhe completo de configuração e comportamento. Para instalar e usar, comece
   ],
   "plan_dirs": [".claude/plans"],
   "inject_plan_on_prompt": false,
+  "notify": { "waiting": true, "done": true, "done_min_seconds": 60, "sound": true,
+    "push": { "ntfy_topic_env": "KIT_NTFY_TOPIC", "discord_webhook_env": "KIT_DISCORD_WEBHOOK" } },
   "spec": { "max_scope_items": 8, "max_files": 25 },
   "plan": { "max_tasks": 15, "max_waves": 6 },
   "map": { "stale_after_commits": 50, "unit_max_files": 150, "unit_max_loc": 20000, "max_agents": 30 }
@@ -107,6 +109,21 @@ A descoberta tem cache por sessão em `$TMPDIR`, invalidado quando o `kit.json` 
 - **Busca do `kit.json`**: sobe do arquivo até o primeiro `.git`; se esse `.git` é de um filho da pasta da sessão, continua subindo até a pasta da sessão, nunca acima dela.
 - **`session-context`**: branch e alterados de cada repositório, até 15 linhas por repositório.
 - Repositório único: comportamento idêntico ao da v0.1.0.
+
+### `notify`
+
+Ausente ou `false`, nada é notificado (`false` registra que o `/kit:init` perguntou e o usuário recusou). Dentro do objeto, chave ausente é desligada.
+
+| Chave | Padrão | Efeito |
+| --- | --- | --- |
+| `waiting` | `false` | Hook Notification (`permission_prompt`, `idle_prompt`, `elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input`): `⏳ <projeto>: <mensagem do evento>` |
+| `done` | `false` | Fim de turno liberado pelo `verify-gate` (gate passou ou não havia o que verificar): `✅ <projeto> (<branch>): concluído em <duração>`. Nunca quando o gate bloqueia, no `stop_hook_active` nem no `SubagentStop` |
+| `done_min_seconds` | 60 | Turno mais curto não notifica. O início vem de `.claude/state/turn-start`, gravado no UserPromptSubmit (mtime = início, conteúdo = `session_id`; de outra sessão, não notifica) |
+| `sound` | `false` | Som do sistema: toast com som no Windows, `soundName` no macOS, `canberra-gtk-play`/`paplay` no Linux |
+| `push.ntfy_topic_env` | `KIT_NTFY_TOPIC` | Nome da variável de ambiente com o tópico do ntfy (ou a URL `https://servidor/topico`). Só com `push` presente e a variável definida |
+| `push.discord_webhook_env` | `KIT_DISCORD_WEBHOOK` | Nome da variável com a URL `https://` do webhook do Discord, enviada sem menções |
+
+O valor do tópico e do webhook nunca fica no `kit.json`, só o nome da variável.
 
 ### `spec` e `plan`
 
@@ -180,9 +197,10 @@ O `/kit:execute` segue a mesma regra para decisões que surgem na execução e t
 | `guard-files.sh` | PreToolUse `Edit\|Write\|MultiEdit\|NotebookEdit` | Normaliza o caminho antes de casar (relativo ao `cwd` do hook, `..` mesmo por pasta inexistente, `//` colapsado) e, se for symlink, checa também o alvo final. Em Windows e macOS a comparação ignora maiúsculas (`.ENV`, `x.KEY`, `Secrets/`); no Windows, espaço ou ponto no fim do nome e fluxo alternativo (`.env::$DATA`) contam como o próprio arquivo. Nega escrita em `.env` e `.env.*` (exceto nome terminado em `.example`, `.sample`, `.template` ou `.dist`, como `.env.test.example`), `*.pem`, `*.key`, `secrets/`, sem exceção. Nega também `guards.deny_write` do `kit.json` (arquivo novo inclusive), e `guards.allow_write` libera o que casaria `protected_paths` (glob largo ignorado, com aviso na mensagem). Globs de `protected_paths` com `./`, `/` inicial ou `\` são normalizados. Erro inesperado no script bloqueia (exit 2). Nega Edit, e Write sobre arquivo existente, em `protected_paths` do `kit.json` mais próximo e dos `kit.json` acima dele até a pasta da sessão; Write de arquivo novo só é negado em item com `"write": "deny"`. Item com `message` usa esse texto na negação. A negação por `protected_paths` diz como liberar quando o arquivo não é segredo (`guards.allow_write`). |
 | `format.sh` | PostToolUse `Edit\|Write` | Roda o formatter do primeiro glob de `format` que casa. Falha: exit 2 com as últimas 30 linhas. |
 | `advise.sh` | PostToolUse `Edit\|Write` | Regras `coupled_changes` com `level: "warn"` cujo `when` casa com o arquivo editado viram `additionalContext` (JSON, porque stdout puro de PostToolUse não chega ao Claude). Uma vez por arquivo por sessão. Nunca bloqueia. |
-| `verify-gate.sh` | Stop | Em cada repositório da sessão, se algum arquivo alterado (diff contra HEAD + não rastreados) casa `source_globs`, roda `verify_on_stop` em ordem até a primeira falha (últimas 60 linhas). Depois avalia `key_parity` e `coupled_changes` com `level: "block"`. Todas as falhas saem numa única mensagem com exit 2. Respeita `stop_hook_active`. Comandos já verificados com sucesso no mesmo estado não rodam de novo (marca em `.git/kit-verify-*`). |
+| `verify-gate.sh` | Stop | Em cada repositório da sessão, se algum arquivo alterado (diff contra HEAD + não rastreados) casa `source_globs`, roda `verify_on_stop` em ordem até a primeira falha (últimas 60 linhas). Depois avalia `key_parity` e `coupled_changes` com `level: "block"`. Todas as falhas saem numa única mensagem com exit 2. Respeita `stop_hook_active`. Comandos já verificados com sucesso no mesmo estado não rodam de novo (marca em `.git/kit-verify-*`). Turno liberado com `notify.done`: notificação de concluído em segundo plano (`notify.sh --send`), sem atrasar o fim do turno. |
 | `session-context.sh` | SessionStart (`startup\|resume\|compact\|fork`) | Injeta branch e `git status --short` de cada repositório, os planos ativos e as tarefas pendentes do mais recente. Na origem `compact`, inclui o snapshot do `pre-compact` se ele tiver menos de 2 horas. Sem `jq`, devolve JSON com a mensagem de instalação em `systemMessage` e `additionalContext`. Sem `git` ou com Claude Code abaixo de 2.1.295, avisa com o comando de correção e "rode /kit:setup". Com `docs/codemap.md` gerado pelo `/kit:map` (na raiz ou num repositório) mais de `map.stale_after_commits` commits atrás do commit do cabeçalho, sugere `/kit:map --update`; commit fora do histórico sugere `/kit:map`. |
-| `session-context.sh --plan-only` | UserPromptSubmit | Só a linha de planos ativos, e só se `inject_plan_on_prompt` for `true`; caso contrário não imprime nada. |
+| `session-context.sh --plan-only` | UserPromptSubmit | Só a linha de planos ativos, e só se `inject_plan_on_prompt` for `true`; caso contrário não imprime nada. Com `notify.done`, grava `.claude/state/turn-start` (início do turno). |
+| `notify.sh` | Notification (async) | Com `notify.waiting`, `⏳ <projeto>: <mensagem>`. Toast do Windows pelo `powershell.exe` (API `Windows.UI.Notifications`, sem módulo externo; no WSL pela interop, com as variáveis no `WSLENV`), `osascript` (JXA) no macOS, `notify-send` no Linux; sem nenhum, o sino do terminal. Push por ntfy (JSON) e webhook do Discord com `curl`, se as variáveis existirem. Título e mensagem chegam ao powershell/osascript por variável de ambiente, nunca no texto do comando. Timeout curto, falha calada, sempre exit 0. `--send` é a entrega usada pelo `verify-gate`; `KIT_NOTIFY_DRY_RUN=1` imprime o que rodaria. |
 | `pre-compact.sh` | PreCompact | Grava `<raiz>/.claude/state/kit-snapshot.md` com data, branch, modificados e staged (até 20 cada) de cada repositório e os planos ativos. Sempre exit 0: nunca bloqueia a compactação. O `/kit:init` acrescenta `.claude/state/` ao `.gitignore`. |
 
 Sem `jq`, os guardas bloqueiam com `kit: jq não encontrado — instale com <comando da plataforma> e reabra o Claude Code` (exit 2). Para não virar beco sem saída, o `guard-bash` lê o JSON cru e libera só o comando exato de instalação do `jq` da plataforma (`winget install jqlang.jq`; `brew install jq`; `sudo apt install jq`, `sudo apt-get install jq`, `sudo dnf install jq` ou `sudo pacman -S jq`), sem nada antes ou depois. O `session-context` devolve a mesma mensagem em `systemMessage` (o usuário vê ao abrir a sessão) e em `additionalContext` (o Claude recebe), num JSON montado sem `jq`. Os demais hooks saem com 0 sem fazer nada.

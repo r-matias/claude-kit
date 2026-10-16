@@ -248,7 +248,7 @@ resolve_token() {
 run_case() {
   local script="$1" case_json="$2" ws base input out err code cwd file sid
   local name skip c_cwd c_command c_tool has_raw c_raw c_file c_stop c_source c_args c_fake repeat expect exp_exit \
-    l_stderr l_stderr_not l_stderr_order l_absent l_exists l_contains l_stdout l_stdout_not stdout_empty has_out_expect reason json_check
+    c_message c_env l_stderr l_stderr_not l_stderr_order l_absent l_exists l_contains l_stdout l_stdout_not stdout_empty has_out_expect reason json_check
   # Uma chamada de jq le todos os campos do caso; listas viram linhas.
   eval "$(jq -r --arg p "$TEST_PLATFORM" '
     def lines(f): [f | if type == "array" then .[] else . end | tostring] | join("\n");
@@ -264,6 +264,8 @@ run_case() {
     @sh "c_source=\(.source // "startup")",
     @sh "c_args=\(lines((.args // [])[]))",
     @sh "c_fake=\(.fake_claude // "")",
+    @sh "c_message=\(.message // "")",
+    @sh "c_env=\([(.env // {}) | to_entries[] | .key + "=" + (.value | tostring)] | join("\n"))",
     @sh "repeat=\(.repeat_empty // false)",
     @sh "expect=\(.expect // "")",
     @sh "exp_exit=\(if has("exit") then .exit else 0 end)",
@@ -319,21 +321,26 @@ run_case() {
     session-context.sh)
       input="$(jq -cn --arg d "$cwd" --arg s "$sid" --arg o "$c_source" \
         '{hook_event_name: "SessionStart", session_id: $s, source: $o, cwd: $d}')" ;;
+    notify.sh)
+      input="$(jq -cn --arg d "$cwd" --arg s "$sid" --arg m "$c_message" \
+        '{hook_event_name: "Notification", session_id: $s, message: $m, title: "Claude Code", notification_type: "permission_prompt", cwd: $d}')" ;;
     pre-compact.sh)
       input="$(jq -cn --arg d "$cwd" --arg s "$sid" '{hook_event_name: "PreCompact", session_id: $s, trigger: "auto", cwd: $d}')" ;;
   esac
 
-  local -a args=()
+  local -a args=() envs=()
   while IFS= read -r s; do [ -n "$s" ] && args+=("$s"); done <<<"$c_args"
+  # env: variaveis extras do caso; __BASE__ vira a pasta do caso.
+  while IFS= read -r s; do [ -n "$s" ] && envs+=("${s//__BASE__/$base}"); done <<<"$c_env"
 
   out="$ws/stdout"
   err="$ws/stderr"
   local cpath
   cpath="$(case_path "$ws" "$c_fake")"
-  (cd "$ws" && PATH="$cpath" TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR "$TBASH" "$SCRIPTS/$script" ${args[@]+"${args[@]}"} <<<"$input" >"$out" 2>"$err")
+  (cd "$ws" && PATH="$cpath" TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR -u KIT_NTFY_TOPIC -u KIT_DISCORD_WEBHOOK ${envs[@]+"${envs[@]}"} "$TBASH" "$SCRIPTS/$script" ${args[@]+"${args[@]}"} <<<"$input" >"$out" 2>"$err")
   code=$?
   if [ "$repeat" = "true" ]; then
-    (cd "$ws" && PATH="$cpath" TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR "$TBASH" "$SCRIPTS/$script" ${args[@]+"${args[@]}"} <<<"$input" >"$ws/stdout2" 2>/dev/null)
+    (cd "$ws" && PATH="$cpath" TMPDIR="$ws/tmp" env -u CLAUDE_PROJECT_DIR ${envs[@]+"${envs[@]}"} "$TBASH" "$SCRIPTS/$script" ${args[@]+"${args[@]}"} <<<"$input" >"$ws/stdout2" 2>/dev/null)
   fi
 
   local why=""
@@ -443,7 +450,7 @@ if [ -z "$FILTER" ] || [[ "sem jq" == *"$FILTER"* ]]; then
       nojq_guard "guard-bash.sh sem jq bloqueia instalação com algo junto: $c" guard-bash.sh "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$c\"}}" 2
     done
     nojq_guard "guard-bash.sh sem jq bloqueia a instalação citada só na descrição" guard-bash.sh "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"rm -rf /\",\"description\":\"\\\"command\\\":\\\"$JQ_INSTALL\\\"\"}}" 2
-    for s in format.sh verify-gate.sh advise.sh pre-compact.sh; do
+    for s in format.sh verify-gate.sh advise.sh pre-compact.sh notify.sh; do
       out="$(printf '%s' '{"cwd":"."}' | PATH="$NOJQ_PATH" "$BASH_BIN" "$SCRIPTS/$s" 2>"$TMP_ALL/nojq.err")"
       code=$?
       if [ "$code" = "0" ] && [ -z "$out" ] && [ ! -s "$TMP_ALL/nojq.err" ]; then
@@ -1157,6 +1164,108 @@ exit 0
 fi
 }
 
+g_notify() {
+echo "notify e alertas existentes"
+if [ -z "$FILTER" ] || [[ "notify alerts" == *"$FILTER"* ]]; then
+  NT="$(mktemp -d "$TMP_ALL/notify.XXXXXX")"
+  mkdir -p "$NT/bin" "$NT/cwd"
+  # Binarios falsos: gravam argv (um por linha) e as variaveis de titulo e mensagem; curl grava o corpo.
+  for b in powershell.exe osascript notify-send curl canberra-gtk-play; do
+    cat >"$NT/bin/$b" <<EOF
+#!/usr/bin/env bash
+d="$NT/log-\${0##*/}"
+mkdir -p "\$d"
+printf '%s\n' "\$@" >"\$d/argv"
+printf '%s' "\${KIT_NOTIFY_MSG-}" >"\$d/msg"
+[ "\${0##*/}" != curl ] || cat >"\$d/body"
+exit "\${FAKE_EXIT:-0}"
+EOF
+    chmod +x "$NT/bin/$b"
+  done
+  EVIL="a'b\"c
+\$(touch PWN1) \`touch PWN2\`; touch PWN3 & %TEMP% \$env:USERNAME"
+  nt_send() {
+    (cd "$NT/cwd" && env -u KIT_NOTIFY_DRY_RUN PATH="$NT/bin:$PATH" KIT_NOTIFY_PLATFORM="$1" KIT_NOTIFY_TITLE="Claude Code" KIT_NOTIFY_MSG="$EVIL" \
+      KIT_NOTIFY_SOUND=true KIT_NOTIFY_NTFY_ENV="${3:-NT_TOPIC}" NT_TOPIC=kit-teste KIT_NOTIFY_DISCORD_ENV="${4:-}" NT_HOOK=https://discord.test/x \
+      FAKE_EXIT="${2:-0}" "$TBASH" "$SCRIPTS/notify.sh" --send >"$NT/out" 2>"$NT/err")
+  }
+  for plat in windows:powershell.exe wsl:powershell.exe macos:osascript linux:notify-send; do
+    b="${plat#*:}"; plat="${plat%%:*}"
+    rm -rf "$NT"/log-*
+    nt_send "$plat"; code=$?
+    why=""
+    [ "$code" = "0" ] || why+="exit $code; "
+    [ ! -s "$NT/out" ] || why+="stdout '$(head -c 100 "$NT/out")'; "
+    ! ls "$NT/cwd" | grep -q PWN || why+="comando da mensagem executado; "
+    [ -f "$NT/log-$b/argv" ] || why+="$b não chamado; "
+    if [ "$b" = "notify-send" ]; then
+      [ "$(tail -n +5 "$NT/log-$b/argv")" = "$EVIL" ] || why+="mensagem não chegou intacta como argumento; "
+    else
+      ! grep -qF 'PWN' "$NT/log-$b/argv" 2>/dev/null || why+="mensagem dentro do comando; "
+      [ "$(cat "$NT/log-$b/msg" 2>/dev/null)" = "$EVIL" ] || why+="KIT_NOTIFY_MSG diferente; "
+    fi
+    jq -e --arg m "$EVIL" '.message == $m' "$NT/log-curl/body" >/dev/null 2>&1 || why+="corpo do push sem a mensagem intacta; "
+    if [ -z "$why" ]; then ok "notify --send ($plat): aspas, quebra de linha e \$() não executam e chegam intactos"
+    else ko "notify --send ($plat): aspas, quebra de linha e \$() não executam e chegam intactos" "$why$(head -c 200 "$NT/err")"; fi
+  done
+  rm -rf "$NT"/log-*
+  nt_send linux 0 - NT_HOOK
+  if jq -e --arg m "$EVIL" '(.content | endswith($m)) and .allowed_mentions.parse == []' "$NT/log-curl/body" >/dev/null 2>&1 &&
+    [ "$(tail -n 1 "$NT/log-curl/argv")" = "https://discord.test/x" ]; then ok "notify --send: Discord recebe a mensagem intacta, sem menções"
+  else ko "notify --send: Discord recebe a mensagem intacta, sem menções" "$(cat "$NT/log-curl/body" 2>&1)"; fi
+  nt_send windows 1; code=$?
+  if [ "$code" = "0" ] && [ ! -s "$NT/out" ]; then ok "notify --send: notificador falhando sai 0 calado (sino de reserva)"
+  else ko "notify --send: notificador falhando sai 0 calado (sino de reserva)" "exit $code, $(head -c 200 "$NT/out")"; fi
+  out="$(cd "$NT/cwd" && env -u KIT_NOTIFY_DRY_RUN PATH="$(path_without notify-send)" KIT_NOTIFY_PLATFORM=linux KIT_NOTIFY_MSG=x "$TBASH" "$SCRIPTS/notify.sh" --send 2>"$NT/err")"; code=$?
+  if [ "$code" = "0" ] && [ -z "$out" ] && { [ ! -s "$NT/err" ] || [ "$(cat "$NT/err")" = $'\a' ]; }; then ok "notify --send: sem notificador no Linux toca o sino e sai 0"
+  else ko "notify --send: sem notificador no Linux toca o sino e sai 0" "exit $code, out='$out', err='$(cat -v "$NT/err")'"; fi
+  out="$(cd "$NT/cwd" && KIT_NOTIFY_DRY_RUN=1 KIT_NOTIFY_PLATFORM=linux "$TBASH" "$SCRIPTS/notify.sh" <<<'{"cwd":"."' 2>&1)"; code=$?
+  if [ "$code" = "0" ] && [ -z "$out" ]; then ok "notify: JSON inválido sai 0 calado"; else ko "notify: JSON inválido sai 0 calado" "exit $code, $out"; fi
+  out="$("$TBASH" -c '. "$1/lib.sh"; kit_duration 45; echo; kit_duration 187; echo; kit_duration 3720' _ "$SCRIPTS" | paste -sd' ' -)"
+  if [ "$out" = "45s 3m07s 1h02m" ]; then ok "kit_duration: 45s, 3m07s, 1h02m"; else ko "kit_duration: 45s, 3m07s, 1h02m" "$out"; fi
+
+  # setup.sh alerts: so leitura; Notification/Stop que notificam, preferredNotifChannel, terminal e plugins.
+  AL="$NT/alerts"
+  mkdir -p "$AL/cfg/plugins" "$AL/proj/.claude/hooks" "$AL/plug/outro/hooks" "$AL/plug/kit/hooks" "$AL/home"
+  git_q init "$AL/proj"
+  run_alerts() { (cd "$AL/proj" && env -u TERM_PROGRAM -u KITTY_WINDOW_ID HOME="$AL/home" CLAUDE_CONFIG_DIR="$AL/cfg" "$@" "$TBASH" "$SCRIPTS/setup.sh" alerts . 2>&1); }
+  out="$(run_alerts)"
+  if [ -z "$out" ]; then ok "setup alerts: sem alerta nenhum não imprime nada"; else ko "setup alerts: sem alerta nenhum não imprime nada" "$out"; fi
+  printf '%s' '{"hooks":{"Notification":[{"hooks":[{"type":"command","command":"notify-send \"Claude\" \"aguardando\""}]}]}}' >"$AL/cfg/settings.json"
+  out="$(run_alerts)"
+  if grep -qF "alerta: $AL/cfg/settings.json: hook Notification (notify-send" <<<"$out" && [ "$(wc -l <<<"$out" | tr -d ' ')" = "1" ]; then
+    ok "setup alerts: hook Notification no settings do usuário vira aviso de duplicação"
+  else ko "setup alerts: hook Notification no settings do usuário vira aviso de duplicação" "$out"; fi
+  printf '#!/bin/sh\nosascript -e "display notification fim"\n' >"$AL/proj/.claude/hooks/fim.sh"
+  printf '#!/bin/sh\necho lint\n' >"$AL/proj/.claude/hooks/lint.sh"
+  printf '%s' '{"preferredNotifChannel":"terminal_bell","hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/fim.sh\""},{"type":"command","command":"bash .claude/hooks/lint.sh"}]}],"PreToolUse":[{"hooks":[{"type":"command","command":"notify-send pre"}]}]}}' >"$AL/proj/.claude/settings.json"
+  printf '%s' '{"preferredNotifChannel":"notifications_disabled"}' >"$AL/proj/.claude/settings.local.json"
+  printf '%s' '{"hooks":{"Notification":[{"hooks":[{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/hooks/toast.sh\""}]}]}}' >"$AL/plug/outro/hooks/hooks.json"
+  printf 'powershell.exe -Command "New-BurntToastNotification"\n' >"$AL/plug/outro/hooks/toast.sh"
+  printf '%s' '{"hooks":{"Notification":[{"hooks":[{"type":"command","command":"notify.sh"}]}]}}' >"$AL/plug/kit/hooks/hooks.json"
+  jq -n --arg o "$AL/plug/outro" --arg k "$AL/plug/kit" '{version: 2, plugins: {"outro@m": [{scope: "user", installPath: $o}], "kit@claude-kit": [{scope: "user", installPath: $k}], "desligado@m": [{scope: "user", installPath: $o}]}}' >"$AL/cfg/plugins/installed_plugins.json"
+  jq '. + {enabledPlugins: {"outro@m": true, "kit@claude-kit": true, "desligado@m": false}}' "$AL/cfg/settings.json" >"$AL/s.tmp" && mv "$AL/s.tmp" "$AL/cfg/settings.json"
+  al_sums() { cksum "$AL/cfg/settings.json" "$AL/proj/.claude/settings.json" "$AL/proj/.claude/settings.local.json" "$AL/cfg/plugins/installed_plugins.json" 2>&1; }
+  sums="$(al_sums)"
+  out="$(run_alerts)"
+  why=""
+  for want in '.claude/settings.json: hook Stop (bash "$CLAUDE_PROJECT_DIR/.claude/hooks/fim.sh")' '.claude/settings.json: preferredNotifChannel=terminal_bell' \
+    'plugin outro@m: hook Notification'; do
+    grep -qF -- "$want" <<<"$out" || why+="sem [$want] "
+  done
+  for bad in 'lint.sh' 'PreToolUse' 'notifications_disabled' 'kit@claude-kit' 'desligado@m'; do
+    ! grep -qF -- "$bad" <<<"$out" || why+="não deveria: [$bad] "
+  done
+  [ "$sums" = "$(al_sums)" ] || why+="arquivo alterado "
+  if [ -z "$why" ]; then ok "setup alerts: Stop por script do projeto, preferredNotifChannel e plugin habilitado; kit, desligado e não-alerta fora; nada alterado"
+  else ko "setup alerts: Stop por script do projeto, preferredNotifChannel e plugin habilitado; kit, desligado e não-alerta fora; nada alterado" "$why: $out"; fi
+  rm -f "$AL/cfg/settings.json" "$AL/proj/.claude/settings.json" "$AL/proj/.claude/settings.local.json"
+  out="$(run_alerts TERM_PROGRAM=iTerm.app)"
+  if [ "$out" = "alerta: terminal iTerm2: aviso nativo do Claude Code (preferredNotifChannel auto)" ]; then ok "setup alerts: iTerm2 sem canal configurado já tem aviso nativo"
+  else ko "setup alerts: iTerm2 sem canal configurado já tem aviso nativo" "$out"; fi
+fi
+}
+
 g_guardas() {
 echo "guardas e gate: casos de sistema de arquivos"
 if [ -z "$FILTER" ] || [[ "guardas" == *"$FILTER"* ]]; then
@@ -1343,6 +1452,22 @@ if [ -z "$FILTER" ]; then
   if [ -z "$size_bad" ]; then ok "spec e plano grandes: limites, pergunta única de quebra, M8 e README"
   else ko "spec e plano grandes: limites, pergunta única de quebra, M8 e README" "$size_bad"; fi
 
+  # Notificacoes: opcionais, perguntadas uma vez, sem duplicar alertas existentes nem guardar segredo.
+  nt_bad=""
+  for want in 'setup.sh" alerts' 'vai duplicar' 'nenhuma com `(Recomendado)`' '"notify": false' 'já foi respondido: não pergunte de novo' \
+    'Alertas existentes são intocáveis' 'nunca o tópico nem a URL'; do
+    grep -qF -- "$want" "$INIT_MD" || nt_bad+="init:'$want' "
+  done
+  for want in '## Notificações' 'preferredNotifChannel' 'KIT_NTFY_TOPIC' '"notify": false'; do
+    grep -qF -- "$want" "$REPO/README.md" || nt_bad+="README:'$want' "
+  done
+  jq -e '.notify.push == {"ntfy_topic_env": "KIT_NTFY_TOPIC", "discord_webhook_env": "KIT_DISCORD_WEBHOOK"} and .notify.done_min_seconds == 60' \
+    "$REPO/plugins/kit/templates/kit.example.json" >/dev/null 2>&1 || nt_bad+="kit.example.json "
+  jq -e '[.hooks.Notification[].hooks[] | select(.async == true and (.command | endswith("/scripts/notify.sh\"")))] | length == 1' \
+    "$REPO/plugins/kit/hooks/hooks.json" >/dev/null 2>&1 || nt_bad+="hooks.json "
+  if [ -z "$nt_bad" ]; then ok "notificações: init pergunta uma vez sem recomendar, avisa duplicação; README, exemplo e hook async"
+  else ko "notificações: init pergunta uma vez sem recomendar, avisa duplicação; README, exemplo e hook async" "$nt_bad"; fi
+
   bad_json=""
   while IFS= read -r f; do
     jq empty "$f" >/dev/null 2>&1 || bad_json+="$f "
@@ -1381,7 +1506,7 @@ for fx in "$HERE"/fixtures/*.json; do
   n="$(jq '.cases | length' "$fx" | tr -d '\r')"
   for ((i = 0; i < n; i += FX_SHARD)); do ALL_GROUPS+=("fx:${fx##*/}:$i:$((i + FX_SHARD))"); done
 done
-ALL_GROUPS+=(semjq forma_shell apoio_init wave_base map_partition setup guardas estaticas)
+ALL_GROUPS+=(semjq forma_shell apoio_init wave_base map_partition setup notify guardas estaticas)
 
 # Grupos afetados por um arquivo alterado (padroes casados contra "fx:<fixture>" ou o nome do grupo).
 # "*" e a suite inteira; arquivo sem script nem fixture (docs, skills, agents) so roda as estaticas.
@@ -1392,12 +1517,14 @@ groups_for_file() {
     plugins/kit/scripts/guard-bash.sh) echo "fx:guard-bash.json $hooks" ;;
     plugins/kit/scripts/guard-files.sh) echo "fx:guard-files*.json $hooks guardas" ;;
     plugins/kit/scripts/verify-gate.sh) echo "fx:verify-gate*.json $hooks guardas" ;;
+    plugins/kit/scripts/notify.sh) echo "fx:notify.json fx:verify-gate-notify.json notify $hooks" ;;
     plugins/kit/scripts/format.sh | plugins/kit/scripts/advise.sh | plugins/kit/scripts/pre-compact.sh | plugins/kit/scripts/session-context.sh)
       local b="${1##*/}"; echo "fx:${b%.sh}.json $hooks" ;;
     plugins/kit/scripts/merge-json.sh) echo "apoio_init setup" ;;
     plugins/kit/scripts/inventory.sh) echo "apoio_init" ;;
     plugins/kit/scripts/map-partition.sh) echo "map_partition" ;;
-    plugins/kit/scripts/setup.sh | plugins/kit/templates/*) echo "setup" ;;
+    plugins/kit/scripts/setup.sh) echo "setup notify" ;;
+    plugins/kit/templates/*) echo "setup" ;;
     plugins/kit/scripts/wave-base.sh) echo "wave_base" ;;
     plugins/kit/scripts/*) echo "*" ;;
     plugins/kit/hooks/hooks.json) echo "forma_shell" ;;

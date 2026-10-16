@@ -1,5 +1,5 @@
 {
-  "description": "kit: guardas, formatação, avisos, gate de verificação e contexto",
+  "description": "kit: guardas, formatação, avisos, gate de verificação, contexto e notificações",
   "hooks": {
     "PreToolUse": [
       {
@@ -43,6 +43,14 @@
       {
         "hooks": [
           { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/pre-compact.sh\"", "timeout": 10 }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt|idle_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input",
+        "hooks": [
+          { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh\"", "timeout": 20, "async": true }
         ]
       }
     ],

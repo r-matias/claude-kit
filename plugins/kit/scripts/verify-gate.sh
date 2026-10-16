@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Stop: roda verify_on_stop, key_parity e coupled_changes (level block) sobre os arquivos alterados
 # de todos os repositorios da sessao. Todas as falhas saem numa unica mensagem com exit 2.
+# Turno liberado (gate passou ou nada a verificar): notificacao de concluido, se notify.done.
 # Compativel com bash 3.2: sem arrays associativos nem mapfile; os mapas ficam em arquivos de $TMPD.
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -8,7 +9,14 @@ kit_require_jq
 kit_read_input
 
 [ "$(kit_field '.stop_hook_active')" = "true" ] && exit 0
-command -v git >/dev/null 2>&1 || exit 0
+
+# Saida com o turno liberado. Nunca roda quando o gate bloqueia (exit 2) nem no SubagentStop.
+finish() {
+  [ "$(kit_field '.hook_event_name')" = "SubagentStop" ] || kit_notify_done "${CWD:-$(kit_cwd)}" "$(kit_field '.session_id')"
+  exit 0
+}
+
+command -v git >/dev/null 2>&1 || finish
 
 CWD="$(kit_cwd)"
 # cwd na forma que o git devolve (nome longo no lugar do 8.3 do Windows, symlink resolvido): as
@@ -25,7 +33,7 @@ SID="$(kit_field '.session_id')"
 
 REPOS=()
 while IFS= read -r r; do [ -n "$r" ] && REPOS+=("$r"); done < <(kit_repos "$CWD" "$SID")
-[ "${#REPOS[@]}" -gt 0 ] || exit 0
+[ "${#REPOS[@]}" -gt 0 ] || finish
 MULTI=0
 [ "${#REPOS[@]}" -gt 1 ] && MULTI=1
 
@@ -41,7 +49,7 @@ for repo in ${REPOS[@]+"${REPOS[@]}"}; do
     git -c core.quotepath=off -C "$repo" ls-files --others --exclude-standard 2>/dev/null
   } | tr -d '\r' | sed '/^$/d' | sort -u | R="$repo" awk 'BEGIN { r = ENVIRON["R"] } { print r "/" $0 }'
 done >"$TMPD/all"
-[ -s "$TMPD/all" ] || exit 0
+[ -s "$TMPD/all" ] || finish
 
 # Raizes de kit.json por pasta (kit_kit_roots roda uma vez por pasta distinta, nao por arquivo):
 # "pasta<TAB>raiz<TAB>1" para o kit.json mais proximo (comandos) e 0 para os de cima (dominio).
@@ -54,7 +62,7 @@ while IFS= read -r d; do
     first=0
   done < <(kit_kit_roots "$d")
 done <"$TMPD/dirs" >"$TMPD/dirroots"
-[ -s "$TMPD/dirroots" ] || exit 0
+[ -s "$TMPD/dirroots" ] || finish
 
 # "raiz<TAB>arquivo" de cada arquivo com o kit.json mais proximo.
 awk -F'\t' 'NR == FNR { if ($3 == 1) R[$1] = $2; next }
@@ -317,4 +325,4 @@ if [ "${#FAILS[@]}" -gt 0 ]; then
 fi
 
 for root in ${ROOTS[@]+"${ROOTS[@]}"}; do consume_skip "$root"; done
-exit 0
+finish

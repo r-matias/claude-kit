@@ -67,6 +67,15 @@
     { "name": "UserPromptSubmit: com inject_plan_on_prompt mostra o plano ativo", "args": ["--plan-only"],
       "kit": { "inject_plan_on_prompt": true },
       "plan": "# Plano\n- [x] 1. feito\n- [ ] 2. pendente\n",
-      "stdout": ["Plano ativo do kit: docs/specs/feat/PLAN.md (1/2)"], "stdout_not": ["Branch:"] }
+      "stdout": ["Plano ativo do kit: docs/specs/feat/PLAN.md (1/2)"], "stdout_not": ["Branch:"] },
+    { "name": "--plan-only com notify.done grava o início do turno com a sessão", "args": ["--plan-only"],
+      "kit": { "notify": { "done": true } },
+      "after": { "exists": [".claude/state/turn-start"], "contains": { ".claude/state/turn-start": "teste-" } } },
+    { "name": "--plan-only sem notify não grava turn-start", "args": ["--plan-only"],
+      "after": { "absent": [".claude/state/turn-start"] } },
+    { "name": "--plan-only com notify false não grava turn-start", "args": ["--plan-only"],
+      "kit": { "notify": false }, "after": { "absent": [".claude/state/turn-start"] } },
+    { "name": "--plan-only com notify.done false não grava turn-start", "args": ["--plan-only"],
+      "kit": { "notify": { "waiting": true, "done": false } }, "after": { "absent": [".claude/state/turn-start"] } }
   ]
 }

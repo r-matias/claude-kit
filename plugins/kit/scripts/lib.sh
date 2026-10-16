@@ -554,3 +554,85 @@ kit_codemap_note() {
   done
   return 0
 }
+
+# Raiz do kit.json mais proximo de $1 com bloco "notify" ligado (objeto). Vazio se ausente ou false.
+kit_notify_root() {
+  local r
+  r="$(kit_kit_roots "$1" | head -n 1)"
+  [ -n "$r" ] || return 0
+  jq -e '(.notify // null) | type == "object"' "$r/.claude/kit.json" >/dev/null 2>&1 && printf '%s' "$r"
+  return 0
+}
+
+# Le o bloco notify de $1/.claude/kit.json em KIT_NOTIFY_WAITING, KIT_NOTIFY_DONE, KIT_NOTIFY_MIN,
+# KIT_NOTIFY_SOUND, KIT_NOTIFY_NTFY_ENV e KIT_NOTIFY_DISCORD_ENV. Chave ausente e desligada; sem
+# "push", nenhum push; com "push", os nomes padrao das variaveis valem para o que faltar.
+kit_notify_load() {
+  local line
+  line="$(jq -r '.notify as $n | (($n.push // null) | type == "object") as $p
+    | [($n.waiting == true), ($n.done == true), ($n.done_min_seconds // 60), ($n.sound == true),
+       (if $p then ($n.push.ntfy_topic_env // "KIT_NTFY_TOPIC") else "" end),
+       (if $p then ($n.push.discord_webhook_env // "KIT_DISCORD_WEBHOOK") else "" end)]
+    | map(tostring) | join("|")' "$1/.claude/kit.json" 2>/dev/null | tr -d '\r')"
+  IFS='|' read -r KIT_NOTIFY_WAITING KIT_NOTIFY_DONE KIT_NOTIFY_MIN KIT_NOTIFY_SOUND KIT_NOTIFY_NTFY_ENV KIT_NOTIFY_DISCORD_ENV <<<"$line"
+  case "${KIT_NOTIFY_MIN:-}" in '' | *[!0-9]*) KIT_NOTIFY_MIN=60 ;; esac
+}
+
+# Duracao em segundos como 45s, 3m07s ou 1h02m.
+kit_duration() {
+  local s="$1"
+  if [ "$s" -ge 3600 ]; then printf '%dh%02dm' $((s / 3600)) $((s % 3600 / 60))
+  elif [ "$s" -ge 60 ]; then printf '%dm%02ds' $((s / 60)) $((s % 60))
+  else printf '%ds' "$s"; fi
+}
+
+# Envia a notificacao pelo notify.sh --send com a config carregada por kit_notify_load. Em segundo
+# plano e sem herdar stdout/stderr do hook, que termina sem esperar; com KIT_NOTIFY_DRY_RUN, roda
+# na hora e o que seria executado vai para o stderr. Uso: kit_notify_send <titulo> <mensagem>
+kit_notify_send() {
+  local script
+  script="$(dirname "${BASH_SOURCE[0]}")/notify.sh"
+  if [ -n "${KIT_NOTIFY_DRY_RUN:-}" ]; then
+    KIT_NOTIFY_TITLE="$1" KIT_NOTIFY_MSG="$2" KIT_NOTIFY_SOUND="$KIT_NOTIFY_SOUND" KIT_NOTIFY_NTFY_ENV="$KIT_NOTIFY_NTFY_ENV" \
+      KIT_NOTIFY_DISCORD_ENV="$KIT_NOTIFY_DISCORD_ENV" "${BASH:-bash}" "$script" --send >&2
+  else
+    (KIT_NOTIFY_TITLE="$1" KIT_NOTIFY_MSG="$2" KIT_NOTIFY_SOUND="$KIT_NOTIFY_SOUND" KIT_NOTIFY_NTFY_ENV="$KIT_NOTIFY_NTFY_ENV" \
+      KIT_NOTIFY_DISCORD_ENV="$KIT_NOTIFY_DISCORD_ENV" "${BASH:-bash}" "$script" --send </dev/null >/dev/null 2>&1 &)
+  fi
+  return 0
+}
+
+# UserPromptSubmit: marca o inicio do turno em <raiz>/.claude/state/turn-start (mtime = inicio,
+# conteudo = session_id) quando notify.done esta ligado. Uso: kit_notify_turn_start <cwd> <session_id>
+kit_notify_turn_start() {
+  local root
+  root="$(kit_notify_root "$1")"
+  [ -n "$root" ] || return 0
+  kit_notify_load "$root"
+  [ "$KIT_NOTIFY_DONE" = "true" ] || return 0
+  mkdir -p "$root/.claude/state" 2>/dev/null && printf '%s\n' "$2" >"$root/.claude/state/turn-start" 2>/dev/null
+  return 0
+}
+
+# Fim de turno liberado pelo gate: notifica "concluido" se o turn-start e desta sessao e o turno
+# durou ao menos notify.done_min_seconds. Consome o turn-start. Uso: kit_notify_done <cwd> <session_id>
+kit_notify_done() {
+  local root f owner start now dur name branch=""
+  root="$(kit_notify_root "$1")"
+  [ -n "$root" ] || return 0
+  f="$root/.claude/state/turn-start"
+  [ -f "$f" ] || return 0
+  owner="$(head -n 1 "$f" 2>/dev/null | tr -d '\r')"
+  [ -z "$owner" ] || [ -z "$2" ] || [ "$owner" = "$2" ] || return 0
+  start="$(date -r "$f" +%s 2>/dev/null)"
+  rm -f "$f"
+  kit_notify_load "$root"
+  [ "$KIT_NOTIFY_DONE" = "true" ] || return 0
+  case "$start" in '' | *[!0-9]*) return 0 ;; esac
+  now="$(date +%s)"
+  dur=$((now - start))
+  [ "$dur" -ge "$KIT_NOTIFY_MIN" ] || return 0
+  name="${root##*/}"
+  command -v git >/dev/null 2>&1 && branch="$(git -C "$root" branch --show-current 2>/dev/null | tr -d '\r')"
+  kit_notify_send "Claude Code" "✅ $name${branch:+ ($branch)}: concluído em $(kit_duration "$dur")"
+}

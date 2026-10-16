@@ -74,6 +74,16 @@
     ".claude/plans"
   ],
   "inject_plan_on_prompt": false,
+  "notify": {
+    "waiting": true,
+    "done": true,
+    "done_min_seconds": 60,
+    "sound": true,
+    "push": {
+      "ntfy_topic_env": "KIT_NTFY_TOPIC",
+      "discord_webhook_env": "KIT_DISCORD_WEBHOOK"
+    }
+  },
   "spec": {
     "max_scope_items": 8,
     "max_files": 25

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SessionStart: injeta branch, arquivos alterados de cada repositorio, planos ativos e, apos
 # compactacao, o snapshot salvo pelo pre-compact.sh. Avisa se o docs/codemap.md do /kit:map esta desatualizado.
-# UserPromptSubmit (--plan-only): so a linha de planos ativos, se inject_plan_on_prompt for true.
+# UserPromptSubmit (--plan-only): so a linha de planos ativos, se inject_plan_on_prompt for true, e a
+# marca de inicio do turno para a notificacao de concluido (notify.done).
 # Sem jq, git ou com Claude Code abaixo da versao minima, avisa no inicio da sessao com o comando de correcao.
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -23,6 +24,7 @@ kit_read_input
 CWD="$(kit_cwd)"
 ROOT="$(kit_session_root "$CWD")"
 SID="$(kit_field '.session_id')"
+[ "${1:-}" = "--plan-only" ] && kit_notify_turn_start "$CWD" "$SID"
 
 plans_line() {
   local line="" d t f

@@ -37,8 +37,9 @@ Se o kit consegue fazer, ele faz. Primeiro junta tudo o que vai propor, mostra o
 2. **Configura o projeto** (o adaptador), descrito abaixo.
 3. **Liga o LSP da linguagem**: acrescenta o plugin LSP oficial (`typescript-lsp`, `pyright-lsp`, `csharp-lsp`, `gopls-lsp`, ...) ao `.claude/settings.json` do projeto e instala o language server se faltar.
 4. **Verifica**: roda uma vez cada comando de `verify_on_stop` e mostra `ok` ou `falhou`.
-5. **Mapeia o código**, se o projeto tiver mais de 300 arquivos de código ou mais de um repositório: roda o `/kit:map` ao final, sem perguntar (só pergunta se passar de 30 agents).
-6. **Relatório curto** (até ~10 linhas): o que foi feito (com o caminho de cada backup), o que foi verificado, avisos reais e `Pronto. Próximo: /kit:spec <ideia>`. Ele não lista tarefas para você.
+5. **Pergunta sobre notificações** (desligadas por padrão), avisando se você já tem alertas que seriam duplicados (ver [Notificações](#notificações)).
+6. **Mapeia o código**, se o projeto tiver mais de 300 arquivos de código ou mais de um repositório: roda o `/kit:map` ao final, sem perguntar (só pergunta se passar de 30 agents).
+7. **Relatório curto** (até ~10 linhas): o que foi feito (com o caminho de cada backup), o que foi verificado, avisos reais e `Pronto. Próximo: /kit:spec <ideia>`. Ele não lista tarefas para você.
 
 Rodado de novo num projeto já configurado, entra em modo reparo: valida o `kit.json`, os comandos e o settings, soma só o que falta (mesma confirmação única) e roda `/kit:map --update` se o mapa estiver desatualizado.
 
@@ -203,6 +204,42 @@ Arquivo com nome terminado em `.example`, `.sample`, `.template` ou `.dist` (ex.
 
 Os subagents do kit e os que o `/kit:execute` dispara rodam um comando por chamada de Bash, sem encadear com `&&`, `;` ou `|`, e leem arquivo com Read: um bloco encadeado cai inteiro numa regra `ask` do projeto e pede aprovação até para uma leitura. Nenhum comando do kit entrega a você um comando com placeholder (`<seu valor>`): o valor é perguntado antes e gravado na config do projeto, ou, se for segredo, no `.env` que o próprio script carrega.
 
+## Notificações
+
+Opcionais e desligadas por padrão. O kit avisa quando a sessão precisa de você (pedido de permissão, pergunta parada) e quando um turno longo termina de verdade:
+
+```text
+⏳ meu-app: Claude needs your permission to use Bash
+✅ meu-app (main): concluído em 4m12s
+```
+
+O "concluído" só sai quando o gate de fim de turno liberou (passou ou não havia o que verificar) e o turno durou pelo menos `done_min_seconds` (60 s). Gate que bloqueou não avisa. Turno em que o gate barrou e o Claude corrigiu termina com `stop_hook_active` e também não avisa.
+
+**Como ligar.** O `/kit:init` pergunta na confirmação única, com as duas opções desmarcadas: "Avisar quando aguardar resposta" e "Avisar quando terminar". Antes, ele procura alertas que você já tem (hooks de Notification ou Stop no seu settings, no do projeto ou em outros plugins, e o `preferredNotifChannel`) e, se achar, avisa que ligar os do kit vai duplicar. Esses alertas nunca são alterados, só relatados. Se você não marcar nada, o init grava `"notify": false` e o reparo não pergunta de novo. Para mudar depois, edite o `.claude/kit.json`:
+
+```json
+{
+  "notify": {
+    "waiting": true,
+    "done": true,
+    "done_min_seconds": 60,
+    "sound": true,
+    "push": { "ntfy_topic_env": "KIT_NTFY_TOPIC", "discord_webhook_env": "KIT_DISCORD_WEBHOOK" }
+  }
+}
+```
+
+Onde aparece: toast do Windows (Git Bash e WSL, pelo `powershell.exe`, sem módulo extra), Central de Notificações no macOS e `notify-send` no Linux. Sem nenhum deles, o sino do terminal. `sound` usa o som do sistema. A notificação roda em segundo plano e nunca atrasa nem bloqueia o Claude.
+
+**Push no celular com ntfy, em 2 passos:**
+
+1. Instale o app [ntfy](https://ntfy.sh) no celular e assine um tópico difícil de adivinhar, como `claude-7f3k9q2x` (quem souber o nome lê as mensagens).
+2. Defina a variável no ambiente em que o Claude Code roda e reabra-o: `export KIT_NTFY_TOPIC=claude-7f3k9q2x` no `~/.bashrc`/`~/.zshrc`, ou `setx KIT_NTFY_TOPIC claude-7f3k9q2x` no Windows.
+
+O `push` precisa estar no `notify` (o init já grava assim). Servidor ntfy próprio: use a URL completa (`https://ntfy.exemplo.com/claude`). Discord: a URL do webhook em `KIT_DISCORD_WEBHOOK`. O `kit.json` guarda só o nome da variável, nunca o tópico ou a URL.
+
+**Diferença para o aviso nativo do Claude Code.** O Claude Code tem a configuração `preferredNotifChannel` no settings (`auto`, o padrão; `terminal_bell`; `notifications_disabled`; e canais de terminal, ver a [doc oficial](https://code.claude.com/docs/en/terminal-config)). No `auto`, a notificação do sistema só aparece no iTerm2, no Ghostty e no Kitty; nos outros terminais (Windows Terminal, VS Code, a maioria no Linux) fica o sino, se você escolher `terminal_bell`. O aviso nativo não manda push nem sabe do gate. O do kit funciona em qualquer terminal, manda push e só diz "concluído" quando o gate liberou. Os dois convivem (hooks de Notification rodam junto do aviso nativo, sem substituí-lo): se o nativo já te avisa, ligue só o "concluído" ou só o push.
+
 ## O kit bloqueou, e agora?
 
 **Um guarda negou algo legítimo.** A mensagem diz o que foi barrado e por quê.
@@ -276,6 +313,7 @@ O `/kit:init` gera este arquivo. Todas as chaves são opcionais; chave ausente �
 | `key_parity` | Arquivos de tradução que precisam ter as mesmas chaves | `{ "files": ["i18n/pt.json", "i18n/en.json"] }` |
 | `plan_dirs` | Pastas extras onde o projeto guarda planos | `[".claude/plans"]` |
 | `inject_plan_on_prompt` | Repete a linha do plano ativo a cada mensagem (custa contexto) | `false` |
+| `notify` | Notificações de "aguardando" e "concluído", som e push (ver [Notificações](#notificações)); `false` = recusado no init | `{ "waiting": true, "done": true }` |
 | `repos` | Na pasta-mãe de vários repositórios, quais filhos considerar | `["app", "web"]` |
 | `spec` | Limites de tamanho do `/kit:spec`: `max_scope_items` (8), `max_files` (25) | `{ "max_scope_items": 12 }` |
 | `plan` | Limites de tamanho do `/kit:plan`: `max_tasks` (15), `max_waves` (6) | `{ "max_tasks": 20 }` |

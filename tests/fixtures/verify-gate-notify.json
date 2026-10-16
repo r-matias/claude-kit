@@ -1,0 +1,284 @@
+{
+  "script": "verify-gate.sh",
+  "defaults": {
+    "env": {
+      "KIT_NOTIFY_DRY_RUN": "1",
+      "KIT_NOTIFY_PLATFORM": "linux"
+    },
+    "kit": {
+      "notify": {
+        "done": true,
+        "done_min_seconds": 60
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "gate sem nada a verificar e turno longo: concluído com projeto, branch e duração",
+      "files": {
+        ".claude/state/turn-start": ""
+      },
+      "touch": {
+        ".claude/state/turn-start": 5
+      },
+      "exit": 0,
+      "stderr": [
+        "notify: run: notify-send -a 'Claude Code' -- 'Claude Code' '✅ sample (main): concluído em 5m"
+      ],
+      "after": {
+        "absent": [
+          ".claude/state/turn-start"
+        ]
+      }
+    },
+    {
+      "name": "gate verde e turno longo: concluído",
+      "files": {
+        ".claude/state/turn-start": ""
+      },
+      "touch": {
+        ".claude/state/turn-start": 5
+      },
+      "change": "src/App.cs",
+      "exit": 0,
+      "stderr": [
+        "✅ sample (main): concluído em 5m"
+      ]
+    },
+    {
+      "name": "turno abaixo de done_min_seconds não notifica",
+      "files": {
+        ".claude/state/turn-start": ""
+      },
+      "touch": {
+        ".claude/state/turn-start": 0
+      },
+      "change": "src/App.cs",
+      "exit": 0,
+      "stderr_not": [
+        "concluído"
+      ],
+      "after": {
+        "absent": [
+          ".claude/state/turn-start"
+        ]
+      }
+    },
+    {
+      "name": "done_min_seconds maior que o turno não notifica",
+      "files": {
+        ".claude/state/turn-start": ""
+      },
+      "touch": {
+        ".claude/state/turn-start": 5
+      },
+      "kit": {
+        "notify": {
+          "done_min_seconds": 600
+        }
+      },
+      "exit": 0,
+      "stderr_not": [
+        "concluído"
+      ]
+    },
+    {
+      "name": "gate bloqueando nunca notifica e guarda o início do turno",
+      "files": {
+        ".claude/state/turn-start": ""
+      },
+      "touch": {
+        ".claude/state/turn-start": 5
+      },
+      "change": "src/App.cs",
+      "kit": {
+        "commands": {
+          "test_related": "echo quebrou; false"
+        }
+      },
+      "exit": 2,
+      "stderr": [
+        "quebrou"
+      ],
+      "stderr_not": [
+        "concluído",
+        "notify:"
+      ],
+      "after": {
+        "exists": [
+          ".claude/state/turn-start"
+        ]
+      }
+    },
+    {
+      "name": "coupled_changes bloqueando nunca notifica",
+      "files": {
+        ".claude/state/turn-start": ""
+      },
+      "touch": {
+        ".claude/state/turn-start": 5
+      },
+      "change": "src/views/Home.cs",
+      "kit": {
+        "coupled_changes": [
+          {
+            "when": [
+              "src/views/**"
+            ],
+            "require": [
+              "manual/**"
+            ],
+            "message": "Atualize o manual."
+          }
+        ]
+      },
+      "exit": 2,
+      "stderr_not": [
+        "concluído"
+      ]
+    },
+    {
+      "name": "notify ausente não notifica nem consome o turn-start",
+      "files": {
+        ".claude/state/turn-start": ""
+      },
+      "touch": {
+        ".claude/state/turn-start": 5
+      },
+      "kit": {
+        "notify": null
+      },
+      "exit": 0,
+      "stderr_not": [
+        "notify:"
+      ],
+      "after": {
+        "exists": [
+          ".claude/state/turn-start"
+        ]
+      }
+    },
+    {
+      "name": "notify false não notifica",
+      "files": {
+        ".claude/state/turn-start": ""
+      },
+      "touch": {
+        ".claude/state/turn-start": 5
+      },
+      "kit": {
+        "notify": false
+      },
+      "exit": 0,
+      "stderr_not": [
+        "notify:"
+      ],
+      "after": {
+        "exists": [
+          ".claude/state/turn-start"
+        ]
+      }
+    },
+    {
+      "name": "done false não notifica",
+      "files": {
+        ".claude/state/turn-start": ""
+      },
+      "touch": {
+        ".claude/state/turn-start": 5
+      },
+      "kit": {
+        "notify": {
+          "done": false
+        }
+      },
+      "exit": 0,
+      "stderr_not": [
+        "notify:"
+      ]
+    },
+    {
+      "name": "stop_hook_active não notifica",
+      "files": {
+        ".claude/state/turn-start": ""
+      },
+      "touch": {
+        ".claude/state/turn-start": 5
+      },
+      "stop_hook_active": true,
+      "exit": 0,
+      "stderr_not": [
+        "notify:"
+      ],
+      "after": {
+        "exists": [
+          ".claude/state/turn-start"
+        ]
+      }
+    },
+    {
+      "name": "turn-start de outra sessão não notifica nem é apagado",
+      "files": {
+        ".claude/state/turn-start": "outra-sessao\n"
+      },
+      "touch": {
+        ".claude/state/turn-start": 5
+      },
+      "exit": 0,
+      "stderr_not": [
+        "notify:"
+      ],
+      "after": {
+        "exists": [
+          ".claude/state/turn-start"
+        ]
+      }
+    },
+    {
+      "name": "sem turn-start não notifica",
+      "exit": 0,
+      "stderr_not": [
+        "notify:"
+      ]
+    },
+    {
+      "name": "concluído com push ntfy quando a variável existe",
+      "files": {
+        ".claude/state/turn-start": ""
+      },
+      "touch": {
+        ".claude/state/turn-start": 5
+      },
+      "kit": {
+        "notify": {
+          "push": {}
+        }
+      },
+      "env": {
+        "KIT_NTFY_TOPIC": "kit-teste"
+      },
+      "exit": 0,
+      "stderr": [
+        "https://ntfy.sh/",
+        "concluído em 5m"
+      ]
+    },
+    {
+      "name": "concluído no Windows vai pelo toast",
+      "files": {
+        ".claude/state/turn-start": ""
+      },
+      "touch": {
+        ".claude/state/turn-start": 5
+      },
+      "env": {
+        "KIT_NOTIFY_PLATFORM": "windows"
+      },
+      "exit": 0,
+      "stderr": [
+        "notify: run: powershell.exe",
+        "notify: env: KIT_NOTIFY_MSG=✅ sample (main): concluído em 5m"
+      ]
+    }
+  ]
+}

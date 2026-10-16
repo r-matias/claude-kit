@@ -31,6 +31,11 @@
 #
 #   setup.sh plans [pasta]
 #     Planos com tarefa pendente e mais de 14 dias sem mudanca, um por linha.
+#
+#   setup.sh alerts [pasta]
+#     Alertas que o usuario ja tem, um por linha: "alerta: <origem>: <detalhe>". Hooks Notification e
+#     Stop que notificam (settings do usuario, do projeto e local, plugins habilitados), a config
+#     preferredNotifChannel e o aviso nativo dos terminais que o suportam. So leitura; sem saida se nada.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib.sh"
@@ -272,6 +277,89 @@ cmd_plans() {
   return 0
 }
 
+# Comando de hook que notifica: o proprio texto ou o script que ele chama. Uso: alert_cmd <cmd> <pasta-do-projeto> [raiz-do-plugin]
+ALERT_RE='notify|notification|toast|osascript|ntfy|webhook|terminal-notifier|burnttoast|messagebox|(^|[^a-z])(af|pa|a)?play([^a-z]|$)'
+alert_cmd() {
+  local c="$1" f
+  printf '%s' "$c" | grep -Eiq -- "$ALERT_RE" && return 0
+  c="${c//\$\{CLAUDE_PROJECT_DIR\}/$2}"
+  c="${c//\$CLAUDE_PROJECT_DIR/$2}"
+  [ -z "${3:-}" ] || c="${c//\$\{CLAUDE_PLUGIN_ROOT\}/$3}"
+  c="${c//\~\//$HOME/}"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$f" in /* | [A-Za-z]:/*) ;; *) f="$2/$f" ;; esac
+    [ -f "$f" ] && grep -Eiq -- "$ALERT_RE" "$f" 2>/dev/null && return 0
+  done < <(printf '%s' "$c" | tr '\\' / | grep -oE "[^ \"']+\.(sh|ps1|py|js|mjs|cmd|bat)" | head -n 5)
+  return 1
+}
+
+# Hooks Notification/Stop de um JSON de hooks ({"hooks": {...}} ou o objeto de eventos). Uso: alert_hooks <json> <origem> <pasta> [raiz-do-plugin]
+alert_hooks() {
+  local ev c short
+  while IFS=$'\t' read -r ev c; do
+    [ -n "$c" ] || continue
+    alert_cmd "$c" "$3" "${4:-}" || continue
+    short="$(printf '%s' "$c" | tr -s ' \t' ' ' | cut -c1-80)"
+    echo "alerta: $2: hook $ev ($short)"
+  done < <(jq -r '(if has("hooks") then .hooks else . end) // {} | to_entries[]? | select(.key == "Notification" or .key == "Stop")
+    | .key as $e | .value[]?.hooks[]? | select(.type == "command") | "\($e)\t\(.command // "" | gsub("[\t\r\n]"; " "))"' "$1" 2>/dev/null | tr -d '\r')
+}
+
+cmd_alerts() {
+  local dir proj f label v plugin ip cfg_label any_channel=0 pj
+  command -v jq >/dev/null 2>&1 || { echo "setup: jq não encontrado" >&2; return 2; }
+  dir="$(cd "${1:-.}" && pwd)" || return 2
+  proj="$(kit_session_root "$dir")"
+  cfg_label="$CONFIG"
+  case "$CONFIG" in "$HOME"/*) cfg_label="~/${CONFIG#"$HOME"/}" ;; esac
+  {
+    for f in "$CONFIG/settings.json" "$proj/.claude/settings.json" "$proj/.claude/settings.local.json"; do
+      [ -f "$f" ] || continue
+      case "$f" in "$CONFIG"/*) label="$cfg_label/settings.json" ;; *) label="${f#"$proj"/}" ;; esac
+      alert_hooks "$f" "$label" "$proj"
+      v="$(jq -r '.preferredNotifChannel // empty' "$f" 2>/dev/null | tr -d '\r')"
+      if [ -n "$v" ]; then
+        any_channel=1
+        [ "$v" = "notifications_disabled" ] || echo "alerta: $label: preferredNotifChannel=$v (aviso nativo do Claude Code)"
+      fi
+    done
+    for f in "$CONFIG/.claude.json" "$HOME/.claude.json"; do
+      [ -f "$f" ] || continue
+      v="$(jq -r '.preferredNotifChannel // empty' "$f" 2>/dev/null | tr -d '\r')"
+      [ -n "$v" ] || continue
+      any_channel=1
+      case "$f" in "$HOME"/*) label="~/${f#"$HOME"/}" ;; *) label="$f" ;; esac
+      [ "$v" = "notifications_disabled" ] || echo "alerta: $label: preferredNotifChannel=$v (aviso nativo do Claude Code)"
+    done
+    # Sem canal configurado, o padrao (auto) ja notifica no iTerm2, no Ghostty e no Kitty.
+    if [ "$any_channel" = "0" ]; then
+      case "${TERM_PROGRAM:-}" in
+        iTerm.app) echo "alerta: terminal iTerm2: aviso nativo do Claude Code (preferredNotifChannel auto)" ;;
+        ghostty) echo "alerta: terminal Ghostty: aviso nativo do Claude Code (preferredNotifChannel auto)" ;;
+        *) [ -z "${KITTY_WINDOW_ID:-}" ] || echo "alerta: terminal Kitty: aviso nativo do Claude Code (preferredNotifChannel auto)" ;;
+      esac
+    fi
+    # Plugins habilitados (usuario < projeto < local), fora o proprio kit, pelo installPath registrado.
+    pj="$CONFIG/plugins/installed_plugins.json"
+    if [ -f "$pj" ]; then
+      while IFS= read -r plugin; do
+        [ -n "$plugin" ] || continue
+        case "$plugin" in kit@*) continue ;; esac
+        ip="$(jq -r --arg p "$plugin" '(.plugins[$p] // []) | map(.installPath // empty) | .[0] // empty' "$pj" 2>/dev/null | tr -d '\r')"
+        ip="$(kit_norm_path "$ip")"
+        [ -n "$ip" ] && [ -d "$ip" ] || continue
+        [ -f "$ip/hooks/hooks.json" ] && alert_hooks "$ip/hooks/hooks.json" "plugin $plugin" "$proj" "$ip"
+        [ -f "$ip/.claude-plugin/plugin.json" ] && jq -e '(.hooks // null) | type == "object"' "$ip/.claude-plugin/plugin.json" >/dev/null 2>&1 &&
+          alert_hooks "$ip/.claude-plugin/plugin.json" "plugin $plugin" "$proj" "$ip"
+      done < <(for f in "$CONFIG/settings.json" "$proj/.claude/settings.json" "$proj/.claude/settings.local.json"; do
+          [ -f "$f" ] && jq -c '.enabledPlugins // {}' "$f" 2>/dev/null
+        done | jq -rs 'add // {} | to_entries[] | select(.value == true) | .key' 2>/dev/null | tr -d '\r')
+    fi
+  } | awk '!seen[$0]++'
+  return 0
+}
+
 case "${1:-}" in
   check) cmd_check ;;
   status) cmd_status ;;
@@ -280,5 +368,6 @@ case "${1:-}" in
   guards) shift; cmd_guards "$@" ;;
   lsp) shift; cmd_lsp "$@" ;;
   plans) shift; cmd_plans "$@" ;;
-  *) echo "uso: setup.sh check | status | groups | permissions <grupos> <proposta.json> | guards [kit.json] | lsp [pasta] | plans [pasta]" >&2; exit 2 ;;
+  alerts) shift; cmd_alerts "$@" ;;
+  *) echo "uso: setup.sh check | status | groups | permissions <grupos> <proposta.json> | guards [kit.json] | lsp [pasta] | plans [pasta] | alerts [pasta]" >&2; exit 2 ;;
 esac

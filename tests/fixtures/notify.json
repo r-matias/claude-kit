@@ -1,0 +1,265 @@
+{
+  "script": "notify.sh",
+  "defaults": {
+    "env": {
+      "KIT_NOTIFY_DRY_RUN": "1",
+      "KIT_NOTIFY_PLATFORM": "linux"
+    },
+    "message": "Claude needs your permission to use Bash"
+  },
+  "cases": [
+    {
+      "name": "waiting ligado no Linux: notify-send com projeto e mensagem do evento",
+      "kit": {
+        "notify": {
+          "waiting": true
+        }
+      },
+      "stdout": [
+        "notify: run: notify-send -a 'Claude Code' -- 'Claude Code' '⏳ sample: Claude needs your permission to use Bash'"
+      ],
+      "stdout_not": [
+        "canberra-gtk-play",
+        "curl"
+      ]
+    },
+    {
+      "name": "waiting false não notifica",
+      "kit": {
+        "notify": {
+          "waiting": false,
+          "done": true
+        }
+      },
+      "stdout_empty": true
+    },
+    {
+      "name": "notify ausente não notifica",
+      "stdout_empty": true
+    },
+    {
+      "name": "notify false (recusado no init) não notifica",
+      "kit": {
+        "notify": false
+      },
+      "stdout_empty": true
+    },
+    {
+      "name": "sem kit.json não notifica",
+      "cwd": "__NOKIT__",
+      "stdout_empty": true
+    },
+    {
+      "name": "Windows: toast pelo powershell.exe, mensagem só no ambiente",
+      "kit": {
+        "notify": {
+          "waiting": true
+        }
+      },
+      "env": {
+        "KIT_NOTIFY_PLATFORM": "windows"
+      },
+      "stdout": [
+        "notify: env: KIT_NOTIFY_TITLE=Claude Code",
+        "notify: env: KIT_NOTIFY_MSG=⏳ sample: Claude needs your permission to use Bash",
+        "notify: run: powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command",
+        "CreateTextNode([string]$env:KIT_NOTIFY_MSG)",
+        "SetAttribute("
+      ],
+      "stdout_not": [
+        "WSLENV",
+        "notify-send"
+      ]
+    },
+    {
+      "name": "WSL: powershell.exe da interop com as variáveis no WSLENV",
+      "kit": {
+        "notify": {
+          "waiting": true
+        }
+      },
+      "env": {
+        "KIT_NOTIFY_PLATFORM": "wsl"
+      },
+      "stdout": [
+        "notify: env: WSLENV=KIT_NOTIFY_TITLE/u:KIT_NOTIFY_MSG/u:KIT_NOTIFY_SOUND/u",
+        "notify: run: powershell.exe"
+      ]
+    },
+    {
+      "name": "macOS: osascript JXA lendo título e mensagem do ambiente",
+      "kit": {
+        "notify": {
+          "waiting": true,
+          "sound": true
+        }
+      },
+      "env": {
+        "KIT_NOTIFY_PLATFORM": "macos"
+      },
+      "stdout": [
+        "notify: run: osascript -l JavaScript -e",
+        "objectForKey(k)",
+        "soundName = ",
+        "notify: env: KIT_NOTIFY_MSG=⏳ sample: Claude needs your permission to use Bash"
+      ]
+    },
+    {
+      "name": "sound true no Linux toca o som do sistema",
+      "kit": {
+        "notify": {
+          "waiting": true,
+          "sound": true
+        }
+      },
+      "stdout": [
+        "notify: run: canberra-gtk-play -i complete"
+      ]
+    },
+    {
+      "name": "push ntfy com a variável definida: JSON para ntfy.sh",
+      "kit": {
+        "notify": {
+          "waiting": true,
+          "push": {}
+        }
+      },
+      "env": {
+        "KIT_NTFY_TOPIC": "kit-teste"
+      },
+      "stdout": [
+        "notify: run: curl -fsS --max-time 5 -H 'Content-Type: application/json' -d @- https://ntfy.sh/",
+        "\"topic\":\"kit-teste\"",
+        "\"message\":\"⏳ sample: Claude needs your permission to use Bash\""
+      ]
+    },
+    {
+      "name": "push sem a variável definida não chama curl",
+      "kit": {
+        "notify": {
+          "waiting": true,
+          "push": {}
+        }
+      },
+      "stdout": [
+        "notify-send"
+      ],
+      "stdout_not": [
+        "curl"
+      ]
+    },
+    {
+      "name": "push com nome de variável próprio e servidor ntfy próprio",
+      "kit": {
+        "notify": {
+          "waiting": true,
+          "push": {
+            "ntfy_topic_env": "MEU_TOPICO"
+          }
+        }
+      },
+      "env": {
+        "MEU_TOPICO": "https://ntfy.exemplo.com/equipe_1",
+        "KIT_NTFY_TOPIC": "nao-usar"
+      },
+      "stdout": [
+        "https://ntfy.exemplo.com/",
+        "\"topic\":\"equipe_1\""
+      ],
+      "stdout_not": [
+        "nao-usar"
+      ]
+    },
+    {
+      "name": "tópico ntfy inválido é ignorado",
+      "kit": {
+        "notify": {
+          "waiting": true,
+          "push": {}
+        }
+      },
+      "env": {
+        "KIT_NTFY_TOPIC": "a b;c"
+      },
+      "stdout_not": [
+        "curl"
+      ],
+      "stdout": [
+        "notify: run: notify-send"
+      ]
+    },
+    {
+      "name": "nome de variável inválido é ignorado",
+      "kit": {
+        "notify": {
+          "waiting": true,
+          "push": {
+            "ntfy_topic_env": "X;rm",
+            "discord_webhook_env": "1A"
+          }
+        }
+      },
+      "env": {
+        "KIT_NTFY_TOPIC": "kit-teste"
+      },
+      "stdout_not": [
+        "curl"
+      ],
+      "stdout": [
+        "notify: run: notify-send"
+      ]
+    },
+    {
+      "name": "push do Discord sem menções",
+      "kit": {
+        "notify": {
+          "waiting": true,
+          "push": {}
+        }
+      },
+      "env": {
+        "KIT_DISCORD_WEBHOOK": "https://discord.com/api/webhooks/1/abc"
+      },
+      "stdout": [
+        "-d @- https://discord.com/api/webhooks/1/abc",
+        "\"allowed_mentions\":{\"parse\":[]}",
+        "\"content\":\"**Claude Code**\n⏳ sample"
+      ]
+    },
+    {
+      "name": "webhook do Discord sem https é ignorado",
+      "kit": {
+        "notify": {
+          "waiting": true,
+          "push": {}
+        }
+      },
+      "env": {
+        "KIT_DISCORD_WEBHOOK": "file:///etc/passwd"
+      },
+      "stdout_not": [
+        "curl"
+      ],
+      "stdout": [
+        "notify: run: notify-send"
+      ]
+    },
+    {
+      "name": "variável de push sem bloco push não chama curl",
+      "kit": {
+        "notify": {
+          "waiting": true
+        }
+      },
+      "env": {
+        "KIT_NTFY_TOPIC": "kit-teste"
+      },
+      "stdout_not": [
+        "curl"
+      ],
+      "stdout": [
+        "notify: run: notify-send"
+      ]
+    }
+  ]
+}
