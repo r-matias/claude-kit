@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 # Stop: roda verify_on_stop, key_parity e coupled_changes (level block) sobre os arquivos alterados
 # de todos os repositorios da sessao. Todas as falhas saem numa unica mensagem com exit 2.
-# Turno liberado (gate passou ou nada a verificar): notificacao de concluido, se notify.done.
+# Turno liberado (gate passou, nada a verificar ou stop_hook_active): notificacao de concluido, se notify.done.
 # Compativel com bash 3.2: sem arrays associativos nem mapfile; os mapas ficam em arquivos de $TMPD.
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 kit_require_jq
 kit_read_input
 
-[ "$(kit_field '.stop_hook_active')" = "true" ] && exit 0
-
 # Saida com o turno liberado. Nunca roda quando o gate bloqueia (exit 2) nem no SubagentStop.
 finish() {
   [ "$(kit_field '.hook_event_name')" = "SubagentStop" ] || kit_notify_done "${CWD:-$(kit_cwd)}" "$(kit_field '.session_id')"
   exit 0
 }
+
+# Segunda passada depois de um bloqueio: libera sem verificar de novo e avisa o concluido.
+[ "$(kit_field '.stop_hook_active')" = "true" ] && finish
 
 command -v git >/dev/null 2>&1 || finish
 

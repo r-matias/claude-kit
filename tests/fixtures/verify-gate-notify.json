@@ -198,23 +198,38 @@
       ]
     },
     {
-      "name": "stop_hook_active não notifica",
+      "name": "stop_hook_active depois de bloqueio: libera e notifica concluído",
       "files": {
         ".claude/state/turn-start": ""
       },
       "touch": {
         ".claude/state/turn-start": 5
       },
+      "change": "src/App.cs",
       "stop_hook_active": true,
       "exit": 0,
-      "stderr_not": [
-        "notify:"
+      "stderr": [
+        "✅ sample (main): concluído em 5m"
       ],
       "after": {
-        "exists": [
+        "absent": [
           ".claude/state/turn-start"
         ]
       }
+    },
+    {
+      "name": "stop_hook_active com turno curto não notifica",
+      "files": {
+        ".claude/state/turn-start": ""
+      },
+      "touch": {
+        ".claude/state/turn-start": 0
+      },
+      "stop_hook_active": true,
+      "exit": 0,
+      "stderr_not": [
+        "concluído"
+      ]
     },
     {
       "name": "turn-start de outra sessão não notifica nem é apagado",

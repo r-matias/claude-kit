@@ -117,7 +117,7 @@ Ausente ou `false`, nada é notificado (`false` registra que o `/kit:init` pergu
 | Chave | Padrão | Efeito |
 | --- | --- | --- |
 | `waiting` | `false` | Hook Notification (`permission_prompt`, `idle_prompt`, `elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input`): `⏳ <projeto>: <mensagem do evento>` |
-| `done` | `false` | Fim de turno liberado pelo `verify-gate` (gate passou ou não havia o que verificar): `✅ <projeto> (<branch>): concluído em <duração>`. Nunca quando o gate bloqueia, no `stop_hook_active` nem no `SubagentStop` |
+| `done` | `false` | Fim de turno liberado pelo `verify-gate` (gate passou, não havia o que verificar ou segunda passada com `stop_hook_active`): `✅ <projeto> (<branch>): concluído em <duração>`. Nunca quando o gate bloqueia nem no `SubagentStop` |
 | `done_min_seconds` | 60 | Turno mais curto não notifica. O início vem de `.claude/state/turn-start`, gravado no UserPromptSubmit (mtime = início, conteúdo = `session_id`; de outra sessão, não notifica) |
 | `sound` | `false` | Som do sistema: toast com som no Windows, `soundName` no macOS, `canberra-gtk-play`/`paplay` no Linux |
 | `push.ntfy_topic_env` | `KIT_NTFY_TOPIC` | Nome da variável de ambiente com o tópico do ntfy (ou a URL `https://servidor/topico`). Só com `push` presente e a variável definida |

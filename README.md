@@ -213,7 +213,7 @@ Opcionais e desligadas por padrão. O kit avisa quando a sessão precisa de voc�
 ✅ meu-app (main): concluído em 4m12s
 ```
 
-O "concluído" só sai quando o gate de fim de turno liberou (passou ou não havia o que verificar) e o turno durou pelo menos `done_min_seconds` (60 s). Gate que bloqueou não avisa. Turno em que o gate barrou e o Claude corrigiu termina com `stop_hook_active` e também não avisa.
+O "concluído" só sai quando o gate de fim de turno liberou (passou ou não havia o que verificar) e o turno durou pelo menos `done_min_seconds` (60 s). Gate que bloqueou não avisa. Turno em que o gate barrou e o Claude corrigiu avisa quando o gate libera.
 
 **Como ligar.** O `/kit:init` pergunta na confirmação única, com as duas opções desmarcadas: "Avisar quando aguardar resposta" e "Avisar quando terminar". Antes, ele procura alertas que você já tem (hooks de Notification ou Stop no seu settings, no do projeto ou em outros plugins, e o `preferredNotifChannel`) e, se achar, avisa que ligar os do kit vai duplicar. Esses alertas nunca são alterados, só relatados. Se você não marcar nada, o init grava `"notify": false` e o reparo não pergunta de novo. Para mudar depois, edite o `.claude/kit.json`:
 
