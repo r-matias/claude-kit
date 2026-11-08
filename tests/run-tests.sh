@@ -1412,7 +1412,7 @@ if [ -z "$FILTER" ]; then
 
   # Nenhum placeholder em comando entregue ao usuario.
   ph_bad=""
-  for s in spec plan execute fix hunt init map; do
+  for s in spec plan execute fix hunt init map drift; do
     grep -qF 'Nunca entregue ao usuário comando com placeholder (`<...>`, `SEU_X`, `xxx`)' "$REPO/plugins/kit/skills/$s/SKILL.md" || ph_bad+="$s "
   done
   grep -qF 'Nunca entregue comando com placeholder' "$REPO/plugins/kit/templates/CLAUDE.project.md" || ph_bad+="CLAUDE.project.md "
@@ -1451,6 +1451,31 @@ if [ -z "$FILTER" ]; then
   [ -z "$via_epic" ] || size_bad+="'via /kit:epic': $via_epic "
   if [ -z "$size_bad" ]; then ok "spec e plano grandes: limites, pergunta única de quebra, M8 e README"
   else ko "spec e plano grandes: limites, pergunta única de quebra, M8 e README" "$size_bad"; fi
+
+  # Revisor de SPEC e drift: ids fixos, veredito na ultima linha, somente leitura e chamados pelas skills.
+  SR="$REPO/plugins/kit/agents/spec-reviewer.md"
+  DC="$REPO/plugins/kit/agents/drift-checker.md"
+  sd_bad=""
+  for id in B1 B2 B3 B4 B5 M1 M2 M3 M4 M5 M6 M7 M8 M9; do grep -qE "^- \*\*$id\*\* " "$SR" || sd_bad+="spec-reviewer:$id "; done
+  for id in D1 D2 D3 D4 D5; do grep -qE "^- \*\*$id\*\* " "$DC" || sd_bad+="drift-checker:$id "; done
+  for f in "$SR" "$DC"; do
+    tr -d '\r' <"$f" | grep -qx 'tools: Read, Grep, Glob' || sd_bad+="$(basename "$f"):tools "
+  done
+  grep -qF '## Calibração' "$SR" && grep -qF '**O que a SPEC propõe**' "$SR" && grep -qF '`reprovado`' "$SR" && grep -qF '`aprovado`' "$SR" || sd_bad+="spec-reviewer:saída "
+  grep -qF '`divergente`' "$DC" && grep -qF '`sem divergência`' "$DC" && grep -qF 'corrigir: spec | código' "$DC" || sd_bad+="drift-checker:saída "
+  grep -qF 'kit:spec-reviewer' "$SPEC_MD" && grep -qF '(decisão de produto)' "$SPEC_MD" || sd_bad+="spec:revisão "
+  grep -qF 'kit:spec-reviewer' "$REPO/plugins/kit/skills/epic/SKILL.md" || sd_bad+="epic:revisão "
+  DRIFT_MD="$REPO/plugins/kit/skills/drift/SKILL.md"
+  grep -qF 'kit:drift-checker' "$DRIFT_MD" && grep -qF 'disable-model-invocation: true' "$DRIFT_MD" && grep -qF 'nenhuma caixa `- [ ]`' "$DRIFT_MD" || sd_bad+="drift:skill "
+  tr -d '\r' <"$DRIFT_MD" | grep -qF 'allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**) Bash(git rev-parse *) Edit(docs/specs/DRIFT.md) Write(docs/specs/DRIFT.md)' || sd_bad+="drift:allowed-tools "
+  for a in spec-reviewer drift-checker; do
+    grep -qF "$a" "$REPO/plugins/kit/skills/init/adopt.md" || sd_bad+="adopt:$a "
+    grep -qF "$a" "$REPO/CONTRIBUTING.md" || sd_bad+="CONTRIBUTING:$a "
+    grep -qF "$a" "$REPO/docs/reference.md" || sd_bad+="reference:$a "
+  done
+  grep -qF '/kit:drift' "$REPO/README.md" || sd_bad+="README:drift "
+  if [ -z "$sd_bad" ]; then ok "spec-reviewer e drift-checker: ids, saída, somente leitura, chamados pelas skills e documentados"
+  else ko "spec-reviewer e drift-checker: ids, saída, somente leitura, chamados pelas skills e documentados" "$sd_bad"; fi
 
   # Notificacoes: opcionais, perguntadas uma vez, sem duplicar alertas existentes nem guardar segredo.
   nt_bad=""

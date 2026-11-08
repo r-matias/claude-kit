@@ -34,5 +34,5 @@ disable-model-invocation: true
 - ...
 ```
 
-5. Para cada fatia, grave `docs/specs/<epico>/<n>-<fatia>/SPEC.md` no formato da skill `/kit:spec` (objetivo, escopo, fora de escopo, decisões, arquivos e interfaces, casos de borda, verificação ponta a ponta).
+5. Para cada fatia, grave `docs/specs/<epico>/<n>-<fatia>/SPEC.md` no formato da skill `/kit:spec` (objetivo, escopo, fora de escopo, decisões, arquivos e interfaces, casos de borda, verificação ponta a ponta). Depois chame o `kit:spec-reviewer` para todas as SPECs ao mesmo tempo, um por fatia, numa única mensagem, e trate os achados como no passo 6 do `/kit:spec`: corrija BLOCKER e MAJOR, junte as decisões de produto numa rodada de `AskUserQuestion` e revise de novo só as SPECs alteradas, até `aprovado` (no máximo 3 rodadas).
 6. Recomende: cada fatia numa sessão própria (`/rename <epico>-fatia-<n>`), seguindo `/kit:plan` → `/kit:execute`, em worktree se quiser paralelizar. Ao concluir uma fatia, atualize o status no EPIC.md.

@@ -9,11 +9,11 @@ claude-kit/
 ├── .claude-plugin/marketplace.json     # este repo é o marketplace
 ├── plugins/kit/
 │   ├── .claude-plugin/plugin.json
-│   ├── skills/{setup,init,map,spec,plan,execute,epic,fix,hunt}/SKILL.md
+│   ├── skills/{setup,init,map,spec,plan,execute,epic,fix,hunt,drift}/SKILL.md
 │   ├── skills/init/{adopt.md,stacks.md}  # modo adotar e referência de stacks
 │   ├── skills/plan/template.md          # formato do PLAN.md
 │   ├── skills/map/output.md             # formato das rules e do codemap gerados
-│   ├── agents/{investigator,code-reviewer,plan-reviewer,security-reviewer,test-writer,mapper,map-verifier}.md
+│   ├── agents/{investigator,code-reviewer,spec-reviewer,plan-reviewer,security-reviewer,drift-checker,test-writer,mapper,map-verifier}.md
 │   ├── hooks/hooks.json
 │   ├── scripts/{lib.sh,guard-bash.sh,guard-files.sh,format.sh,advise.sh,verify-gate.sh,session-context.sh,pre-compact.sh,notify.sh}
 │   ├── scripts/{inventory.sh,merge-json.sh}   # apoio do /kit:init, não são hooks
@@ -32,14 +32,15 @@ claude-kit/
     ├── run-adopt-test.sh               # aceite ao vivo do modo adotar e do deny de curl/wget (usa claude -p)
     ├── run-skills-live-test.sh         # aceite ao vivo do carregamento das skills e do deny de skill/agent
     ├── run-guards-live-test.sh         # aceite ao vivo do onFailure: guarda ausente bloqueia
-    ├── run-plan-live-test.sh           # aceite ao vivo do /kit:plan e do tamanho do /kit:spec: lacunas, plano e spec grandes
+    ├── run-plan-live-test.sh           # aceite ao vivo do /kit:plan e do /kit:spec: lacunas, plano e spec grandes, spec pequena revisada
+    ├── run-drift-live-test.sh          # aceite ao vivo do /kit:drift: só SPEC concluída conferida, puladas com motivo, só o DRIFT.md gravado
     ├── run-execute-live-test.sh        # aceite ao vivo do /kit:execute: waves, paralelo, checkpoint com revisão
-    ├── run-reviewers-live-test.sh      # calibração ao vivo dos revisores: id e severidade certos, aprovado/reprovado
+    ├── run-reviewers-live-test.sh      # calibração ao vivo dos revisores e do drift-checker: id e severidade certos, aprovado/reprovado
     ├── fixtures/*.json
     ├── sample/                         # projeto mínimo com kit.json de comandos true/false
     ├── plan/{repo,specs}/              # projeto mínimo e SPECs com lacuna técnica e de produto
     ├── execute/                        # projeto com PLAN.md de 2 waves e teste de aceite independente
-    ├── reviewers/{repo,plans,diffs}/   # SPEC com migração, plano e diff limpos e com defeitos plantados
+    ├── reviewers/{repo,plans,diffs,specs,drift}/   # SPEC com migração, plano, diff, SPEC e implementação limpos e com defeitos plantados
     └── adopt/repo/                     # repo com .claude/ próprio (guardado como _claude/, _CLAUDE.md, _mcp.json)
 ```
 
@@ -70,7 +71,9 @@ Cada caso monta um workspace novo a partir de `tests/sample/` (repo git com `kit
 bash tests/run-adopt-test.sh [--keep]   # aceite ao vivo do modo adotar
 bash tests/run-skills-live-test.sh      # skills carregam sem commits e fora de repo git; deny de skill/agent do kit
 bash tests/run-guards-live-test.sh      # guarda ausente bloqueia (onFailure), com controle e contraprova
-bash tests/run-plan-live-test.sh [--keep]   # /kit:plan decide lacuna técnica, pergunta produto e tamanho; /kit:spec grande pergunta a quebra
+bash tests/run-plan-live-test.sh [--keep]   # /kit:plan decide lacuna técnica, pergunta produto e tamanho; /kit:spec grande pergunta a quebra, pequena grava e revisa
+bash tests/run-drift-live-test.sh [--keep]   # /kit:drift: checker só na SPEC concluída, DRIFT.md com [D2] e puladas
+bash tests/run-reviewers-live-test.sh [--keep]   # calibração dos revisores e do drift-checker
 bash tests/run-permissions-live-test.sh [--keep]   # ${CLAUDE_PLUGIN_ROOT} e ${CLAUDE_SKILL_DIR} em allowed-tools; Agent(plugin:x) em deny
 bash tests/run-execute-live-test.sh [--keep]   # /kit:execute: paralelo disjunto, serialização, checkpoint com revisão
 ```
@@ -80,6 +83,8 @@ Copia `tests/adopt/repo/` (que tem hooks, skills, agent, rule, CLAUDE.md, settin
 O `run-guards-live-test.sh` exige Claude Code ≥ 2.1.295. Ele apaga o script de um guarda numa cópia do plugin e confere no disco que o comando (Bash) ou a escrita (Write) que criaria um arquivo-sonda não aconteceu. O controle, com o script presente, cria a sonda. A contraprova, com o script ausente e sem `onFailure`, também cria, o que mostra que o bloqueio vem do campo.
 
 O `run-plan-live-test.sh` copia `tests/plan/repo/` com uma SPEC de `tests/plan/specs/` e roda `/kit:plan` via `claude -p`. Com a SPEC de lacuna técnica (último login), confere o formato do PLAN.md (seções na ordem, cada tarefa com `files`/`behavior`/`action`/`verify`/`done`, cada wave com `Paralelo:` e checkpoint, wave final F1 a F3 sem smoke porque a fixture não tem, caixa só onde deve, `lastLoginAt` em Interfaces) e Decisões com data, origem `kit` e motivo, sem `AskUserQuestion`, com o `kit:plan-reviewer` chamado, `docs/data-model.md` atualizado, nenhum código de produção alterado e resumo curto. Com a SPEC de lacuna de produto (bloqueio sem limite de tentativas definido), confere que a skill pergunta sobre o limite e não grava o PLAN.md. Com a SPEC grande (20 operações em módulos próprios), confere que a skill pergunta a quebra em fatias (citando o `EPIC.md` que a sessão grava), com a opção de manter, e não grava PLAN.md nem EPIC.md; com a mesma SPEC e a linha `· usuário · tamanho: manter` em Decisões, grava um plano acima de 15 tarefas ou 6 waves sem perguntar e copia a linha para Decisões do PLAN.md. O `/kit:spec` com essa SPEC como briefing pergunta quebrar, manter ou reduzir e não grava SPEC.md nem EPIC.md. Como `claude -p` não tem usuário, vale a chamada ao `AskUserQuestion` ou a pergunta no texto final.
+
+O `run-drift-live-test.sh` monta o repo de `tests/reviewers/` com três SPECs: uma com plano concluído e implementação divergente (limite do apelido 50 em vez de 30), uma com plano em andamento e uma sem plano. Roda `/kit:drift` sem `Write` em `--allowedTools` e sem `acceptEdits`, para provar que a escrita do `DRIFT.md` vem do `allowed-tools` da skill, e confere: um único `kit:drift-checker`, só para a SPEC concluída; `DRIFT.md` com data e commit no cabeçalho, `[D2]` e `corrigir: código` na seção dela e as outras duas em Puladas com o motivo; nenhum outro arquivo alterado; resumo de até 5 linhas citando o `DRIFT.md` e o `/kit:fix`.
 
 O `run-execute-live-test.sh` exige `node` e roda `/kit:execute` via `claude -p` no PLAN.md de `tests/execute/repo/`: a wave 1 tem duas tarefas paralelas com arquivos disjuntos e a wave 2 marca como paralelas duas tarefas que tocam o mesmo arquivo. Confere: um teste de aceite que o modelo não viu (`tests/execute/aceite.test.js`) passa; todas as caixas marcadas, cada tarefa com Evidência e cada checkpoint com Evidência e Revisão do `code-reviewer`; `Base:` nas duas waves; as tarefas 1 e 2 disparadas em subagents na mesma mensagem e as 3 e 4 não; a sequência registrada em Decisões; a revisão do checkpoint 1 só depois de os dois subagents voltarem; `code-reviewer` chamado ao menos 3 vezes (duas waves e F1) e `security-reviewer` na F1; nenhum commit. É a sessão mais longa dos testes ao vivo.
 

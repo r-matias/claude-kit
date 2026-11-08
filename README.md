@@ -82,7 +82,7 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 
 **Feature:** `/kit:spec` → `/clear` → `/kit:plan` → `/kit:execute`
 
-1. `/kit:spec` entrevista você e grava `docs/specs/<slug>/SPEC.md` (objetivo, escopo, fora de escopo, como verificar).
+1. `/kit:spec` entrevista você e grava `docs/specs/<slug>/SPEC.md` (objetivo, escopo, fora de escopo, como verificar). Antes de entregar, um revisor que não viu a entrevista lê só a SPEC e o código: se não consegue resumir o objetivo, se um item admite duas leituras, se a SPEC cria algo que o código já tem ou se falta um caso de borda alcançável, a SPEC é corrigida. Quando a correção é decisão de produto, ele pergunta a você.
    - `/kit:spec exportar o relatório de vendas em CSV`
    - `/kit:spec usuário pode trocar o e-mail com confirmação por link`
 2. `/clear` limpa o contexto antes de planejar.
@@ -124,6 +124,7 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 
 | `/kit:setup` | Avançado: conferir a máquina sem abrir um projeto | Só um resumo: não grava nada | Só manual |
 | `/kit:map` | Avançado: mapear de novo, uma área ou só o que mudou | `.claude/rules/map-*.md`, `docs/codemap.md` | Só manual |
+| `/kit:drift` | Avançado: conferir se as SPECs já entregues ainda batem com o código | `docs/specs/DRIFT.md` | Só manual |
 
 "Sozinho" quer dizer que o Claude pode escolher o comando ao reconhecer o pedido, sem você digitar a barra.
 
@@ -166,6 +167,17 @@ O resultado fica no git:
 Texto seu entre `<!-- manual -->` e `<!-- /manual -->` sobrevive ao remapeamento. O kit só regrava arquivos com o cabeçalho `kit:map`; rules que você escreveu nunca são tocadas. Os investigadores de `/kit:plan`, `/kit:fix` e `/kit:hunt` leem o codemap antes de explorar e confiam no código quando divergem. Quando o codemap fica mais de 50 commits atrás (`map.stale_after_commits`), o início da sessão sugere `/kit:map --update`.
 
 **Custo.** Cada unidade é um subagent, mais dois transversais e um verificador a cada 8 unidades, em ondas de até 8 em paralelo. Ordem de grandeza: ~50 mil tokens por agent; um projeto de 3 mil arquivos dá ~20 unidades, ~25 agents. Antes de lançar, o `/kit:map` mostra o plano; acima de 30 agents (`map.max_agents`) ele pergunta. Para gastar menos, mapeie uma área ou aumente `map.unit_max_files`/`map.unit_max_loc`. O `--update` só paga as unidades que mudaram.
+
+### `/kit:drift`
+
+Com o tempo, o código muda e a SPEC que o descreveu fica para trás. O `/kit:drift` pega cada SPEC com plano concluído (sem nenhuma caixa `- [ ]` no `PLAN.md`), entrega cada uma a um subagent somente leitura que compara o que ela promete com o código de hoje, e grava `docs/specs/DRIFT.md` só com as diferenças. Cada diferença diz o que corrigir: a SPEC, quando uma Decisão registra a mudança, ou o código, quando nada a justifica. Ele não corrige nada; o próximo passo é `/kit:fix` ou editar a SPEC.
+
+```text
+/kit:drift                                 # todas as SPECs concluídas em docs/specs/
+/kit:drift docs/specs/export-csv/SPEC.md   # só uma, mesmo com plano em andamento
+```
+
+Spec em andamento ou sem plano fica de fora e aparece em "Puladas". Custa um subagent por SPEC, até 8 em paralelo.
 
 ## O que o kit faz sozinho
 

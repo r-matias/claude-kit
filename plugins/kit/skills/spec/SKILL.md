@@ -49,4 +49,5 @@ allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
 1. <passo executável que prova que a feature funciona, com comando do kit.json ou roteiro manual>
 ```
 
-6. Mostre o caminho do arquivo e recomende: `/clear` e então `/kit:plan docs/specs/<slug>/SPEC.md`. Na quebra, mostre o `EPIC.md` e recomende o `/kit:plan` da SPEC da fatia 1.
+6. **Revisão.** Chame o `kit:spec-reviewer` com o caminho da SPEC.md (na quebra, o passo 5 do `/kit:epic` já revisa cada fatia). Cada achado vem com o id da regra e a severidade fixa dele. Corrija na SPEC.md todo BLOCKER e MAJOR. Se a correção é decisão de produto ou de escopo (o revisor marca `(decisão de produto)`), junte essas numa rodada de `AskUserQuestion` antes de corrigir e registre a resposta em Decisões. Chame de novo até a última linha ser `aprovado` (no máximo 3 rodadas; se sobrar BLOCKER, diga qual, com o id).
+7. Mostre o caminho do arquivo, o resultado da revisão e recomende: `/clear` e então `/kit:plan docs/specs/<slug>/SPEC.md`. Na quebra, mostre o `EPIC.md` e recomende o `/kit:plan` da SPEC da fatia 1.

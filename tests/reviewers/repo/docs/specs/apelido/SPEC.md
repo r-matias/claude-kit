@@ -1,7 +1,7 @@
 # Apelido de usuário
 
 ## Objetivo
-Cada usuário pode ter um apelido, exibido no lugar do nome.
+Usuários querem ser chamados por um nome curto escolhido por eles, e não pelo nome de cadastro. Esta entrega guarda e valida o apelido de cada usuário; a exibição no lugar do nome vem na próxima.
 
 ## Escopo
 - Migração `scripts/migrar-apelido.js` acrescenta `apelido: ""` a todo usuário de `data/users.json` que ainda não tem o campo.
@@ -10,6 +10,10 @@ Cada usuário pode ter um apelido, exibido no lugar do nome.
 
 ## Fora de escopo
 - Tela de edição do apelido.
+- Exibir o apelido nas telas e listagens: fica para a próxima entrega.
+
+## Decisões
+- Apelido repetido entre usuários é permitido — o apelido não identifica ninguém; o `id` continua sendo a chave.
 
 ## Arquivos e interfaces envolvidos
 - `scripts/migrar-apelido.js` — migração idempotente de `data/users.json` (caminho em `USERS_FILE`, como em `src/store.js`)

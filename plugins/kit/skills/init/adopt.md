@@ -42,8 +42,8 @@ Cada peça recebe um destino; nenhum muda o arquivo da peça:
 
 Equivalentes do kit para comparar:
 - Hooks: `guard-bash` (comandos destrutivos), `guard-files` (segredos, `protected_paths` com mensagem por item), `format` (formatter por glob), `advise` (avisos `coupled_changes` com `level: "warn"` na edição), `verify-gate` (build/teste, `key_parity`, `coupled_changes` no Stop, em todos os repositórios da sessão), `session-context` e `pre-compact` (branch, alterados, planos ativos, snapshot na compactação). Comportamento exato no README do kit.
-- Skills: `spec`, `plan`, `execute`, `epic`, `fix`, `hunt`, `map`.
-- Agents: `investigator`, `code-reviewer`, `plan-reviewer`, `security-reviewer`, `test-writer`, `mapper`, `map-verifier`.
+- Skills: `spec`, `plan`, `execute`, `epic`, `fix`, `hunt`, `map`, `drift`.
+- Agents: `investigator`, `code-reviewer`, `spec-reviewer`, `plan-reviewer`, `security-reviewer`, `drift-checker`, `test-writer`, `mapper`, `map-verifier`.
 
 **Sobreposições:** dois hooks bloqueando a mesma coisa (mensagens duplicadas, tempo extra) e duas skills ou agents de review com escopos parecidos (Claude escolhe um de forma imprevisível). Quando a dona é a peça do projeto, o kit se desliga pelo deny do merge aditivo. Quando a dona é o kit, a peça do projeto fica como está e `docs/claude-adoption.md` registra qual é e como desligá-la.
 

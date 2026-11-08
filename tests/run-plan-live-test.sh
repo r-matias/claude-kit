@@ -3,8 +3,9 @@
 # must_haves/Interfaces/waves/wave final; lacuna de
 # produto vira pergunta e nao gera PLAN.md. Tamanho: SPEC de 20 operacoes vira pergunta de quebra
 # sem PLAN.md; com a Decisao "tamanho: manter" do usuario, grava sem perguntar. O /kit:spec com
-# escopo grande pergunta a quebra em fatias e nao grava. Confere no disco e no transcript (stream-json).
-# Custa cinco sessoes do Claude Code (alguns minutos cada). Uso: tests/run-plan-live-test.sh [--keep]
+# escopo grande pergunta a quebra em fatias e nao grava; com escopo pequeno grava a SPEC.md e chama o
+# kit:spec-reviewer. Confere no disco e no transcript (stream-json).
+# Custa seis sessoes do Claude Code (alguns minutos cada). Uso: tests/run-plan-live-test.sh [--keep]
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -118,7 +119,7 @@ P="$d/docs/specs/lacuna-produto/PLAN.md"
 calls="$(tools_called "$d.jsonl")"
 text="$(final_text "$d.jsonl")"
 # Em claude -p o AskUserQuestion pode nao estar disponivel; vale a chamada ou a pergunta no texto final.
-if grep -qx 'AskUserQuestion' <<<"$calls" || grep -q '?' <<<"$text"; then ok "pergunta ao usuário"; else ko "pergunta ao usuário" "$(tail -n 10 <<<"$text")"; fi
+if grep -qx 'AskUserQuestion' <<<"$calls" || grep -qE '\?|[Rr]esponda|[Ee]scolha' <<<"$text"; then ok "pergunta ao usuário"; else ko "pergunta ao usuário" "$(tail -n 10 <<<"$text")"; fi
 if grep -qiE 'tentativas|limite' <<<"$text$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.name == "AskUserQuestion") | .input | tostring' "$d.jsonl" 2>/dev/null)"; then
   ok "pergunta trata do limite de tentativas"
 else ko "pergunta trata do limite de tentativas" "$(tail -n 10 <<<"$text")"; fi
@@ -128,7 +129,7 @@ echo "plano grande sem decisão"
 d="$(run_plan grande)"
 calls="$(tools_called "$d.jsonl")"
 q="$(question_text "$d.jsonl")"
-if grep -qx 'AskUserQuestion' <<<"$calls" || grep -q '?' <<<"$q"; then ok "pergunta ao usuário"; else ko "pergunta ao usuário" "$(tail -n 10 <<<"$q")"; fi
+if grep -qx 'AskUserQuestion' <<<"$calls" || grep -qE '\?|[Rr]esponda|[Ee]scolha' <<<"$q"; then ok "pergunta ao usuário"; else ko "pergunta ao usuário" "$(tail -n 10 <<<"$q")"; fi
 if grep -qi 'fatia' <<<"$q" && grep -qiE 'EPIC\.md|épico' <<<"$q" && grep -qi 'manter' <<<"$q"; then ok "pergunta propõe quebra em fatias, com manter"
 else ko "pergunta propõe quebra em fatias, com manter" "$(tail -n 10 <<<"$q")"; fi
 if [ ! -f "$d/docs/specs/grande/PLAN.md" ]; then ok "PLAN.md não gravado"; else ko "PLAN.md não gravado" "$(grep -cE '^- \[ \] [0-9]+\. ' "$d/docs/specs/grande/PLAN.md") tarefas"; fi
@@ -153,12 +154,28 @@ cp "$HERE/plan/specs/grande/SPEC.md" "$d/briefing.md"
 run_claude "$d" "/kit:spec painel administrativo de usuários descrito em briefing.md. O briefing já responde tudo: escopo, decisões, casos de borda e verificação; não há perguntas em aberto."
 calls="$(tools_called "$d.jsonl")"
 q="$(question_text "$d.jsonl")"
-if grep -qx 'AskUserQuestion' <<<"$calls" || grep -q '?' <<<"$q"; then ok "pergunta ao usuário"; else ko "pergunta ao usuário" "$(tail -n 10 <<<"$q")"; fi
+if grep -qx 'AskUserQuestion' <<<"$calls" || grep -qE '\?|[Rr]esponda|[Ee]scolha' <<<"$q"; then ok "pergunta ao usuário"; else ko "pergunta ao usuário" "$(tail -n 10 <<<"$q")"; fi
 if grep -qi 'fatia' <<<"$q" && grep -qiE 'EPIC\.md|épico' <<<"$q" && grep -qi 'manter' <<<"$q" && grep -qi 'reduzir' <<<"$q"; then
   ok "pergunta propõe quebra em fatias, manter ou reduzir"
 else ko "pergunta propõe quebra em fatias, manter ou reduzir" "$(tail -n 10 <<<"$q")"; fi
 written="$(find "$d/docs" \( -name SPEC.md -o -name EPIC.md \) 2>/dev/null)"
 if [ -z "$written" ]; then ok "nenhuma SPEC.md ou EPIC.md gravada antes da resposta"; else ko "nenhuma SPEC.md ou EPIC.md gravada antes da resposta" "$written"; fi
+
+echo "spec pequena com revisão"
+d="$(new_repo spec-pequena)"
+cp "$HERE/plan/specs/lacuna-tecnica/SPEC.md" "$d/briefing.md"
+run_claude "$d" "/kit:spec último login no perfil, descrito em briefing.md. O briefing já responde tudo: escopo, decisões, casos de borda e verificação; não há perguntas em aberto. Use o slug ultimo-login."
+calls="$(tools_called "$d.jsonl")"
+S="$(find "$d/docs/specs" -name SPEC.md 2>/dev/null | head -n 1)"
+if [ -n "$S" ]; then ok "SPEC.md gravada (${S#"$d"/})"; else ko "SPEC.md gravada" "$(final_text "$d.jsonl" | tail -n 10)"; fi
+[ -n "$S" ] || S="$d/sem-spec.md"
+for h in '## Objetivo' '## Escopo' '## Fora de escopo' '## Casos de borda' '## Verificação ponta a ponta'; do
+  grep -qx "$h" <(tr -d '\r' <"$S" 2>/dev/null) || { ko "SPEC.md com as seções do formato" "falta $h"; h=x; break; }
+done
+[ "$h" = x ] || ok "SPEC.md com as seções do formato"
+if grep -qx 'Agent:kit:spec-reviewer\|Task:kit:spec-reviewer' <<<"$calls"; then ok "kit:spec-reviewer chamado"; else ko "kit:spec-reviewer chamado" "$(tr '\n' ' ' <<<"$calls")"; fi
+if git -C "$d" diff --quiet HEAD -- src test data; then ok "nenhum código de produção alterado"; else ko "nenhum código de produção alterado" "$(git -C "$d" diff --stat HEAD -- src test data | tr '\n' ' ')"; fi
+if final_text "$d.jsonl" | grep -q '/kit:plan'; then ok "recomenda o /kit:plan"; else ko "recomenda o /kit:plan" "$(final_text "$d.jsonl" | tail -n 5)"; fi
 
 echo
 echo "$PASS passaram, $FAIL falharam"
