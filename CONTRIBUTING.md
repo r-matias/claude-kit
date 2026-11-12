@@ -7,6 +7,7 @@ Para quem mantém o kit. Uso e instalação estão no [README](README.md); o com
 ```text
 claude-kit/
 ├── .claude-plugin/marketplace.json     # este repo é o marketplace
+├── plugins/ts-lsp/                    # LSP de TypeScript com teto de memória (scripts/guard.mjs)
 ├── plugins/kit/
 │   ├── .claude-plugin/plugin.json
 │   ├── skills/{setup,init,map,spec,plan,execute,epic,fix,hunt,drift}/SKILL.md

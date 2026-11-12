@@ -68,14 +68,14 @@ Valores de partida. Confirme sempre contra o que o projeto realmente usa (script
 | Ruby | `rubygems.org`, `index.rubygems.org` |
 | PHP | `repo.packagist.org` |
 
-## Plugin LSP oficial
+## Plugin LSP
 
-Marketplace `claude-plugins-official` (já conhecido pelo Claude Code). O `setup.sh lsp` detecta pelos manifestos, confere o binário e devolve o comando de instalação; esta tabela é a mesma do script.
+Marketplace `claude-plugins-official` (já conhecido pelo Claude Code), menos Node/TS: o `ts-lsp@claude-kit` sobe o mesmo `typescript-language-server`, mas com o heap do tsserver limitado a 3072 MB e reinício quando a árvore do servidor passa de `KIT_TS_LSP_MAX_MB` (padrão 6144). O `typescript-lsp` oficial não tem teto e já chegou a dezenas de GB numa sessão longa. O `setup.sh lsp` detecta pelos manifestos, confere o binário e devolve o comando de instalação; esta tabela é a mesma do script.
 
 | Stack | Manifesto | Plugin (`enabledPlugins`) | Binário | Instalação |
 | --- | --- | --- | --- | --- |
 | .NET | `*.sln`, `*.csproj` | `csharp-lsp@claude-plugins-official` | `csharp-ls` | `dotnet tool install --global csharp-ls` |
-| Node/TS | `package.json`, `tsconfig.json` | `typescript-lsp@claude-plugins-official` | `typescript-language-server` | `npm install -g typescript-language-server typescript` |
+| Node/TS | `package.json`, `tsconfig.json` | `ts-lsp@claude-kit` | `typescript-language-server` | `npm install -g typescript-language-server typescript` |
 | Python | `pyproject.toml`, `requirements*.txt`, `setup.py`, `Pipfile` | `pyright-lsp@claude-plugins-official` | `pyright-langserver` | `npm install -g pyright` |
 | Go | `go.mod` | `gopls-lsp@claude-plugins-official` | `gopls` | `go install golang.org/x/tools/gopls@latest` |
 | Rust | `Cargo.toml` | `rust-analyzer-lsp@claude-plugins-official` | `rust-analyzer` | `rustup component add rust-analyzer` |

@@ -35,7 +35,7 @@ Se o kit consegue fazer, ele faz. Primeiro junta tudo o que vai propor, mostra o
 
 1. **Confere a máquina**: Claude Code, `git`, `bash` e `jq` (e `bwrap`/`socat` no Linux e no WSL2), e instala o que faltar.
 2. **Configura o projeto** (o adaptador), descrito abaixo.
-3. **Liga o LSP da linguagem**: acrescenta o plugin LSP oficial (`typescript-lsp`, `pyright-lsp`, `csharp-lsp`, `gopls-lsp`, ...) ao `.claude/settings.json` do projeto e instala o language server se faltar.
+3. **Liga o LSP da linguagem**: acrescenta o plugin LSP ao `.claude/settings.json` do projeto (`ts-lsp@claude-kit` para Node/TS, e os oficiais `pyright-lsp`, `csharp-lsp`, `gopls-lsp`, ...) e instala o language server se faltar. Veja [LSP de TypeScript com teto de memória](#lsp-de-typescript-com-teto-de-memória).
 4. **Verifica**: roda uma vez cada comando de `verify_on_stop` e mostra `ok` ou `falhou`.
 5. **Pergunta sobre notificações** (desligadas por padrão), avisando se você já tem alertas que seriam duplicados (ver [Notificações](#notificações)).
 6. **Mapeia o código**, se o projeto tiver mais de 300 arquivos de código ou mais de um repositório: roda o `/kit:map` ao final, sem perguntar (só pergunta se passar de 30 agents).
@@ -193,6 +193,19 @@ Sem você chamar nada, em todo projeto com o kit ligado:
 - **Gate de fim de turno.** Se o Claude mexeu em código, os comandos de verificação do projeto (build, testes relacionados) rodam antes de ele encerrar. Falhou: ele recebe o erro e continua corrigindo. O gate também confere regras do projeto, como "mudou a tela, atualize o manual" e "todo texto existe nas 3 línguas".
 - **Avisos.** Regras de acoplamento leves ("se mudou a API, confira o site") viram um lembrete para o Claude na hora da edição, sem bloquear nada.
 - **Contexto da sessão.** No início de cada sessão o Claude recebe a branch, os arquivos alterados e as tarefas pendentes do plano ativo. Antes de uma compactação, o kit salva esse estado e o devolve depois. Se faltar `jq` ou `git`, ou se o Claude Code estiver desatualizado, o aviso aparece aqui, com o comando para corrigir. O mesmo vale para um `docs/codemap.md` muito atrás do código: o aviso sugere `/kit:map --update`.
+
+## LSP de TypeScript com teto de memória
+
+O `typescript-lsp` oficial sobe o tsserver sem limite, e numa sessão longa ele já chegou a 40 GB de RAM. Por isso o `/kit:init` liga o `ts-lsp@claude-kit` no lugar (e grava `"typescript-lsp@claude-plugins-official": false` no projeto). Ele roda o mesmo `typescript-language-server`, com duas travas:
+
+- heap do tsserver limitado a 3072 MB (`maxTsServerMemory`);
+- a cada 30 s confere a memória da árvore do servidor (bytes privados no Windows, RSS no Linux/macOS); passou de 6144 MB, mata a árvore e o Claude Code sobe outro no próximo pedido (até 10 vezes por sessão).
+
+Para mudar os números, use `env` no `.claude/settings.json` do projeto: `KIT_TS_LSP_MAX_MB` (limite em MB) e `KIT_TS_LSP_INTERVAL_S` (intervalo em segundos). Num projeto que já existia, rode `/kit:init` de novo ou ligue à mão:
+
+```json
+"enabledPlugins": { "ts-lsp@claude-kit": true, "typescript-lsp@claude-plugins-official": false }
+```
 
 ## Ajustar o kit ao projeto
 

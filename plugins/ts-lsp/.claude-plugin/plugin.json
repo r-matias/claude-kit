@@ -1,0 +1,29 @@
+{
+  "name": "ts-lsp",
+  "version": "0.1.0",
+  "description": "TypeScript/JavaScript LSP com teto de memória: heap do tsserver limitado e reinício quando a árvore passa do limite",
+  "author": {
+    "name": "Rafael"
+  },
+  "lspServers": {
+    "typescript": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/guard.mjs"],
+      "extensionToLanguage": {
+        ".ts": "typescript",
+        ".tsx": "typescriptreact",
+        ".js": "javascript",
+        ".jsx": "javascriptreact",
+        ".mts": "typescript",
+        ".cts": "typescript",
+        ".mjs": "javascript",
+        ".cjs": "javascript"
+      },
+      "initializationOptions": {
+        "maxTsServerMemory": 3072
+      },
+      "restartOnCrash": true,
+      "maxRestarts": 10
+    }
+  }
+}

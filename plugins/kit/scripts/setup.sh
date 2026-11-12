@@ -25,9 +25,9 @@
 #     ou invalida vira uma linha; exit 1 se houver alguma. Sem problema: "ok guards".
 #
 #   setup.sh lsp [pasta]
-#     Plugins LSP oficiais das linguagens do projeto (pelos manifestos rastreados), um por linha:
+#     Plugins LSP das linguagens do projeto (pelos manifestos rastreados), um por linha:
 #     "lsp <plugin> <binario>: ok", "... falta — instale: <comando>" ou "... falta — sem instalação
-#     automática nesta plataforma". Linguagem sem plugin oficial nao aparece.
+#     automática nesta plataforma". Linguagem sem plugin na tabela nao aparece.
 #
 #   setup.sh plans [pasta]
 #     Planos com tarefa pendente e mais de 14 dias sem mudanca, um por linha.
@@ -232,7 +232,7 @@ cmd_guards() {
   return 1
 }
 
-# Plugins LSP oficiais por linguagem (marketplace claude-plugins-official), em templates/lsp-plugins.txt:
+# Plugins LSP por linguagem, em templates/lsp-plugins.txt (sem @marketplace no nome, claude-plugins-official):
 # plugin|binario|manifestos (nome do arquivo, * vale qualquer trecho)|instalacao ("macos:" = so no
 # macOS; vazio = sem instalacao automatica).
 LSP_TABLE_FILE="$HERE/../templates/lsp-plugins.txt"
@@ -244,12 +244,13 @@ cmd_lsp() {
   names="$(git -C "$dir" ls-files -co --exclude-standard 2>/dev/null | tr -d '\r' | awk -F/ '{ print $NF }' | sort -u)"
   while IFS='|' read -r plugin bin globs inst; do
     [ -n "$plugin" ] || continue
+    case "$plugin" in *@*) ;; *) plugin="$plugin@$LSP_MARKETPLACE" ;; esac
     printf '%s\n' "$names" | awk -v gl="$globs" '
       BEGIN { n = split(gl, g, " "); for (i = 1; i <= n; i++) { gsub(/\./, "\\.", g[i]); gsub(/\*/, ".*", g[i]); g[i] = "^" g[i] "$" } }
       { for (i = 1; i <= n; i++) if ($0 ~ g[i]) { found = 1; exit } }
       END { exit !found }' || continue
     if command -v "$bin" >/dev/null 2>&1; then
-      echo "lsp $plugin@$LSP_MARKETPLACE $bin: ok"
+      echo "lsp $plugin $bin: ok"
       continue
     fi
     case "$inst" in
@@ -257,9 +258,9 @@ cmd_lsp() {
     esac
     tool="${inst%% *}"
     if [ -n "$inst" ] && command -v "$tool" >/dev/null 2>&1; then
-      echo "lsp $plugin@$LSP_MARKETPLACE $bin: falta — instale: $inst"
+      echo "lsp $plugin $bin: falta — instale: $inst"
     else
-      echo "lsp $plugin@$LSP_MARKETPLACE $bin: falta — sem instalação automática nesta plataforma"
+      echo "lsp $plugin $bin: falta — sem instalação automática nesta plataforma"
     fi
   done < <(tr -d '\r' <"$LSP_TABLE_FILE")
   return 0

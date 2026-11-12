@@ -1116,12 +1116,12 @@ exit 0
 ' >"$LR/bin/$t"; chmod +x "$LR/bin/$t"; done
   LSP_PATH="$LR/bin:$LINUX_BIN:$(PATH="$(PATH="$NOCLAUDE_PATH" path_without gopls)" path_without jdtls)"
   out="$(run_setup "$C1" "$LSP_PATH" lsp "$LR" 2>&1)"; code=$?
-  if [ "$code" = "0" ] && grep -qxF 'lsp typescript-lsp@claude-plugins-official typescript-language-server: ok' <<<"$out" &&
+  if [ "$code" = "0" ] && grep -qxF 'lsp ts-lsp@claude-kit typescript-language-server: ok' <<<"$out" &&
     grep -qxF 'lsp gopls-lsp@claude-plugins-official gopls: falta — instale: go install golang.org/x/tools/gopls@latest' <<<"$out" &&
     grep -qxF 'lsp jdtls-lsp@claude-plugins-official jdtls: falta — sem instalação automática nesta plataforma' <<<"$out" &&
     [ "$(grep -c . <<<"$out")" = "3" ]; then
-    ok "setup lsp: plugin oficial por linguagem, binário ok, ausente com instalação ou sem instalação"
-  else ko "setup lsp: plugin oficial por linguagem, binário ok, ausente com instalação ou sem instalação" "exit $code, $out"; fi
+    ok "setup lsp: plugin por linguagem (ts-lsp do kit, demais oficiais), binário ok, ausente com instalação ou sem instalação"
+  else ko "setup lsp: plugin por linguagem (ts-lsp do kit, demais oficiais), binário ok, ausente com instalação ou sem instalação" "exit $code, $out"; fi
   out="$(run_setup "$C1" "$LR/bin:$MAC_BIN:$(PATH="$NOCLAUDE_PATH" path_without jdtls)" lsp "$LR" 2>&1)"
   if grep -qF 'jdtls: falta' <<<"$out" && { command -v brew >/dev/null 2>&1 || grep -qF 'sem instalação automática' <<<"$out"; }; then
     ok "setup lsp: instalação só do macOS não vale fora dele e exige a ferramenta"
@@ -1361,8 +1361,8 @@ if [ -z "$FILTER" ]; then
     "$REPO/README.md" "$REPO/CONTRIBUTING.md" "$REPO/docs" "$REPO/plugins/kit" || true)"
   if [ -z "$manual" ]; then ok "nenhum resto do fluxo de sugestão (kit-settings.suggested) em docs, skills e scripts"; else ko "nenhum resto do fluxo de sugestão" "$manual"; fi
   # A tabela LSP do stacks.md tem os mesmos plugins e binarios do templates/lsp-plugins.txt.
-  lsp_tpl="$(tr -d '\r' <"$REPO/plugins/kit/templates/lsp-plugins.txt" | awk -F'|' 'NF { print $1 "@claude-plugins-official " $2 }' | sort)"
-  lsp_doc="$(tr -d '\r' <"$REPO/plugins/kit/skills/init/stacks.md" | awk -F'|' '/@claude-plugins-official/ { p = $4; b = $5; gsub(/[ `]/, "", p); gsub(/[ `]/, "", b); print p " " b }' | sort)"
+  lsp_tpl="$(tr -d '\r' <"$REPO/plugins/kit/templates/lsp-plugins.txt" | awk -F"|" 'NF { p = $1; if (p !~ /@/) p = p "@claude-plugins-official"; print p " " $2 }' | sort)"
+  lsp_doc="$(tr -d '\r' <"$REPO/plugins/kit/skills/init/stacks.md" | awk -F'|' 'NF > 5 && $4 ~ /@/ { p = $4; b = $5; gsub(/[ `]/, "", p); gsub(/[ `]/, "", b); print p " " b }' | sort)"
   if [ -n "$lsp_tpl" ] && [ "$lsp_tpl" = "$lsp_doc" ]; then ok "stacks.md: tabela LSP igual a templates/lsp-plugins.txt"
   else ko "stacks.md: tabela LSP igual a templates/lsp-plugins.txt" "$(diff <(printf '%s\n' "$lsp_tpl") <(printf '%s\n' "$lsp_doc") | tr '\n' ' ')"; fi
   lsp_marketplace="${HOME}/.claude/plugins/marketplaces/claude-plugins-official/.claude-plugin/marketplace.json"
@@ -1370,11 +1370,39 @@ if [ -z "$FILTER" ]; then
     lsp_missing=""
     while IFS='|' read -r plugin bin _; do
       [ -n "$plugin" ] || continue
+      case "$plugin" in *@*) continue ;; esac
       jq -e --arg n "$plugin" --arg b "$bin" '[.plugins[] | select(.name == $n) | .lspServers[]?.command] | index($b) != null' "$lsp_marketplace" >/dev/null 2>&1 || lsp_missing+="$plugin/$bin "
     done < <(tr -d '\r' <"$REPO/plugins/kit/templates/lsp-plugins.txt")
     if [ -z "$lsp_missing" ]; then ok "lsp-plugins.txt: nomes e binários conferem com o marketplace oficial instalado"; else ko "lsp-plugins.txt: nomes e binários conferem com o marketplace oficial" "$lsp_missing"; fi
   else
     echo "  pulado conferência com o marketplace oficial (não instalado)"
+  fi
+
+  # ts-lsp: publicado no marketplace, guard com teto de heap; o guard repassa o stdio e mata a arvore acima do limite.
+  TSL="$REPO/plugins/ts-lsp"
+  if jq -e '.plugins[] | select(.name == "ts-lsp" and .source == "./plugins/ts-lsp")' "$REPO/.claude-plugin/marketplace.json" >/dev/null 2>&1 &&
+    jq -e '.lspServers.typescript | .command == "node" and .args == ["${CLAUDE_PLUGIN_ROOT}/scripts/guard.mjs"] and .initializationOptions.maxTsServerMemory > 0 and .restartOnCrash == true' "$TSL/.claude-plugin/plugin.json" >/dev/null 2>&1 &&
+    [ -f "$TSL/scripts/guard.mjs" ]; then ok "ts-lsp: no marketplace, guard.mjs como servidor e heap do tsserver limitado"
+  else ko "ts-lsp: no marketplace, guard.mjs como servidor e heap do tsserver limitado" "$(jq -c '.lspServers' "$TSL/.claude-plugin/plugin.json" 2>&1)"; fi
+  if command -v node >/dev/null 2>&1; then
+    GD="$(mktemp -d "$TMP_ALL/tslsp.XXXXXX")"
+    printf '%s\n' "const keep = []; for (let i = 0; i < Number(process.env.FAKE_MB || 0); i++) keep.push(Buffer.alloc(1048576, 1));" \
+      "require('fs').writeFileSync(process.env.FAKE_PID, String(process.pid));" \
+      "process.stdin.on('data', (d) => process.stdout.write('eco:' + d)); process.stdin.on('end', () => process.exit(0));" >"$GD/fake.cjs"
+    out="$(printf 'oi' | KIT_TS_LSP_SERVER="$GD/fake.cjs" FAKE_PID="$GD/p1" timeout 20 node "$TSL/scripts/guard.mjs" 2>&1)"; code=$?
+    if [ "$code" = "0" ] && [ "$out" = "eco:oi" ]; then ok "ts-lsp guard: repassa stdin e stdout do servidor"; else ko "ts-lsp guard: repassa stdin e stdout do servidor" "exit $code, $out"; fi
+    out="$(KIT_TS_LSP_SERVER="$GD/fake.cjs" FAKE_PID="$GD/p2" FAKE_MB=300 KIT_TS_LSP_MAX_MB=150 KIT_TS_LSP_INTERVAL_S=1 timeout 40 node "$TSL/scripts/guard.mjs" 2>&1 < <(sleep 30))"; code=$?
+    sleep 1
+    gpid="$(cat "$GD/p2" 2>/dev/null)"; alive=0
+    case "$(uname -s)" in
+      MINGW* | MSYS* | CYGWIN*) tasklist //FI "PID eq $gpid" 2>/dev/null | grep -q node && alive=1 ;;
+      *) kill -0 "$gpid" 2>/dev/null && alive=1 ;;
+    esac
+    if [ "$code" = "1" ] && [ -n "$gpid" ] && [ "$alive" = "0" ] && grep -qF '(limite 150 MB); reiniciando' <<<"$out"; then
+      ok "ts-lsp guard: acima do limite mata o servidor e sai com 1"
+    else ko "ts-lsp guard: acima do limite mata o servidor e sai com 1" "exit $code, $out"; fi
+  else
+    echo "  pulado guard do ts-lsp (sem node)"
   fi
 
   TPL="$REPO/plugins/kit/skills/plan/template.md"

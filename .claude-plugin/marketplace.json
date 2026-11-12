@@ -9,6 +9,11 @@
       "name": "kit",
       "source": "./plugins/kit",
       "description": "Fluxos, revisores e guardas independentes de stack"
+    },
+    {
+      "name": "ts-lsp",
+      "source": "./plugins/ts-lsp",
+      "description": "TypeScript/JavaScript LSP com teto de memória no tsserver"
     }
   ]
 }
