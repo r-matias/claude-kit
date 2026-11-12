@@ -196,16 +196,38 @@ Sem você chamar nada, em todo projeto com o kit ligado:
 
 ## LSP de TypeScript com teto de memória
 
-O `typescript-lsp` oficial sobe o tsserver sem limite, e numa sessão longa ele já chegou a 40 GB de RAM. Por isso o `/kit:init` liga o `ts-lsp@claude-kit` no lugar (e grava `"typescript-lsp@claude-plugins-official": false` no projeto). Ele roda o mesmo `typescript-language-server`, com duas travas:
+O `typescript-lsp` oficial sobe o tsserver sem limite de memória, e numa sessão longa ele já chegou a 40 GB de RAM. Por isso o `/kit:init` liga o `ts-lsp@claude-kit` no lugar e grava `"typescript-lsp@claude-plugins-official": false` no projeto, para os dois não subirem juntos. O `ts-lsp` roda o mesmo `typescript-language-server` com dois limites:
 
-- heap do tsserver limitado a 3072 MB (`maxTsServerMemory`);
-- a cada 30 s confere a memória da árvore do servidor (bytes privados no Windows, RSS no Linux/macOS); passou de 6144 MB, mata a árvore e o Claude Code sobe outro no próximo pedido (até 10 vezes por sessão).
+| Limite | Padrão | Ajuste | Ao passar |
+| --- | --- | --- | --- |
+| Heap de cada tsserver (`maxTsServerMemory`) | 3072 MB | fixo no plugin | o tsserver cai e o Claude Code sobe outro |
+| Memória total do LSP (language server + tsservers) | 6144 MB | `KIT_TS_LSP_MAX_MB` | o guard encerra todos e o Claude Code sobe outro |
+| Intervalo da conferência | 30 s | `KIT_TS_LSP_INTERVAL_S` | |
 
-Para mudar os números, use `env` no `.claude/settings.json` do projeto: `KIT_TS_LSP_MAX_MB` (limite em MB) e `KIT_TS_LSP_INTERVAL_S` (intervalo em segundos). Num projeto que já existia, rode `/kit:init` de novo ou ligue à mão:
+A memória total é a do processo (bytes privados no Windows, RSS no Linux/macOS), não só o heap, porque o vazamento pode ficar fora dele. Depois de um corte, o servidor volta sozinho no próximo uso do LSP, até 10 vezes por sessão; o custo é o LSP recarregar o projeto.
+
+Para mudar o limite ou o intervalo num projeto, use `env` no `.claude/settings.json` dele:
+
+```json
+"env": { "KIT_TS_LSP_MAX_MB": "4096", "KIT_TS_LSP_INTERVAL_S": "15" }
+```
+
+Num projeto configurado antes da 0.9.1, rode `/kit:init` de novo (modo reparo) ou faça à mão:
+
+```bash
+claude plugin marketplace update claude-kit
+claude plugin install ts-lsp@claude-kit --scope project
+```
+
+e no `.claude/settings.json` do projeto:
 
 ```json
 "enabledPlugins": { "ts-lsp@claude-kit": true, "typescript-lsp@claude-plugins-official": false }
 ```
+
+Plugin e settings só valem em sessão nova: depois de trocar, saia com `/exit` e volte com `claude --continue` para manter a conversa. Um LSP antigo de uma sessão que ficou aberta continua sem limite até ela ser reiniciada.
+
+O kit não mexe no `~/.claude/settings.json`. Se ele liga o `typescript-lsp` oficial para todos os projetos, os projetos TS sem o kit continuam sem limite; para trocar em todos, ligue `ts-lsp@claude-kit` e desligue o oficial nesse arquivo.
 
 ## Ajustar o kit ao projeto
 
@@ -306,6 +328,7 @@ Atualizar (no terminal):
 ```bash
 claude plugin marketplace update claude-kit
 claude plugin update kit@claude-kit
+claude plugin update ts-lsp@claude-kit   # se o projeto usa o LSP de TypeScript do kit
 claude plugin list
 ```
 
@@ -316,6 +339,7 @@ Desinstalar:
 ```bash
 claude plugin uninstall kit@claude-kit --scope user
 claude plugin uninstall kit@claude-kit --scope project   # só se estiver instalado no projeto
+claude plugin uninstall ts-lsp@claude-kit --scope project   # LSP de TypeScript do kit, se instalado
 claude plugin marketplace remove claude-kit              # opcional
 ```
 
