@@ -68,6 +68,23 @@ Valores de partida. Confirme sempre contra o que o projeto realmente usa (script
 | Ruby | `rubygems.org`, `index.rubygems.org` |
 | PHP | `repo.packagist.org` |
 
+## Comandos de pacote
+
+Como consultar as versões publicadas e a licença de um pacote, por gerenciador (o `manager` de cada pacote no JSON do `stack-profile.sh`). Só leitura: nenhum altera manifesto ou lockfile. Sem rede no sandbox, o comando falha; não insista, registre a lacuna.
+
+| Gerenciador | Versões publicadas | Licença |
+| --- | --- | --- |
+| npm, bun | `npm view <pacote> versions --json` | `npm view <pacote> license` |
+| pnpm | `pnpm view <pacote> versions --json` | `pnpm view <pacote> license` |
+| yarn | `yarn info <pacote> versions --json` (Yarn 2+: `yarn npm info <pacote> --fields versions`) | `yarn info <pacote> license` |
+| nuget | `dotnet package search <pacote> --exact-match` | página `https://www.nuget.org/packages/<pacote>` |
+| pip, uv, poetry, pipenv, pdm | `https://pypi.org/pypi/<pacote>/json` (`releases`) | mesmo JSON, `info.license` |
+| go | `go list -m -versions <módulo>` | página `https://pkg.go.dev/<módulo>?tab=licenses` |
+| cargo | `cargo search <crate> --limit 1` | `cargo info <crate>` |
+| maven, gradle | `https://search.maven.org/solrsearch/select?q=g:<grupo>+AND+a:<artefato>&core=gav&rows=20&wt=json` | `<licenses>` do pom publicado |
+| bundler | `gem list <gem> --remote --all --exact` | `https://rubygems.org/api/v1/versions/<gem>.json` (`licenses`) |
+| composer | `composer show <vendor>/<pacote> --all` | mesma saída, `license` |
+
 ## Plugin LSP
 
 Marketplace `claude-plugins-official` (já conhecido pelo Claude Code), menos Node/TS: o `ts-lsp@claude-kit` sobe o mesmo `typescript-language-server`, mas com o heap do tsserver limitado a 3072 MB e reinício quando a árvore do servidor passa de `KIT_TS_LSP_MAX_MB` (padrão 6144). O `typescript-lsp` oficial não tem teto e já chegou a dezenas de GB numa sessão longa. O `setup.sh lsp` detecta pelos manifestos, confere o binário e devolve o comando de instalação; esta tabela é a mesma do script.

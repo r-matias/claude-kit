@@ -7,8 +7,9 @@
 #     socat do sandbox). Exit 1 se faltar algo, com o comando de instalacao de cada item.
 #
 #   setup.sh status
-#     check mais o marketplace claude-kit registrado (so leitura). Exit 1 se falta dependencia.
-#     Usado pelo /kit:init antes de configurar o projeto.
+#     check mais o marketplace claude-kit registrado e, num repositorio git, o estado do docs/stack.md
+#     ("perfil do stack: ausente|atualizado|desatualizado (...)"), so leitura. Exit 1 se falta
+#     dependencia. Usado pelo /kit:init antes de configurar o projeto.
 #
 #   setup.sh groups
 #     Grupos de permissao de templates/project-permissions.json que valem nesta plataforma, um por
@@ -119,6 +120,18 @@ cmd_status() {
     echo "ok marketplace claude-kit"
   else
     echo "aviso marketplace: claude-kit não registrado"
+  fi
+  if command -v jq >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+    local here st r repos=()
+    here="$(kit_norm_path "$(pwd -W 2>/dev/null || pwd)")"
+    while IFS= read -r r; do [ -n "$r" ] && repos+=("$r"); done < <(kit_repos "$here" "")
+    if [ "${#repos[@]}" -gt 0 ]; then
+      st="$(kit_stack_state "$here" ${repos[@]+"${repos[@]}"})"
+      case "$st" in
+        desatualizado*) echo "perfil do stack: desatualizado (${st#*$'\t'}); o /kit:init repara" ;;
+        *) echo "perfil do stack: $st" ;;
+      esac
+    fi
   fi
   return "$missing"
 }

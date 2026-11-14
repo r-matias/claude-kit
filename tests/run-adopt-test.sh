@@ -2,7 +2,7 @@
 # Teste de aceite ao vivo do modo adotar: roda /kit:init via `claude -p` num repo com CLAUDE.md, settings,
 # skill, agent, rule e hooks proprios e confere por hash que CLAUDE.md, skills, agents, hooks, rules,
 # MCP e settings.local.json nao mudaram, que o settings.json so ganhou itens (com backup identico ao
-# original), que docs/claude-adoption.md foi gerado e que o deny de curl/wget fica de fora (a fixture
+# original), que docs/claude-adoption.md e docs/stack.md foram gerados e que o deny de curl/wget fica de fora (a fixture
 # tem uma skill que usa curl). Depois roda /kit:init num repositorio novo sem curl/wget: o deny entra, so os grupos marcados
 # entram (permissions.groups no kit.json) e o settings do usuario nao muda.
 # Custa duas sessoes do Claude Code (alguns minutos cada). Uso: tests/run-adopt-test.sh [--keep]
@@ -93,9 +93,15 @@ if [ -f "$A" ]; then
   if grep -qF 'Skill(kit:fix)' "$A" && grep -qiE 'disable-model-invocation' "$A"; then ok "relatorio recomenda Skill(kit:fix) em deny e explica o motivo"; else ko "relatorio recomenda Skill(kit:fix) em deny e explica o motivo" "$(grep -n -i 'fix' "$A" | head -5)"; fi
   if grep -i 'lint-hint' "$A" | grep -qi 'mudo'; then ok "relatorio marca lint-hint como aviso possivelmente mudo"; else ko "relatorio marca lint-hint como aviso possivelmente mudo" "$(grep -n -i 'lint-hint' "$A" | head -3)"; fi
   if grep -i 'block-generated' "$A" | grep -qi 'falha aberta'; then ok "relatorio marca block-generated como falha aberta"; else ko "relatorio marca block-generated como falha aberta" "$(grep -n -i 'block-generated' "$A" | head -3)"; fi
+  grep -q '^## Perfil do stack' "$A" && ok "relatorio tem a secao Perfil do stack" || ko "relatorio tem a secao Perfil do stack" "sem a secao"
 else
   ko "docs/claude-adoption.md gerado" "arquivo ausente"
 fi
+ST="$P/docs/stack.md"
+if head -n 1 "$ST" 2>/dev/null | grep -qE '^<!-- kit:init [0-9a-f]{40} -->$' && grep -qF -- '- Linguagem: javascript (`package.json`)' "$ST" &&
+  bash "$PLUGIN/scripts/stack-profile.sh" --root "$P" --status >/dev/null 2>&1; then
+  ok "docs/stack.md gravado pelo stack-profile.sh, com cabeçalho e em dia"
+else ko "docs/stack.md gravado pelo stack-profile.sh, com cabeçalho e em dia" "$(head -n 12 "$ST" 2>&1)"; fi
 
 K="$P/.claude/kit.json"
 if jq -e '.commands | length > 0' "$K" >/dev/null 2>&1; then ok ".claude/kit.json criado com commands"; else ko ".claude/kit.json criado com commands" "ausente ou sem commands"; fi
@@ -113,7 +119,7 @@ if [ -n "$bak" ] && cmp -s "$W/settings.before" "$bak"; then ok "backup do setti
 if jq -e --slurpfile b "$W/settings.before" '.hooks == $b[0].hooks' "$S" >/dev/null 2>&1; then ok "hooks do settings.json intocados"; else ko "hooks do settings.json intocados" "$(jq -c '.hooks' "$S" 2>&1 | head -c 300)"; fi
 if jq -e '.enabledPlugins["kit@claude-kit"] == true and (.extraKnownMarketplaces["claude-kit"] != null)' "$S" >/dev/null 2>&1; then ok "settings.json habilita kit@claude-kit"; else ko "settings.json habilita kit@claude-kit" "$(jq -c '{enabledPlugins, extraKnownMarketplaces}' "$S" 2>&1)"; fi
 if jq -e '(.permissions.deny // []) | index("Skill(kit:fix)") != null' "$S" >/dev/null 2>&1; then ok "settings.json traz Skill(kit:fix) em deny"; else ko "settings.json traz Skill(kit:fix) em deny" "$(jq -c '.permissions' "$S" 2>&1)"; fi
-if jq -e '.enabledPlugins["typescript-lsp@claude-plugins-official"] == true' "$S" >/dev/null 2>&1; then ok "settings.json liga o plugin LSP oficial da linguagem"; else ko "settings.json liga o plugin LSP oficial da linguagem" "$(jq -c '.enabledPlugins' "$S" 2>&1)"; fi
+if jq -e '.enabledPlugins["ts-lsp@claude-kit"] == true' "$S" >/dev/null 2>&1; then ok "settings.json liga o plugin LSP da linguagem"; else ko "settings.json liga o plugin LSP da linguagem" "$(jq -c '.enabledPlugins' "$S" 2>&1)"; fi
 if jq -e '[(.permissions.deny // [])[] | select(test("^Bash\\((curl|wget)"))] == []' "$S" >/dev/null 2>&1; then ok "settings.json sem deny de curl/wget (a skill status-api usa curl)"
 else ko "settings.json sem deny de curl/wget (a skill status-api usa curl)" "$(jq -c '.permissions.deny' "$S" 2>&1)"; fi
 if grep -qE 'curl/wget usados por [0-9]+ arquivos? do projeto[^;]*; deny não aplicado' "$W/claude.out"; then ok "relatório registra curl/wget usados e deny não aplicado"

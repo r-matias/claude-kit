@@ -76,6 +76,8 @@ Obrigatória para toda sugestão "Desativar a do projeto" ou "Declarar no `kit.j
 
 Siga os passos do SKILL.md com as regras de escrita: arquivos novos ou do kit (`.claude/kit.json`, `docs/claude-adoption.md`), merge aditivo no `.claude/settings.json` (`merge-json.sh --preview` na confirmação, `--apply` depois), tudo na confirmação única. Declarações (`coupled_changes`, `key_parity`, `protected_paths`) vão para o `kit.json`. O que tocaria `CLAUDE.md`, skills, agents, rules ou hooks existentes só fica registrado em `docs/claude-adoption.md`.
 
+Perfil do stack: se o projeto já descreve o stack num documento próprio (seção de tecnologias no `README.md` ou no `CLAUDE.md`, `docs/architecture.md`, `docs/tech-stack.md`), ele fica como está. O passo 11 grava o perfil em `docs/stack.md` mesmo assim e o relatório de adoção cita o documento existente. Se o próprio `docs/stack.md` já é do projeto (sem o cabeçalho `kit:init`), o script não o sobrescreve e o perfil não é gravado.
+
 ## 5. Relatório
 
 Grave `docs/claude-adoption.md` (arquivo do kit; se já existir, acrescente uma seção nova com a data):
@@ -102,6 +104,9 @@ O kit não alterou `CLAUDE.md`, skills, agents, rules, hooks nem `settings.local
 
 ## Acrescentado ao settings
 - `.claude/settings.json`: <resumo do que somou> (diff abaixo); conflitos mantidos: <chave: valor do usuário>; não aplicado: <deny que sombrearia uma regra de allow/ask>
+
+## Perfil do stack
+- `docs/stack.md` gravado pelo kit; documento do projeto sobre o stack: <caminho, ou "nenhum">
 
 ## Promover ao kit
 - <peça>: <o que faria no kit e por que é genérica>

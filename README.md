@@ -12,6 +12,7 @@ O que você ganha:
 - **Feature com plano conferível.** SPEC → PLAN com tarefas testáveis → execução em etapas, com revisão de código e de segurança no fim.
 - **Menos código duplicado.** Antes de planejar, o kit procura no projeto o que cada parte da feature precisa e só cria o que não existe; o revisor de código aponta o que foi refeito mesmo assim.
 - **Bug pela causa raiz.** Primeiro um teste que reproduz, depois a correção.
+- **Código para a versão que o projeto usa.** O `/kit:init` grava em `docs/stack.md` o stack com versões e quantos arquivos usam cada dependência; plano, execução e revisor de código seguem essas versões, e o início da sessão avisa quando os manifestos mudaram.
 
 ## Começar
 
@@ -39,10 +40,11 @@ Se o kit consegue fazer, ele faz. Primeiro junta tudo o que vai propor, mostra o
 3. **Liga o LSP da linguagem**: acrescenta o plugin LSP ao `.claude/settings.json` do projeto (`ts-lsp@claude-kit` para Node/TS, e os oficiais `pyright-lsp`, `csharp-lsp`, `gopls-lsp`, ...) e instala o language server se faltar. Veja [LSP de TypeScript com teto de memória](#lsp-de-typescript-com-teto-de-memória).
 4. **Verifica**: roda uma vez cada comando de `verify_on_stop` e mostra `ok` ou `falhou`.
 5. **Pergunta sobre notificações** (desligadas por padrão), avisando se você já tem alertas que seriam duplicados (ver [Notificações](#notificações)).
-6. **Mapeia o código**, se o projeto tiver mais de 300 arquivos de código ou mais de um repositório: roda o `/kit:map` ao final, sem perguntar (só pergunta se passar de 30 agents).
-7. **Relatório curto** (até ~10 linhas): o que foi feito (com o caminho de cada backup), o que foi verificado, avisos reais e `Pronto. Próximo: /kit:spec <ideia>`. Ele não lista tarefas para você.
+6. **Grava o perfil do stack** em `docs/stack.md`, lido dos manifestos por script (sem LLM): linguagem, framework, gerenciador e runner de teste com versão, e cada dependência com o número de arquivos de produção e de teste que a importam. Ver [Perfil do stack](#perfil-do-stack).
+7. **Mapeia o código**, se o projeto tiver mais de 300 arquivos de código ou mais de um repositório: roda o `/kit:map` ao final, sem perguntar (só pergunta se passar de 30 agents).
+8. **Relatório curto** (até ~10 linhas): o que foi feito (com o caminho de cada backup), o que foi verificado, avisos reais e `Pronto. Próximo: /kit:spec <ideia>`. Ele não lista tarefas para você.
 
-Rodado de novo num projeto já configurado, entra em modo reparo: valida o `kit.json`, os comandos e o settings, soma só o que falta (mesma confirmação única) e roda `/kit:map --update` se o mapa estiver desatualizado.
+Rodado de novo num projeto já configurado, entra em modo reparo: valida o `kit.json`, os comandos e o settings, soma só o que falta (mesma confirmação única), refaz o `docs/stack.md` se os manifestos mudaram (e reconfere os comandos contra eles) e roda `/kit:map --update` se o mapa estiver desatualizado.
 
 Na configuração do projeto:
 
@@ -73,7 +75,7 @@ A escolha fica em `permissions.groups` do `.claude/kit.json`; no modo reparo, gr
 - **Nunca altera** skills, agents, commands, rules, hooks, `CLAUDE.md`, `.mcp.json` nem `.claude/settings.local.json`, seus ou do projeto.
 - **No `.claude/settings.json` do projeto só acrescenta**: itens novos em listas (`allow`, `ask`, `deny`, `allowedDomains`, `excludedCommands`) e chaves que não existem. Nunca remove, nunca troca um valor seu e nunca mexe em `hooks`. Antes de gravar, faz backup em `<arquivo>.bak-kit-<data>` e mostra o diff na confirmação. Se uma chave sua tem outro valor, o seu fica e o relatório cita em uma linha. Regra sua em `allow` ou `ask` que um deny do kit cobriria (ex.: `ask` de `Bash(curl *meusite.com*)`) deixa esse deny de fora, porque deny vence e você perderia a chance de autorizar.
 - **Sobreposição:** se uma skill ou agent seu faz o mesmo que um do kit, o do kit sai do caminho (`Skill(kit:fix)` em `permissions.deny`). Um hook seu que o kit cobre fica como está; `docs/claude-adoption.md` registra qual é.
-- Os arquivos do próprio kit podem ser regravados: `.claude/kit.json`, `docs/claude-adoption.md` e os do mapa (`.claude/rules/map-*.md`, `.claude/rules/kit-codemap.md`, `docs/codemap.md`, com o cabeçalho `kit:map`).
+- Os arquivos do próprio kit podem ser regravados: `.claude/kit.json`, `docs/claude-adoption.md`, `docs/stack.md` (com o cabeçalho `kit:init`) e os do mapa (`.claude/rules/map-*.md`, `.claude/rules/kit-codemap.md`, `docs/codemap.md`, com o cabeçalho `kit:map`).
 
 Os arquivos criados ficam no git para você commitar junto com o código (o kit nunca commita). Quem clonar o repositório recebe o plugin pelo settings versionado; na própria máquina, basta rodar o `/kit:init`.
 
@@ -115,7 +117,7 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 
 | Comando | Quando usar | O que gera | Como dispara |
 | --- | --- | --- | --- |
-| `/kit:init` | Uma vez por repositório; de novo para reparar | Máquina pronta, `.claude/kit.json`, `.claude/settings.json`, `CLAUDE.md` (e `docs/claude-adoption.md` no modo adotar, `docs/codemap.md` em projeto grande) | Só manual |
+| `/kit:init` | Uma vez por repositório; de novo para reparar | Máquina pronta, `.claude/kit.json`, `.claude/settings.json`, `CLAUDE.md`, `docs/stack.md` (e `docs/claude-adoption.md` no modo adotar, `docs/codemap.md` em projeto grande) | Só manual |
 | `/kit:spec` | Começo de uma feature sem especificação | `docs/specs/<slug>/SPEC.md` | Manual ou sozinho, quando você descreve uma feature nova |
 | `/kit:plan` | SPEC pronta | `PLAN.md` ao lado da SPEC | Manual ou sozinho, quando há uma SPEC para planejar |
 | `/kit:execute` | Plano pronto | Código e testes; caixas do `PLAN.md` marcadas com evidência | Só manual |
@@ -193,7 +195,18 @@ Sem você chamar nada, em todo projeto com o kit ligado:
 - **Formatação.** Cada arquivo editado passa pelo formatter do projeto, se o `kit.json` declarar um.
 - **Gate de fim de turno.** Se o Claude mexeu em código, os comandos de verificação do projeto (build, testes relacionados) rodam antes de ele encerrar. Falhou: ele recebe o erro e continua corrigindo. O gate também confere regras do projeto, como "mudou a tela, atualize o manual" e "todo texto existe nas 3 línguas".
 - **Avisos.** Regras de acoplamento leves ("se mudou a API, confira o site") viram um lembrete para o Claude na hora da edição, sem bloquear nada.
-- **Contexto da sessão.** No início de cada sessão o Claude recebe a branch, os arquivos alterados e as tarefas pendentes do plano ativo. Antes de uma compactação, o kit salva esse estado e o devolve depois. Se faltar `jq` ou `git`, ou se o Claude Code estiver desatualizado, o aviso aparece aqui, com o comando para corrigir. O mesmo vale para um `docs/codemap.md` muito atrás do código: o aviso sugere `/kit:map --update`.
+- **Contexto da sessão.** No início de cada sessão o Claude recebe a branch, os arquivos alterados e as tarefas pendentes do plano ativo. Antes de uma compactação, o kit salva esse estado e o devolve depois. Se faltar `jq` ou `git`, ou se o Claude Code estiver desatualizado, o aviso aparece aqui, com o comando para corrigir. O mesmo vale para um `docs/codemap.md` muito atrás do código (o aviso sugere `/kit:map --update`) e para um `docs/stack.md` com manifesto alterado depois dele (o aviso sugere `/kit:init`, que repara).
+
+## Perfil do stack
+
+O `/kit:init` grava `docs/stack.md` com o `stack-profile.sh`, um script sem LLM que lê os manifestos (`package.json`, `*.csproj` e `Directory.Packages.props`, `pyproject.toml` e `requirements*.txt`, `go.mod`, `Cargo.toml`, `pom.xml`, `build.gradle*`, `Gemfile`, `composer.json`). Para cada repositório:
+
+- **Base:** linguagem, framework (versão major), gerenciador (pelo lockfile) e runner de teste, cada um com o manifesto de onde veio.
+- **Dependências em uso:** versão declarada (major.minor), arquivos de produção e de teste que a importam e os pacotes que a declaram. A contagem é pela forma de import do stack (`'pacote'` no npm, `using Nome` no .NET, `import`/`from` no Python, `crate::` no Rust, o caminho do módulo no Go).
+- **Sem import encontrado:** ferramentas, CSS, config e analyzers. Contagem 0 quer dizer "sem import", não "sem uso".
+- **Versões divergentes:** a mesma dependência com versões diferentes em pacotes do mesmo repositório.
+
+O perfil não diz qual biblioteca é a oficial numa área: com duas de uso parecido, o `/kit:plan` pergunta. Plano, execução e o `kit:code-reviewer` (regra M6) seguem as versões do perfil. Quando um manifesto muda depois do commit gravado no cabeçalho, o início da sessão avisa e o `/kit:init` (modo reparo) refaz o arquivo. Um `docs/stack.md` que você escreveu (sem o cabeçalho `kit:init`) nunca é sobrescrito.
 
 ## LSP de TypeScript com teto de memória
 

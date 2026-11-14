@@ -167,7 +167,7 @@ JQ_WRITE_MAP='def write_map($root):
 # Monta um workspace novo em $WS: sample (git, commitado), nokit (git sem kit.json) e nogit. A base
 # do caso (sample ou mroot) fica em $CASE_BASE.
 setup_ws() {
-  local case_json="$1" ws kit_patch plan has_ws has_head0 n_extra files_cmds repos_cmds late_cmds
+  local case_json="$1" ws kit_patch plan has_ws has_head0 n_extra files_cmds repos_cmds late_cmds commit_cmds
   ws="$(mktemp -d "$TMP_ALL/ws.XXXXXX")"
   cp -r "$TPL_REPOS/sample" "$ws/sample"
   cp -r "$TPL_REPOS/nokit" "$ws/nokit"
@@ -181,6 +181,7 @@ setup_ws() {
       @sh "has_ws=\(if $mr then 1 else 0 end)",
       @sh "has_head0=\(if tostring | contains("__HEAD0__") then 1 else 0 end)",
       @sh "n_extra=\(.commits // 0)",
+      @sh "commit_cmds=\(if $mr then "" else [(.commit_edit // {}) | write_map($ws + "/sample")] | join("\n") end)",
       @sh "files_cmds=\(if $mr then "" else [(.files // {}) | write_map($ws + "/sample")] | join("\n") end)",
       @sh "repos_cmds=\(if $mr then [(.workspace.repos // {}) | to_entries[] | .key as $r
           | "mkdir -p " + ($ws + "/mroot/" + $r | @sh),
@@ -220,6 +221,12 @@ setup_ws() {
   fi
   local i
   for ((i = 1; i <= n_extra; i++)); do git_q -C "$ws/sample" commit --allow-empty -m "extra $i"; done
+  # commit_edit: {caminho: conteudo} gravado e commitado depois do commit inicial e dos extras.
+  if [ -n "$commit_cmds" ]; then
+    eval "$commit_cmds"
+    git_q -C "$ws/sample" add -A
+    git_q -C "$ws/sample" commit -m "edit"
+  fi
   printf 'class X {}\n' >"$ws/nokit/src/X.cs"
 
   # Pasta-mae sem git com repositorios filhos: workspace.repos = {nome: {caminho: conteudo}}.
@@ -870,6 +877,173 @@ if [ -z "$FILTER" ] || [[ "map-partition" == *"$FILTER"* ]]; then
 fi
 }
 
+g_stack_profile() {
+echo "stack-profile"
+if [ -z "$FILTER" ] || [[ "stack-profile" == *"$FILTER"* ]]; then
+  SP="$SCRIPTS/stack-profile.sh"
+  # Uso: sp_write <pasta> <caminho> <conteudo> (printf %b).
+  sp_write() { mkdir -p "$(dirname "$1/$2")"; printf '%b' "$3" >"$1/$2"; }
+  sp_commit() { git_q init "$1"; git_q -C "$1" add -A; git_q -C "$1" commit -m init; }
+  sp_dep() { jq -c --arg n "$2" '.repos[0].deps[] | select(.name == $n) | [.version, .files_src, .files_test, .declared_in]' <<<"$1" 2>/dev/null; }
+
+  # Node com npm: import, subcaminho, scoped e teste separado; tailwind sem import.
+  R="$(mktemp -d "$TMP_ALL/sp.XXXXXX")"
+  sp_write "$R" package.json '{"name":"app","dependencies":{"react":"^18.3.1","lodash":"~4.17.21","@acme/ui":"2.1.0"},"devDependencies":{"typescript":"^5.4.5","vitest":"^1.6.0","tailwindcss":"^3.4.1"}}\n'
+  sp_write "$R" package-lock.json '{}\n'
+  sp_write "$R" src/a.tsx "import React from 'react';\nimport fp from \"lodash/fp\";\nimport { B } from '@acme/ui/button';\n"
+  sp_write "$R" src/b.ts "import React from 'react';\nconst s = 'reactive';\n"
+  sp_write "$R" test/a.test.ts "import { it } from 'vitest';\nimport React from 'react';\n"
+  sp_write "$R" src/c.spec.ts "import { it } from 'vitest';\n"
+  sp_commit "$R"
+  out="$("$TBASH" "$SP" --root "$R" 2>"$TMP_ALL/sp.err")"
+  if [ "$(sp_dep "$out" react)" = '["18.3",2,1,["."]]' ] && [ "$(sp_dep "$out" lodash)" = '["4.17",1,0,["."]]' ] &&
+    [ "$(sp_dep "$out" @acme/ui)" = '["2.1",1,0,["."]]' ] && [ "$(sp_dep "$out" vitest)" = '["1.6",0,2,["."]]' ] &&
+    [ "$(sp_dep "$out" tailwindcss)" = '["3.4",0,0,["."]]' ] &&
+    jq -e '.repos[0].packages == [{path: ".", manifest: "package.json", manager: "npm"}] and .repos[0].deps[0].name == "react"
+      and ([.repos[0].base[] | [.kind, .name, .version]] == [["lang","typescript","5.4"],["framework","react","18"],["test","vitest","1.6"]])
+      and (.repos[0].commit | length) == 40 and .repos[0].version_conflicts == []' <<<"$out" >/dev/null 2>&1; then
+    ok "stack-profile: npm conta import, subcaminho e scoped, teste separado de produção"
+  else ko "stack-profile: npm conta import, subcaminho e scoped, teste separado de produção" "$(jq -c '.repos[0] | {packages, base, deps}' <<<"$out" 2>&1 | head -c 700) $(cat "$TMP_ALL/sp.err")"; fi
+
+  # pnpm em monorepo: gerenciador pelo lockfile da raiz; dependência repetida listada uma vez.
+  R="$(mktemp -d "$TMP_ALL/sp.XXXXXX")"
+  sp_write "$R" package.json '{"name":"mono","private":true,"devDependencies":{"vitest":"1.6.0"}}\n'
+  sp_write "$R" pnpm-lock.yaml 'lockfileVersion: 9\n'
+  sp_write "$R" packages/web/package.json '{"name":"web","dependencies":{"vue":"^3.4.0","zod":"^3.23.0"}}\n'
+  sp_write "$R" packages/api/package.json '{"name":"api","dependencies":{"zod":"^3.23.8"}}\n'
+  sp_write "$R" packages/web/src/main.ts "import { createApp } from 'vue';\nimport { z } from 'zod';\n"
+  sp_write "$R" packages/api/src/main.ts "import { z } from 'zod';\n"
+  sp_commit "$R"
+  out="$("$TBASH" "$SP" --root "$R" 2>"$TMP_ALL/sp.err")"
+  if jq -e '([.repos[0].packages[].manager] | unique) == ["pnpm"] and (.repos[0].packages | length) == 3' <<<"$out" >/dev/null 2>&1 &&
+    [ "$(sp_dep "$out" zod)" = '["3.23",2,0,["packages/api","packages/web"]]' ] && [ "$(sp_dep "$out" vue)" = '["3.4",1,0,["packages/web"]]' ]; then
+    ok "stack-profile: pnpm pelo lockfile da raiz, dependência repetida uma vez com os pacotes que a declaram"
+  else ko "stack-profile: pnpm pelo lockfile da raiz, dependência repetida uma vez com os pacotes que a declaram" "$(jq -c '.repos[0] | {packages, deps}' <<<"$out" 2>&1 | head -c 700) $(cat "$TMP_ALL/sp.err")"; fi
+
+  # .NET: versão central no Directory.Packages.props, using por prefixo de namespace, analyzer sem using.
+  R="$(mktemp -d "$TMP_ALL/sp.XXXXXX")"
+  sp_write "$R" Directory.Packages.props '<Project>\n  <ItemGroup>\n    <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />\n    <PackageVersion Include="StyleCop.Analyzers" Version="1.1.118" />\n    <PackageVersion Include="xunit" Version="2.9.0" />\n  </ItemGroup>\n</Project>\n'
+  sp_write "$R" src/Api/Api.csproj '<Project Sdk="Microsoft.NET.Sdk.Web">\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include="Newtonsoft.Json" />\n    <PackageReference Include="StyleCop.Analyzers">\n      <PrivateAssets>all</PrivateAssets>\n    </PackageReference>\n  </ItemGroup>\n</Project>\n'
+  sp_write "$R" src/Api/Program.cs 'using System;\nusing Newtonsoft.Json.Linq;\n'
+  sp_write "$R" tests/Api.Tests/Api.Tests.csproj '<Project Sdk="Microsoft.NET.Sdk">\n  <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>\n  <ItemGroup><PackageReference Include="xunit" /><PackageReference Include="Newtonsoft.Json" /></ItemGroup>\n</Project>\n'
+  sp_write "$R" tests/Api.Tests/ApiTests.cs 'using Xunit;\nusing Newtonsoft.Json;\n'
+  sp_commit "$R"
+  out="$("$TBASH" "$SP" --root "$R" 2>"$TMP_ALL/sp.err")"
+  if [ "$(sp_dep "$out" Newtonsoft.Json)" = '["13.0",1,1,["src/Api","tests/Api.Tests"]]' ] && [ "$(sp_dep "$out" StyleCop.Analyzers)" = '["1.1",0,0,["src/Api"]]' ] &&
+    [ "$(sp_dep "$out" xunit)" = '["2.9",0,1,["tests/Api.Tests"]]' ] &&
+    jq -e '([.repos[0].base[] | [.kind, .name, .version]] | any(.[]; . == ["framework","dotnet","8"]) and any(.[]; . == ["framework","aspnetcore","8"]) and any(.[]; . == ["test","xunit","2.9"]))
+      and ([.repos[0].packages[].manager] | unique) == ["nuget"] and (.repos[0].packages | length) == 2' <<<"$out" >/dev/null 2>&1; then
+    ok "stack-profile: .NET com Directory.Packages.props, using por namespace e pacote sem using"
+  else ko "stack-profile: .NET com Directory.Packages.props, using por namespace e pacote sem using" "$(jq -c '.repos[0] | {packages, base, deps}' <<<"$out" 2>&1 | head -c 800) $(cat "$TMP_ALL/sp.err")"; fi
+
+  # Python com pyproject: dependencies, grupo opcional, requires-python, uv pelo lockfile.
+  R="$(mktemp -d "$TMP_ALL/sp.XXXXXX")"
+  sp_write "$R" pyproject.toml '[project]\nname = "svc"\nrequires-python = ">=3.11"\ndependencies = [\n  "FastAPI>=0.110.1",\n  "requests[socks]>=2.31,<3",\n  "PyYAML==6.0.1",\n]\n\n[project.optional-dependencies]\ndev = ["pytest>=8.2"]\n'
+  sp_write "$R" uv.lock 'version = 1\n'
+  sp_write "$R" svc/app.py 'from fastapi import FastAPI\nimport requests.adapters\n'
+  sp_write "$R" tests/test_app.py 'import pytest\nimport requests\n'
+  sp_commit "$R"
+  out="$("$TBASH" "$SP" --root "$R" 2>"$TMP_ALL/sp.err")"
+  if [ "$(sp_dep "$out" FastAPI)" = '["0.110",1,0,["."]]' ] && [ "$(sp_dep "$out" requests)" = '["2.31",1,1,["."]]' ] &&
+    [ "$(sp_dep "$out" PyYAML)" = '["6.0",0,0,["."]]' ] && [ "$(sp_dep "$out" pytest)" = '["8.2",0,1,["."]]' ] &&
+    jq -e '.repos[0].packages == [{path: ".", manifest: "pyproject.toml", manager: "uv"}]
+      and ([.repos[0].base[] | [.kind, .name, .version]] == [["lang","python","3.11"],["framework","fastapi","0"],["test","pytest","8.2"]])' <<<"$out" >/dev/null 2>&1; then
+    ok "stack-profile: Python com pyproject, extras, grupo opcional e uv"
+  else ko "stack-profile: Python com pyproject, extras, grupo opcional e uv" "$(jq -c '.repos[0] | {packages, base, deps}' <<<"$out" 2>&1 | head -c 800) $(cat "$TMP_ALL/sp.err")"; fi
+
+  # Rust com três crates: workspace = true, crate local fora, divergência de versão marcada.
+  R="$(mktemp -d "$TMP_ALL/sp.XXXXXX")"
+  sp_write "$R" Cargo.toml '[workspace]\nmembers = ["api", "proxy", "core"]\n\n[workspace.dependencies]\nserde = { version = "1.0.200", features = ["derive"] }\n'
+  sp_write "$R" api/Cargo.toml '[package]\nname = "api"\nrust-version = "1.75"\n\n[dependencies]\ntokio = { version = "1", features = ["full"] }\nserde.workspace = true\ncore = { path = "../core" }\naxum = "0.7.5"\n\n[dev-dependencies]\nserde-json = "1.0"\n'
+  sp_write "$R" proxy/Cargo.toml '[package]\nname = "proxy"\n\n[dependencies]\ntokio = "0.2"\nserde = { workspace = true }\n'
+  sp_write "$R" core/Cargo.toml '[package]\nname = "core"\n\n[dependencies.serde]\nworkspace = true\n'
+  sp_write "$R" api/src/main.rs 'use axum::Router;\nfn main() { tokio::spawn(async {}); let x: serde::de::IgnoredAny; }\n'
+  sp_write "$R" api/tests/it.rs 'fn t() { let v = serde_json::json!(1); }\n'
+  sp_write "$R" proxy/src/lib.rs 'pub fn f() { tokio::spawn(async {}); }\n'
+  sp_write "$R" core/src/lib.rs 'use serde::Serialize;\n'
+  sp_commit "$R"
+  out="$("$TBASH" "$SP" --root "$R" 2>"$TMP_ALL/sp.err")"
+  if [ "$(sp_dep "$out" serde)" = '["1.0",2,0,["api","core","proxy"]]' ] && [ "$(sp_dep "$out" tokio)" = '["1, 0.2",2,0,["api","proxy"]]' ] &&
+    [ "$(sp_dep "$out" serde-json)" = '["1.0",0,1,["api"]]' ] && [ -z "$(sp_dep "$out" core)" ] &&
+    jq -e '.repos[0].version_conflicts == [{name: "tokio", versions: {api: "1", proxy: "0.2"}}] and (.repos[0].packages | length) == 3
+      and ([.repos[0].base[] | [.kind, .name, .version]] | any(.[]; . == ["lang","rust","1.75"]) and any(.[]; . == ["framework","axum","0"]))' <<<"$out" >/dev/null 2>&1; then
+    ok "stack-profile: Rust com três crates, workspace, crate local fora e divergência de versão"
+  else ko "stack-profile: Rust com três crates, workspace, crate local fora e divergência de versão" "$(jq -c '.repos[0] | {packages, base, deps, version_conflicts}' <<<"$out" 2>&1 | head -c 900) $(cat "$TMP_ALL/sp.err")"; fi
+  RUST="$R"
+
+  # Pasta-mãe com dois repositórios filhos: um perfil com uma seção por repositório.
+  R="$(mktemp -d "$TMP_ALL/sp.XXXXXX")"
+  sp_write "$R/app" go.mod 'module example.com/app\n\ngo 1.22.3\n\nrequire (\n\tgithub.com/gin-gonic/gin v1.10.0\n\tgolang.org/x/text v0.14.0 // indirect\n)\n'
+  sp_write "$R/app" main.go 'package main\n\nimport (\n\t"fmt"\n\tgin "github.com/gin-gonic/gin"\n)\n'
+  sp_write "$R/app" main_test.go 'package main\n\nimport "github.com/gin-gonic/gin/binding"\n'
+  sp_write "$R/web" package.json '{"dependencies":{"svelte":"^4.2.0"}}\n'
+  sp_write "$R/web" src/App.js "import x from 'svelte';\n"
+  sp_write "$R/docs" README.md 'docs\n'
+  sp_commit "$R/app"; sp_commit "$R/web"; sp_commit "$R/docs"
+  out="$("$TBASH" "$SP" --root "$R" 2>"$TMP_ALL/sp.err")"
+  wout="$("$TBASH" "$SP" --root "$R" --write 2>&1)"; wc=$?
+  if jq -e '[.repos[].repo] == ["app", "web"] and .primary == "app"
+      and (.repos[0].deps == [{name: "github.com/gin-gonic/gin", ecosystem: "go", version: "1.10", declared_in: ["."], files_src: 1, files_test: 1}])
+      and ([.repos[0].base[] | [.kind, .name, .version]] | any(.[]; . == ["lang","go","1.22"]) and any(.[]; . == ["framework","gin","1"]))
+      and (.repos[1].deps[0] | .name == "svelte" and .files_src == 1)' <<<"$out" >/dev/null 2>&1 &&
+    [ "$wc:$wout" = "0:gravado: app/docs/stack.md" ] && head -n 1 "$R/app/docs/stack.md" | grep -qE '^<!-- kit:init app=[0-9a-f]{40} web=[0-9a-f]{40} -->$' &&
+    grep -qxF '## app' "$R/app/docs/stack.md" && grep -qxF '## web' "$R/app/docs/stack.md" && grep -qxF '### Dependências em uso' "$R/app/docs/stack.md"; then
+    ok "stack-profile: pasta-mãe com dois repositórios, repositório sem manifesto fora, uma seção por repositório"
+  else ko "stack-profile: pasta-mãe com dois repositórios, repositório sem manifesto fora, uma seção por repositório" "$wc:$wout $(jq -c '[.repos[] | {repo, base, deps}]' <<<"$out" 2>&1 | head -c 700) $(cat "$TMP_ALL/sp.err")"; fi
+  # --status por repositório: manifesto alterado num filho aparece com o prefixo dele.
+  git_q -C "$R/app" add -A; git_q -C "$R/app" commit -m perfil
+  st1="$("$TBASH" "$SP" --root "$R" --status 2>&1)"; c1=$?
+  printf '{"dependencies":{"svelte":"^5.0.0"}}\n' >"$R/web/package.json"
+  git_q -C "$R/web" commit -am up
+  st2="$("$TBASH" "$SP" --root "$R" --status 2>&1)"; c2=$?
+  if [ "$c1:$st1" = "0:atualizado" ] && [ "$c2:$st2" = "1:desatualizado: web/package.json" ]; then
+    ok "stack-profile --status: vários repositórios, manifesto alterado num filho"
+  else ko "stack-profile --status: vários repositórios, manifesto alterado num filho" "$c1:$st1 | $c2:$st2"; fi
+
+  # Repositório sem manifesto: repos vazio; --write não grava.
+  R="$(mktemp -d "$TMP_ALL/sp.XXXXXX")"
+  sp_write "$R" src/a.sh 'echo oi\n'
+  sp_commit "$R"
+  out="$("$TBASH" "$SP" --root "$R" 2>"$TMP_ALL/sp.err")"; c1=$?
+  wout="$("$TBASH" "$SP" --root "$R" --write 2>&1)"
+  if [ "$c1" = "0" ] && jq -e '.repos == []' <<<"$out" >/dev/null 2>&1 && [ "$wout" = "sem manifesto: perfil não gravado" ] && [ ! -e "$R/docs/stack.md" ]; then
+    ok "stack-profile: repositório sem manifesto dá repos vazio e não grava perfil"
+  else ko "stack-profile: repositório sem manifesto dá repos vazio e não grava perfil" "$c1 $out $wout"; fi
+
+  # --status: ausente, atualizado e desatualizado; --write não sobrescreve docs/stack.md do projeto.
+  R="$RUST"
+  st1="$("$TBASH" "$SP" --root "$R" --status 2>&1)"; c1=$?
+  wout="$("$TBASH" "$SP" --root "$R" --write 2>&1)"
+  git_q -C "$R" add -A; git_q -C "$R" commit -m perfil
+  st2="$("$TBASH" "$SP" --root "$R" --status 2>&1)"; c2=$?
+  printf 'fn x() {}\n' >>"$R/api/src/main.rs"
+  git_q -C "$R" commit -am codigo
+  st3="$("$TBASH" "$SP" --root "$R" --status 2>&1)"; c3=$?
+  printf '\n[dependencies]\nrand = "0.8"\n' >>"$R/core/Cargo.toml"
+  git_q -C "$R" commit -am dep
+  st4="$("$TBASH" "$SP" --root "$R" --status 2>&1)"; c4=$?
+  md="$(cat "$R/docs/stack.md")"
+  if [ "$c1:$st1" = "1:ausente" ] && [ "$wout" = "gravado: docs/stack.md" ] && [ "$c2:$st2" = "0:atualizado" ] && [ "$c3:$st3" = "0:atualizado" ] &&
+    [ "$c4:$st4" = "1:desatualizado: core/Cargo.toml" ] && grep -qE '^<!-- kit:init [0-9a-f]{40} -->$' <<<"$(head -n 1 <<<"$md")" &&
+    grep -qxF '| serde | 1.0 | 2 | 0 | api, core, proxy |' <<<"$md" && grep -qxF -- '- tokio: `api` 1, `proxy` 0.2' <<<"$md" &&
+    grep -qxF -- '- Linguagem: rust 1.75 (`api/Cargo.toml`)' <<<"$md"; then
+    ok "stack-profile --status: ausente, atualizado, código sem manifesto e desatualizado"
+  else ko "stack-profile --status: ausente, atualizado, código sem manifesto e desatualizado" "$c1:$st1 | $wout | $c2:$st2 | $c3:$st3 | $c4:$st4 | $(head -c 900 <<<"$md")"; fi
+  R="$(mktemp -d "$TMP_ALL/sp.XXXXXX")"
+  sp_write "$R" Gemfile "source 'https://rubygems.org'\nruby '3.2.2'\ngem 'rails', '~> 7.1'\ngem \"pg\"\n"
+  sp_write "$R" docs/stack.md '# Stack escrito a mao\n'
+  sp_commit "$R"
+  wout="$("$TBASH" "$SP" --root "$R" --write 2>&1)"; wc=$?
+  out="$("$TBASH" "$SP" --root "$R" 2>"$TMP_ALL/sp.err")"
+  if [ "$wc" = "3" ] && grep -qF 'existe sem o cabeçalho kit:init; não sobrescrito' <<<"$wout" && [ "$(cat "$R/docs/stack.md")" = "# Stack escrito a mao" ] &&
+    [ "$(sp_dep "$out" rails)" = '["7.1",null,null,["."]]' ] &&
+    jq -e '([.repos[0].base[] | [.kind, .name, .version]] == [["lang","ruby","3.2"],["framework","rails","7"]]) and .repos[0].packages[0].manager == "bundler"' <<<"$out" >/dev/null 2>&1; then
+    ok "stack-profile --write: não sobrescreve docs/stack.md do projeto; Gemfile sem contagem"
+  else ko "stack-profile --write: não sobrescreve docs/stack.md do projeto; Gemfile sem contagem" "$wc:$wout $(jq -c '.repos[0]' <<<"$out" 2>&1 | head -c 500)"; fi
+  if ! "$TBASH" "$SP" --root "$(mktemp -d "$TMP_ALL/nogit.XXXXXX")" >/dev/null 2>&1; then ok "stack-profile: sem repositório git sai com erro"; else ko "stack-profile: sem repositório git sai com erro" ""; fi
+fi
+}
+
 g_setup() {
 echo "setup"
 if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
@@ -946,6 +1120,21 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   if [ "$code" = "0" ] && grep -qF 'aviso marketplace' <<<"$out" && [ -z "$(ls -A "$CS")" ]; then
     ok "setup status: sem settings de usuário está pronto e não cria nada"
   else ko "setup status: sem settings de usuário está pronto e não cria nada" "exit $code, $out"; fi
+  # status mostra o estado do docs/stack.md do projeto, sem mudar o exit.
+  PS0="$(mktemp -d "$TMP_ALL/perfil.XXXXXX")"
+  printf '{"dependencies":{"react":"18.3.1"}}\n' >"$PS0/package.json"
+  git_q init "$PS0"; git_q -C "$PS0" add -A; git_q -C "$PS0" commit -m init
+  st1="$(cd "$PS0" && run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
+  "$TBASH" "$SCRIPTS/stack-profile.sh" --root "$PS0" --write >/dev/null 2>&1
+  git_q -C "$PS0" add -A; git_q -C "$PS0" commit -m perfil
+  st2="$(cd "$PS0" && run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"
+  printf '{"dependencies":{"react":"19.0.0"}}\n' >"$PS0/package.json"
+  git_q -C "$PS0" commit -am up
+  st3="$(cd "$PS0" && run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" status 2>&1)"; code=$?
+  if grep -qxF 'perfil do stack: ausente' <<<"$st1" && grep -qxF 'perfil do stack: atualizado' <<<"$st2" &&
+    grep -qxF 'perfil do stack: desatualizado (package.json); o /kit:init repara' <<<"$st3" && [ "$code" = "0" ]; then
+    ok "setup status: estado do perfil do stack (ausente, atualizado, desatualizado) sem mudar o exit"
+  else ko "setup status: estado do perfil do stack (ausente, atualizado, desatualizado) sem mudar o exit" "$st1 | $st2 | exit $code $st3"; fi
   out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" propose todos 2>&1)"
   code=$?
   if [ "$code" = "2" ] && [ -z "$(ls -A "$CS")" ]; then ok "setup: propose e apply do settings de usuário não existem mais"; else ko "setup: propose e apply do settings de usuário não existem mais" "exit $code, $out"; fi
@@ -1342,7 +1531,8 @@ fi
 g_estaticas() {
 echo "checagens estaticas"
 if [ -z "$FILTER" ]; then
-  stack_hits="$(grep -nE '(^|[^a-z_.-])(dotnet|npm|npx|pnpm|yarn|pytest|uv run|pip|poetry|cargo|mvn|gradlew?|go (build|test|vet)|golangci-lint|ruff|prettier|eslint|tsc)([^a-z_-]|$)' "$SCRIPTS"/*.sh || true)"
+  # stack-profile.sh le manifestos e nomeia gerenciadores como dado, sem rodar comando de stack.
+  stack_hits="$(grep -nE '(^|[^a-z_.-])(dotnet|npm|npx|pnpm|yarn|pytest|uv run|pip|poetry|cargo|mvn|gradlew?|go (build|test|vet)|golangci-lint|ruff|prettier|eslint|tsc)([^a-z_-]|$)' "$SCRIPTS"/*.sh | grep -v '/stack-profile\.sh:' || true)"
   if [ -z "$stack_hits" ]; then ok "nenhum script referencia comando de stack"; else ko "nenhum script referencia comando de stack" "$stack_hits"; fi
 
   # O relatorio do init nao manda o usuario fazer nada; extras opcionais ficam no README.
@@ -1427,7 +1617,7 @@ if [ -z "$FILTER" ]; then
 
   # Subagent general-purpose do execute recebe o bloco fixo de regras de leitura e Bash.
   SUB_RULES="$REPO/plugins/kit/skills/execute/subagent-rules.md"
-  sub_want='Leitura e busca: para ler arquivo use Read; para buscar, Grep/Glob. Bash só para git (log/blame/show/diff/status) e para os comandos do .claude/kit.json. Um comando por chamada de Bash: nunca encadeie com &&, ; ou |. Nunca cat/head/tail/sed/grep/find/ls via Bash, nem `cd <repo>;` no início (use git -C <repo>). Nunca entregue ao usuário comando com placeholder.'
+  sub_want='Leitura e busca: para ler arquivo use Read; para buscar, Grep/Glob. Bash só para git (log/blame/show/diff/status) e para os comandos do .claude/kit.json. Um comando por chamada de Bash: nunca encadeie com &&, ; ou |. Nunca cat/head/tail/sed/grep/find/ls via Bash, nem `cd <repo>;` no início (use git -C <repo>). Nunca entregue ao usuário comando com placeholder. Versões: o código segue as do perfil do stack (docs/stack.md) recebido no prompt; API que muda entre versões segue a documentação daquela versão ou o padrão do código existente do projeto, nunca a memória.'
   sub_bad=""
   [ "$(tr -d '\r' <"$SUB_RULES" 2>/dev/null)" = "$sub_want" ] || sub_bad+="subagent-rules.md "
   for f in "$REPO"/plugins/kit/skills/*/SKILL.md; do
@@ -1500,6 +1690,23 @@ if [ -z "$FILTER" ]; then
   grep -qF 'M10 código existente' "$REPO/docs/reference.md" && grep -qF 'M5 código novo' "$REPO/docs/reference.md" || ru_bad+="reference "
   if [ -z "$ru_bad" ]; then ok "reuso e abordagem: inventário, seções do plano, M9/M10/M5 e Revisão: pendente"
   else ko "reuso e abordagem: inventário, seções do plano, M9/M10/M5 e Revisão: pendente" "$ru_bad"; fi
+
+  # Perfil do stack: gravado pelo init, lido pelos fluxos, M6 no code-reviewer, documentado.
+  sp_bad=""
+  INIT_MD="$REPO/plugins/kit/skills/init/SKILL.md"
+  grep -qF 'stack-profile.sh" --write' "$INIT_MD" && grep -qF 'stack-profile.sh" --status' "$INIT_MD" &&
+    grep -qF 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/stack-profile.sh" *)' "$INIT_MD" || sp_bad+="init "
+  for f in agents/investigator.md skills/plan/SKILL.md skills/execute/SKILL.md agents/code-reviewer.md skills/execute/subagent-rules.md; do
+    grep -qF 'docs/stack.md' "$REPO/plugins/kit/$f" || sp_bad+="$f "
+  done
+  grep -qF 'consulte a documentação daquela versão' "$PLAN_MD" && grep -qF 'consulte a documentação daquela versão' "$EXEC_MD" || sp_bad+="versão "
+  grep -qE '^- \*\*M6\*\* ' "$REPO/plugins/kit/agents/code-reviewer.md" || sp_bad+="code-reviewer:M6 "
+  grep -qF '## Comandos de pacote' "$REPO/plugins/kit/skills/init/stacks.md" || sp_bad+="stacks "
+  grep -qF '## Perfil do stack' "$REPO/plugins/kit/skills/init/adopt.md" || sp_bad+="adopt "
+  for d in README.md docs/reference.md docs/design.md CONTRIBUTING.md; do grep -qF 'stack-profile.sh' "$REPO/$d" || grep -qF 'docs/stack.md' "$REPO/$d" || sp_bad+="$d "; done
+  grep -qF 'M6 API de outra versão' "$REPO/docs/reference.md" || sp_bad+="reference:M6 "
+  if [ -z "$sp_bad" ]; then ok "perfil do stack: gravado pelo init, lido por investigator, plan e execute, M6 e docs"
+  else ko "perfil do stack: gravado pelo init, lido por investigator, plan e execute, M6 e docs" "$sp_bad"; fi
 
   # Revisor de SPEC e drift: ids fixos, veredito na ultima linha, somente leitura e chamados pelas skills.
   SR="$REPO/plugins/kit/agents/spec-reviewer.md"
@@ -1580,7 +1787,7 @@ for fx in "$HERE"/fixtures/*.json; do
   n="$(jq '.cases | length' "$fx" | tr -d '\r')"
   for ((i = 0; i < n; i += FX_SHARD)); do ALL_GROUPS+=("fx:${fx##*/}:$i:$((i + FX_SHARD))"); done
 done
-ALL_GROUPS+=(semjq forma_shell apoio_init wave_base map_partition setup notify guardas estaticas)
+ALL_GROUPS+=(semjq forma_shell apoio_init wave_base map_partition stack_profile setup notify guardas estaticas)
 
 # Grupos afetados por um arquivo alterado (padroes casados contra "fx:<fixture>" ou o nome do grupo).
 # "*" e a suite inteira; arquivo sem script nem fixture (docs, skills, agents) so roda as estaticas.
@@ -1597,6 +1804,7 @@ groups_for_file() {
     plugins/kit/scripts/merge-json.sh) echo "apoio_init setup" ;;
     plugins/kit/scripts/inventory.sh) echo "apoio_init" ;;
     plugins/kit/scripts/map-partition.sh) echo "map_partition" ;;
+    plugins/kit/scripts/stack-profile.sh) echo "stack_profile" ;;
     plugins/kit/scripts/setup.sh) echo "setup notify" ;;
     plugins/kit/templates/*) echo "setup" ;;
     plugins/kit/scripts/wave-base.sh) echo "wave_base" ;;

@@ -555,6 +555,154 @@ kit_codemap_note() {
   return 0
 }
 
+# Manifestos que marcam pasta de pacote (nome do arquivo).
+KIT_MANIFEST_RE='^(package\.json|pyproject\.toml|setup\.py|requirements[^/]*\.txt|go\.mod|Cargo\.toml|pom\.xml|build\.gradle(\.kts)?|Gemfile|composer\.json|mix\.exs|deno\.jsonc?|[^/]*\.(csproj|fsproj|vbproj|sln))$'
+
+# Globs (um por linha) viram ERE para grep -E -f. Glob sem "/" casa pelo nome do arquivo.
+kit_globs_to_ere() {
+  local g re
+  while IFS= read -r g; do
+    [ -n "$g" ] || continue
+    re="$(glob_to_regex "$g")"
+    if [[ "$g" == */* ]]; then printf '%s\n' "$re"; else printf '(^|/)%s\n' "${re#^}"; fi
+  done
+}
+
+# Globs de um campo do kit.json $1, aplicaveis ao repositorio de caminho relativo $2 ("." = raiz).
+# Glob da raiz que comeca pelo repositorio perde o prefixo; os que comecam com ** ou nao tem "/" valem.
+kit_field_globs() {
+  local file="$1" rel="$2" field="$3" g
+  [ -f "$file" ] || return 0
+  jq -r --arg f "$field" '(.[$f] // [])[] | if type == "string" then . elif type == "object" then (.glob // empty) else empty end' "$file" 2>/dev/null |
+    tr -d '\r' | while IFS= read -r g; do
+      [ -n "$g" ] || continue
+      if [ "$rel" = "." ] || [[ "$g" != */* ]] || [[ "$g" == '**'* ]]; then printf '%s\n' "$g"
+      elif [ "${g#"$rel"/}" != "$g" ]; then printf '%s\n' "${g#"$rel"/}"
+      fi
+    done
+}
+
+# Repositorio principal (onde ficam docs/codemap.md e docs/stack.md), relativo a raiz: map.primary do
+# kit.json da raiz, o da propria raiz ou o primeiro. Uso: kit_primary <raiz> <repositorio>...
+kit_primary() {
+  local root="$1" p=""
+  shift
+  [ -f "$root/.claude/kit.json" ] && p="$(jq -r '(.map // {}).primary // empty' "$root/.claude/kit.json" 2>/dev/null | tr -d '\r')"
+  p="${p#./}"
+  p="${p%/}"
+  if [ -z "$p" ]; then
+    if [ "${1:-}" = "$root" ]; then p="."; else p="$(kit_rel_to "$root" "${1:-$root}")"; fi
+  fi
+  printf '%s' "$p"
+}
+
+# Arquivos de um repositorio como o /kit:map e o perfil do stack os veem. Grava em <pasta>: all (git
+# ls-files sem vendor/dist/build, gerados, lockfiles, binarios, .env* e segredos; so a area, se dada,
+# relativa a raiz), kept (all sem protected_paths), files (kept filtrado por source_globs do kit.json
+# do repositorio ou da raiz) e manifests (manifestos de kept, sem filtro de source_globs).
+# Uso: kit_repo_files <raiz> <repositorio> <rel> <pasta> [area]
+kit_repo_files() {
+  local root="$1" repo="$2" rel="$3" w="$4" area="${5:-}" rarea="" pre="" rkit="$1/.claude/kit.json"
+  cat >"$w/exclude" <<'EOF'
+(^|/)(node_modules|vendor|dist|build|target|coverage|\.venv|venv|__pycache__|\.next|\.nuxt|\.git|generated|__generated__)/
+(^|/)\.claude/
+^docs/codemap\.md$
+(^|/)\.env($|\.)
+(^|/)(secrets|keys)/
+\.(pem|key|p12|pfx|jks|keystore|crt|cer)$
+(^|/)[^/]*\.lock$
+-lock\.(json|ya?ml)$
+(^|/)(go\.sum|npm-shrinkwrap\.json|packages\.lock\.json)$
+\.(min\.js|min\.css|map)$
+(^|/)[^/]*\.generated\.[^/]*$
+\.(g|g\.i|[Dd]esigner)\.[^/.]+$
+(_pb2\.py|\.pb\.go)$
+\.(png|jpe?g|gif|bmp|ico|webp|svg|pdf|zip|gz|tgz|bz2|xz|7z|rar|jar|war|dll|exe|so|dylib|a|o|class|pyc|wasm|woff2?|ttf|otf|eot|mp[34]|mov|avi|db|sqlite3?|bin)$
+EOF
+  git -C "$repo" -c core.quotepath=off ls-files 2>/dev/null | tr -d '\r' | grep -vEf "$w/exclude" >"$w/all" || true
+
+  if [ -n "$area" ]; then
+    [ "$rel" = "." ] || pre="$rel/"
+    awk -v pre="$pre" -v area="$area" '{ p = pre $0; if (p == area || index(p, area "/") == 1) print }' "$w/all" >"$w/all.tmp"
+    mv "$w/all.tmp" "$w/all"
+  fi
+
+  { kit_field_globs "$repo/.claude/kit.json" "." protected_paths
+    [ "$repo" != "$root" ] && kit_field_globs "$rkit" "$rel" protected_paths; } | kit_globs_to_ere >"$w/protected"
+  if [ -s "$w/protected" ]; then grep -vEf "$w/protected" "$w/all" >"$w/kept" || true; else cp "$w/all" "$w/kept"; fi
+
+  if [ -f "$repo/.claude/kit.json" ] && jq -e '(.source_globs // []) | length > 0' "$repo/.claude/kit.json" >/dev/null 2>&1; then
+    kit_field_globs "$repo/.claude/kit.json" "." source_globs | kit_globs_to_ere >"$w/src"
+  elif [ "$repo" != "$root" ] && [ -f "$rkit" ] && jq -e '(.source_globs // []) | length > 0' "$rkit" >/dev/null 2>&1; then
+    kit_field_globs "$rkit" "$rel" source_globs | kit_globs_to_ere >"$w/src"
+    [ -s "$w/src" ] || printf '^$\n' >"$w/src"
+  elif [ -f "$rkit" ] && jq -e '(.source_globs // []) | length > 0' "$rkit" >/dev/null 2>&1; then
+    kit_field_globs "$rkit" "." source_globs | kit_globs_to_ere >"$w/src"
+  else
+    : >"$w/src"
+  fi
+  if [ -s "$w/src" ]; then grep -Ef "$w/src" "$w/kept" >"$w/files" || true; else cp "$w/kept" "$w/files"; fi
+
+  KIT_MANIFEST_RE="$KIT_MANIFEST_RE" awk -F/ '$NF ~ ENVIRON["KIT_MANIFEST_RE"] { print }' "$w/kept" >"$w/manifests"
+}
+
+# Manifestos de dependencia que o perfil do stack le (nome do arquivo).
+KIT_DEP_MANIFEST_RE='^(package\.json|pyproject\.toml|requirements[^/]*\.txt|go\.mod|Cargo\.toml|pom\.xml|build\.gradle(\.kts)?|Gemfile|composer\.json|Directory\.Packages\.props|[^/]*\.(csproj|fsproj|vbproj))$'
+
+# Estado do docs/stack.md gravado pelo /kit:init. Procura o arquivo com cabecalho "kit:init" na raiz
+# e em cada repositorio. Cabecalho "<!-- kit:init <commit> -->" (um repositorio) ou
+# "<!-- kit:init <repo>=<commit> ... -->" (varios). Para cada repositorio, compara os manifestos
+# alterados entre o commit gravado e HEAD. Imprime "ausente", "atualizado" ou
+# "desatualizado<TAB><manifestos>". Uso: kit_stack_state <raiz> <repositorio>...
+kit_stack_state() {
+  local root="$1" d f="" head="" tok r c rel changed="" list
+  shift
+  for d in "$root" "$@"; do
+    [ -f "$d/docs/stack.md" ] || continue
+    head="$(head -n 5 "$d/docs/stack.md" | tr -d '\r' | grep -oE '<!-- kit:init [^>]*-->' | head -n 1)"
+    [ -n "$head" ] && { f="$d/docs/stack.md"; break; }
+  done
+  [ -n "$f" ] || { echo "ausente"; return 0; }
+  head="${head#<!-- kit:init }"
+  head="${head%-->}"
+  for d in "$@"; do
+    rel="$(kit_rel_to "$root" "$d")"
+    c=""
+    for tok in $head; do
+      case "$tok" in
+        *=*) r="${tok%%=*}"; [ "$r" = "$rel" ] && c="${tok#*=}" ;;
+        *) [ "$#" -eq 1 ] && c="$tok" ;;
+      esac
+    done
+    if [ "$#" -gt 1 ]; then r="$rel/"; else r=""; fi
+    if [ -z "$c" ]; then
+      git -C "$d" -c core.quotepath=off ls-files 2>/dev/null | tr -d '\r' |
+        KIT_DEP_MANIFEST_RE="$KIT_DEP_MANIFEST_RE" awk -F/ '$NF ~ ENVIRON["KIT_DEP_MANIFEST_RE"] { f = 1 } END { exit !f }' &&
+        changed+="${changed:+, }$rel sem perfil"
+      continue
+    fi
+    if ! git -C "$d" cat-file -e "$c^{commit}" 2>/dev/null; then changed+="${changed:+, }${r}commit $c fora do histórico"; continue; fi
+    list="$(git -C "$d" -c core.quotepath=off diff --name-only "$c" HEAD 2>/dev/null | tr -d '\r' |
+      KIT_DEP_MANIFEST_RE="$KIT_DEP_MANIFEST_RE" awk -F/ -v pre="$r" '$NF ~ ENVIRON["KIT_DEP_MANIFEST_RE"] { printf "%s%s%s", (n++ ? ", " : ""), pre, $0 }')"
+    [ -z "$list" ] || changed+="${changed:+, }$list"
+  done
+  if [ -z "$changed" ]; then echo "atualizado"; else printf 'desatualizado\t%s\n' "$changed"; fi
+}
+
+# Aviso de perfil do stack desatualizado para o inicio da sessao (vazio se atualizado ou ausente).
+# Uso: kit_stack_note <raiz> <repositorio>...
+kit_stack_note() {
+  local st list tab=$'	'
+  st="$(kit_stack_state "$@")"
+  case "$st" in
+    desatualizado*)
+      list="${st#*"$tab"}"
+      [ "${#list}" -le 200 ] || list="${list:0:200}..."
+      echo "Perfil do stack desatualizado ($list): rode /kit:init para reparar" ;;
+  esac
+  return 0
+}
+
 # Raiz do kit.json mais proximo de $1 com bloco "notify" ligado (objeto). Vazio se ausente ou false.
 kit_notify_root() {
   local r

@@ -12,6 +12,8 @@ allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
 - Só tarefas, checkpoints e passos da wave final levam caixa `- [ ]`. Truths, artifacts, tests, behavior e decisões são bullets simples: os hooks contam as caixas para mostrar o progresso.
 - Cada tarefa cabe num diff revisável (ordem de grandeza: até ~5 arquivos, uma ideia).
 - O plano só cria o que a seção Reuso marca `nenhum`. O que o código já tem é usado ou estendido, nunca refeito.
+- **Perfil do stack:** se existir `docs/stack.md` (do `/kit:init`), Interfaces e `action` usam as dependências e as versões dele. Dependência fora do perfil é dependência nova (caso 3 abaixo).
+- **Versão do projeto:** quando a tarefa usa API de framework ou biblioteca do perfil cuja forma muda entre versões, consulte a documentação daquela versão se houver fonte na sessão (MCP de documentação ou web). Sem fonte, siga o padrão do código existente do projeto, não o de memória, e aponte o molde com `arquivo:linha` na `action`.
 - Comandos de `verify` vêm de `.claude/kit.json` (`build`, `test`, `test_related`, `lint`, `typecheck`, `smoke`). Chave ausente: use as que existem e anote a lacuna em Decisões.
 
 ## Lacunas: decidir ou perguntar
@@ -25,11 +27,13 @@ Pergunte com `AskUserQuestion` (opções concretas, recomendada marcada) só nes
 2. **Escopo:** algo fora da SPEC.
 3. **Caro de reverter:** schema público, contrato de API, dependência nova.
 
+Conta como produto também a escolha entre duas dependências do perfil que atendem a mesma necessidade com uso parecido (contagens de produção na mesma ordem de grandeza), quando nenhuma Decisão da SPEC ou do plano diz qual usar.
+
 A resposta entra em Decisões como `- <data> · usuário · <decisão> — <pergunta>`. Na dúvida entre técnica e produto, conta como produto.
 
 ## Passos
 1. Leia a spec: $ARGUMENTS. Sem argumento, use a SPEC.md mais recente em `docs/specs/`. Se ela tem `Revisão: pendente`, o `/kit:spec` parou antes da revisão: faça antes o passo 6 do `/kit:spec` (`${CLAUDE_PLUGIN_ROOT}/skills/spec/SKILL.md`) nessa SPEC.
-2. Delegue ao `kit:investigator` (que lê o `docs/codemap.md`, se existir) o mapeamento do código afetado: pontos de entrada, padrões a seguir (com `arquivo:linha` do melhor molde para cada tipo de mudança), testes existentes, docs de referência, riscos. Peça junto o inventário de reuso: liste as necessidades da SPEC (tela ou componente, lógica, rota ou handler, validação, modelo, acesso a dados, texto visível, helper de teste), cada uma descrita pelo que faz e não por um nome que teria. As linhas `Reuso:` da SPEC entram como achados a confirmar. Numere as linhas da tabela devolvida `R1`, `R2`, ...
+2. Delegue ao `kit:investigator` (que lê o `docs/codemap.md` e o `docs/stack.md`, se existirem) o mapeamento do código afetado: pontos de entrada, padrões a seguir (com `arquivo:linha` do melhor molde para cada tipo de mudança), testes existentes, docs de referência, riscos. Peça junto o inventário de reuso: liste as necessidades da SPEC (tela ou componente, lógica, rota ou handler, validação, modelo, acesso a dados, texto visível, helper de teste), cada uma descrita pelo que faz e não por um nome que teria. As linhas `Reuso:` da SPEC entram como achados a confirmar. Numere as linhas da tabela devolvida `R1`, `R2`, ...
 3. Liste as lacunas e classifique cada uma pela regra acima. Pergunte as de produto, escopo ou caras de reverter; decida as técnicas.
    - **Abordagem:** antes de derivar as tarefas, compare duas ou três abordagens que diferem de verdade (mudar o mínimo do que existe, estrutura nova, lógica em outra camada), uma linha cada com o custo principal. Escolha a que cria menos arquivos e usa mais linhas do Reuso, salvo se ela fere regra do CLAUDE.md ou deixa item de Escopo sem truth. Plano de uma wave só pode ter só a escolhida.
 4. **must_haves, de trás para frente.** Parta do resultado da SPEC (Objetivo, Escopo, Casos de borda, Verificação ponta a ponta):

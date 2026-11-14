@@ -57,50 +57,6 @@ PARALLEL=8
 TMPD="$(mktemp -d)"
 trap 'rm -rf "$TMPD"' EXIT
 
-# Exclusoes fixas, sobre o caminho relativo ao repositorio.
-cat >"$TMPD/exclude" <<'EOF'
-(^|/)(node_modules|vendor|dist|build|target|coverage|\.venv|venv|__pycache__|\.next|\.nuxt|\.git|generated|__generated__)/
-(^|/)\.claude/
-^docs/codemap\.md$
-(^|/)\.env($|\.)
-(^|/)(secrets|keys)/
-\.(pem|key|p12|pfx|jks|keystore|crt|cer)$
-(^|/)[^/]*\.lock$
--lock\.(json|ya?ml)$
-(^|/)(go\.sum|npm-shrinkwrap\.json|packages\.lock\.json)$
-\.(min\.js|min\.css|map)$
-(^|/)[^/]*\.generated\.[^/]*$
-\.(g|g\.i|[Dd]esigner)\.[^/.]+$
-(_pb2\.py|\.pb\.go)$
-\.(png|jpe?g|gif|bmp|ico|webp|svg|pdf|zip|gz|tgz|bz2|xz|7z|rar|jar|war|dll|exe|so|dylib|a|o|class|pyc|wasm|woff2?|ttf|otf|eot|mp[34]|mov|avi|db|sqlite3?|bin)$
-EOF
-
-MANIFEST_RE='^(package\.json|pyproject\.toml|setup\.py|requirements[^/]*\.txt|go\.mod|Cargo\.toml|pom\.xml|build\.gradle(\.kts)?|Gemfile|composer\.json|mix\.exs|deno\.jsonc?|[^/]*\.(csproj|fsproj|vbproj|sln))$'
-
-# Globs (um por linha) viram ERE para grep -E -f. Glob sem "/" casa pelo nome do arquivo.
-globs_to_ere() {
-  local g re
-  while IFS= read -r g; do
-    [ -n "$g" ] || continue
-    re="$(glob_to_regex "$g")"
-    if [[ "$g" == */* ]]; then printf '%s\n' "$re"; else printf '(^|/)%s\n' "${re#^}"; fi
-  done
-}
-
-# Globs de um campo do kit.json de $1, aplicaveis ao repositorio de caminho relativo $2 ("." = raiz).
-# Glob da raiz que comeca pelo repositorio perde o prefixo; os que comecam com ** ou nao tem "/" valem.
-kit_globs() {
-  local file="$1" rel="$2" field="$3" g
-  [ -f "$file" ] || return 0
-  jq -r --arg f "$field" '(.[$f] // [])[] | if type == "string" then . elif type == "object" then (.glob // empty) else empty end' "$file" 2>/dev/null |
-    tr -d '\r' | while IFS= read -r g; do
-      [ -n "$g" ] || continue
-      if [ "$rel" = "." ] || [[ "$g" != */* ]] || [[ "$g" == '**'* ]]; then printf '%s\n' "$g"
-      elif [ "${g#"$rel"/}" != "$g" ]; then printf '%s\n' "${g#"$rel"/}"
-      fi
-    done
-}
-
 REPOS=()
 while IFS= read -r r; do [ -n "$r" ] && REPOS+=("$r"); done < <(kit_repos "$ROOT" "")
 [ "${#REPOS[@]}" -gt 0 ] || { echo "map-partition: nenhum repositório git em $ROOT" >&2; exit 1; }
@@ -108,14 +64,7 @@ while IFS= read -r r; do [ -n "$r" ] && REPOS+=("$r"); done < <(kit_repos "$ROOT
 MULTI=0
 [ "${#REPOS[@]}" -gt 1 ] && MULTI=1
 
-# Repositorio principal (onde fica o docs/codemap.md): map.primary, o da propria raiz ou o primeiro.
-PRIMARY=""
-[ -f "$ROOT_KIT" ] && PRIMARY="$(jq -r '(.map // {}).primary // empty' "$ROOT_KIT" 2>/dev/null | tr -d '\r')"
-PRIMARY="${PRIMARY#./}"
-PRIMARY="${PRIMARY%/}"
-if [ -z "$PRIMARY" ]; then
-  if [ "${REPOS[0]}" = "$ROOT" ]; then PRIMARY="."; else PRIMARY="$(kit_rel_to "$ROOT" "${REPOS[0]}")"; fi
-fi
+PRIMARY="$(kit_primary "$ROOT" ${REPOS[@]+"${REPOS[@]}"})"
 
 if [ "$STATUS" -eq 1 ]; then
   found=0
@@ -138,35 +87,12 @@ for repo in ${REPOS[@]+"${REPOS[@]}"}; do
   W="$TMPD/r"
   rm -rf "$W"; mkdir -p "$W"
 
-  git -C "$repo" -c core.quotepath=off ls-files 2>/dev/null | tr -d '\r' | grep -vEf "$TMPD/exclude" >"$W/all" || true
-
   # Area pedida, relativa a raiz; RAREA e a mesma area relativa ao repositorio (vazio = repo inteiro).
   RAREA=""
   if [ -n "$AREA" ]; then
     if [ "$rel" = "." ]; then RAREA="$AREA"; elif [ "${AREA#"$rel"/}" != "$AREA" ]; then RAREA="${AREA#"$rel"/}"; fi
-    if [ "$rel" = "." ]; then pre=""; else pre="$rel/"; fi
-    awk -v pre="$pre" -v area="$AREA" '{ p = pre $0; if (p == area || index(p, area "/") == 1) print }' "$W/all" >"$W/all.tmp"
-    mv "$W/all.tmp" "$W/all"
   fi
-
-  { kit_globs "$repo/.claude/kit.json" "." protected_paths
-    [ "$repo" != "$ROOT" ] && kit_globs "$ROOT_KIT" "$rel" protected_paths; } | globs_to_ere >"$W/protected"
-  if [ -s "$W/protected" ]; then grep -vEf "$W/protected" "$W/all" >"$W/kept" || true; else cp "$W/all" "$W/kept"; fi
-
-  if [ -f "$repo/.claude/kit.json" ] && jq -e '(.source_globs // []) | length > 0' "$repo/.claude/kit.json" >/dev/null 2>&1; then
-    kit_globs "$repo/.claude/kit.json" "." source_globs | globs_to_ere >"$W/src"
-  elif [ "$repo" != "$ROOT" ] && [ -f "$ROOT_KIT" ] && jq -e '(.source_globs // []) | length > 0' "$ROOT_KIT" >/dev/null 2>&1; then
-    kit_globs "$ROOT_KIT" "$rel" source_globs | globs_to_ere >"$W/src"
-    [ -s "$W/src" ] || printf '^$\n' >"$W/src"
-  elif [ -f "$ROOT_KIT" ] && jq -e '(.source_globs // []) | length > 0' "$ROOT_KIT" >/dev/null 2>&1; then
-    kit_globs "$ROOT_KIT" "." source_globs | globs_to_ere >"$W/src"
-  else
-    : >"$W/src"
-  fi
-  if [ -s "$W/src" ]; then grep -Ef "$W/src" "$W/kept" >"$W/files" || true; else cp "$W/kept" "$W/files"; fi
-
-  # Manifestos (pastas de pacote) vem da lista sem filtro de source_globs.
-  MANIFEST_RE="$MANIFEST_RE" awk -F/ '$NF ~ ENVIRON["MANIFEST_RE"] { print }' "$W/kept" >"$W/manifests"
+  kit_repo_files "$ROOT" "$repo" "$rel" "$W" "$AREA"
 
   # Texto nao vazio (grep -I pula binario) e numero de linhas.
   : >"$W/loc"
