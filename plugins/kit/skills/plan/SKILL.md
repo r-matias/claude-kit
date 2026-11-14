@@ -11,6 +11,7 @@ allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
 - Formato do PLAN.md: [template.md](template.md). Siga as seções e os campos na ordem; não invente seções.
 - Só tarefas, checkpoints e passos da wave final levam caixa `- [ ]`. Truths, artifacts, tests, behavior e decisões são bullets simples: os hooks contam as caixas para mostrar o progresso.
 - Cada tarefa cabe num diff revisável (ordem de grandeza: até ~5 arquivos, uma ideia).
+- O plano só cria o que a seção Reuso marca `nenhum`. O que o código já tem é usado ou estendido, nunca refeito.
 - Comandos de `verify` vêm de `.claude/kit.json` (`build`, `test`, `test_related`, `lint`, `typecheck`, `smoke`). Chave ausente: use as que existem e anote a lacuna em Decisões.
 
 ## Lacunas: decidir ou perguntar
@@ -27,9 +28,10 @@ Pergunte com `AskUserQuestion` (opções concretas, recomendada marcada) só nes
 A resposta entra em Decisões como `- <data> · usuário · <decisão> — <pergunta>`. Na dúvida entre técnica e produto, conta como produto.
 
 ## Passos
-1. Leia a spec: $ARGUMENTS. Sem argumento, use a SPEC.md mais recente em `docs/specs/`.
-2. Delegue ao `kit:investigator` (que lê o `docs/codemap.md`, se existir) o mapeamento do código afetado: pontos de entrada, padrões a seguir (com `arquivo:linha` do melhor molde para cada tipo de mudança), testes existentes, docs de referência, riscos.
+1. Leia a spec: $ARGUMENTS. Sem argumento, use a SPEC.md mais recente em `docs/specs/`. Se ela tem `Revisão: pendente`, o `/kit:spec` parou antes da revisão: faça antes o passo 6 do `/kit:spec` (`${CLAUDE_PLUGIN_ROOT}/skills/spec/SKILL.md`) nessa SPEC.
+2. Delegue ao `kit:investigator` (que lê o `docs/codemap.md`, se existir) o mapeamento do código afetado: pontos de entrada, padrões a seguir (com `arquivo:linha` do melhor molde para cada tipo de mudança), testes existentes, docs de referência, riscos. Peça junto o inventário de reuso: liste as necessidades da SPEC (tela ou componente, lógica, rota ou handler, validação, modelo, acesso a dados, texto visível, helper de teste), cada uma descrita pelo que faz e não por um nome que teria. As linhas `Reuso:` da SPEC entram como achados a confirmar. Numere as linhas da tabela devolvida `R1`, `R2`, ...
 3. Liste as lacunas e classifique cada uma pela regra acima. Pergunte as de produto, escopo ou caras de reverter; decida as técnicas.
+   - **Abordagem:** antes de derivar as tarefas, compare duas ou três abordagens que diferem de verdade (mudar o mínimo do que existe, estrutura nova, lógica em outra camada), uma linha cada com o custo principal. Escolha a que cria menos arquivos e usa mais linhas do Reuso, salvo se ela fere regra do CLAUDE.md ou deixa item de Escopo sem truth. Plano de uma wave só pode ter só a escolhida.
 4. **must_haves, de trás para frente.** Parta do resultado da SPEC (Objetivo, Escopo, Casos de borda, Verificação ponta a ponta):
    - **truths:** frases que precisam ser verdade quando acabar, cada uma verificável por teste ou comando. Todo item de Escopo e todo caso de borda vira ao menos uma truth.
    - **artifacts:** arquivos que precisam existir ou mudar para as truths valerem, com o que cada um provê.
@@ -38,7 +40,7 @@ A resposta entra em Decisões como `- <data> · usuário · <decisão> — <perg
 6. **Tarefas**, derivadas dos artifacts e tests. Cada uma com:
    - `files`: só arquivos de artifacts/tests (ou doc de referência).
    - `behavior`: uma linha por comportamento, `<situação> → <resultado>`; cada linha vira um teste da própria tarefa.
-   - `action`: como fazer, apontando o molde no código com `arquivo:linha` quando houver.
+   - `action`: como fazer, apontando o molde no código com `arquivo:linha` quando houver, e a linha do Reuso de tudo que a tarefa usa ou cria (`usar loadUsers (R1)`, `novo (R3: nenhum)`). Algo que surgir sem linha recebe a busca do inventário e uma linha nova antes de alguma tarefa criá-lo.
    - `verify`: chave do `kit.json` (prefira `test_related` com os testes da tarefa).
    - `done`: assertiva testável que fecha a tarefa.
 7. **Waves:** agrupe por dependência. Uma tarefa só usa o que waves anteriores criam. Na linha `Paralelo:` da wave, liste as tarefas que não compartilham arquivo com nenhuma outra da mesma wave. Termine cada wave com a caixa de checkpoint do template.
@@ -49,6 +51,6 @@ A resposta entra em Decisões como `- <data> · usuário · <decisão> — <perg
    - Quebrar: leia `${CLAUDE_PLUGIN_ROOT}/skills/epic/SKILL.md` e siga os passos 4 a 6 dele com o slug da SPEC como épico e as fatias propostas, sem nova entrevista e sem nova confirmação. Não grave PLAN.md; recomende `/kit:plan` na SPEC da fatia 1.
    - Manter: siga e registre em Decisões `- <data de hoje> · usuário · tamanho: manter num plano só (<N> tarefas, <W> waves) — acima do limite de <max_tasks> tarefas / <max_waves> waves`.
    - Reduzir: mova o corte para Fora de escopo da SPEC.md, registre lá em Decisões e refaça os passos 4 a 8 com a SPEC reduzida.
-10. Grave `PLAN.md` ao lado da SPEC.md.
-11. Chame o `kit:plan-reviewer` com os caminhos da SPEC.md e do PLAN.md. Cada achado vem com o id da regra e a severidade fixa dele. Corrija todo achado BLOCKER e MAJOR no PLAN.md e chame de novo, até a última linha ser `aprovado` (no máximo 3 rodadas; se sobrar BLOCKER, diga qual, com o id).
-12. A resposta final é só o resumo, no máximo 5 linhas não vazias, sem título, introdução nem fecho, uma linha por item: caminho do PLAN.md; número de waves e tarefas; decisões (quantas e a principal); resultado da revisão; próximo passo (`/kit:execute <caminho>`). Na quebra em fatias: caminho do EPIC.md, as fatias em uma linha e o próximo passo (`/kit:plan` da fatia 1).
+10. Grave `PLAN.md` ao lado da SPEC.md, com `Revisão: pendente`.
+11. Chame o `kit:plan-reviewer` com os caminhos da SPEC.md e do PLAN.md. Cada achado vem com o id da regra e a severidade fixa dele. Corrija todo achado BLOCKER e MAJOR no PLAN.md e chame de novo, até a última linha ser `aprovado` (no máximo 3 rodadas; se sobrar BLOCKER, diga qual, com o id). No fim, troque a linha por `Revisão: aprovado (rodada N)` ou `Revisão: reprovado após 3 rodadas — <ids>`; enquanto espera resposta do usuário, ela fica `pendente`.
+12. Enquanto espera um subagent, não escreva nada ao usuário. A resposta final é só o resumo, no máximo 5 linhas não vazias, sem título, introdução nem fecho, uma linha por item: caminho do PLAN.md; número de waves e tarefas; decisões (quantas e a principal); resultado da revisão; próximo passo (`/kit:execute <caminho>`). Na quebra em fatias: caminho do EPIC.md, as fatias em uma linha e o próximo passo (`/kit:plan` da fatia 1).

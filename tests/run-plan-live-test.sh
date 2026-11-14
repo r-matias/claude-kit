@@ -4,7 +4,8 @@
 # produto vira pergunta e nao gera PLAN.md. Tamanho: SPEC de 20 operacoes vira pergunta de quebra
 # sem PLAN.md; com a Decisao "tamanho: manter" do usuario, grava sem perguntar. O /kit:spec com
 # escopo grande pergunta a quebra em fatias e nao grava; com escopo pequeno grava a SPEC.md e chama o
-# kit:spec-reviewer. Confere no disco e no transcript (stream-json).
+# kit:spec-reviewer. O plano traz Abordagem e Reuso (com o saveUsers existente) e a linha Revisao
+# com veredito. Confere no disco e no transcript (stream-json).
 # Custa seis sessoes do Claude Code (alguns minutos cada). Uso: tests/run-plan-live-test.sh [--keep]
 set -u
 
@@ -80,11 +81,16 @@ calls="$(tools_called "$d.jsonl")"
 if [ -f "$P" ]; then ok "PLAN.md gravado"; else ko "PLAN.md gravado" "$(final_text "$d.jsonl" | tail -n 10)"; fi
 [ -f "$P" ] || : >"$P.vazio"
 PF="$P"; [ -f "$P" ] || PF="$P.vazio"
-heads="$(grep -E '^##+ ' "$PF" | tr -d '\r' | sed -E 's/^(##+ (must_haves|truths|artifacts|tests|Interfaces|Wave final|Wave [0-9]+|Decisões)).*/\1/' |
-  grep -E '^##+ (must_haves|truths|artifacts|tests|Interfaces|Wave final|Wave [0-9]+|Decisões)$' | sed -E 's/Wave [0-9]+/Wave N/' | awk '!seen[$0]++' | paste -sd'|' -)"
-if [ "$heads" = "## must_haves|### truths|### artifacts|### tests|## Interfaces|## Wave N|## Wave final|## Decisões" ]; then
-  ok "seções na ordem: must_haves, Interfaces, waves, wave final, Decisões"
-else ko "seções na ordem: must_haves, Interfaces, waves, wave final, Decisões" "$heads"; fi
+heads="$(grep -E '^##+ ' "$PF" | tr -d '\r' | sed -E 's/^(##+ (Abordagem|Reuso|must_haves|truths|artifacts|tests|Interfaces|Wave final|Wave [0-9]+|Decisões)).*/\1/' |
+  grep -E '^##+ (Abordagem|Reuso|must_haves|truths|artifacts|tests|Interfaces|Wave final|Wave [0-9]+|Decisões)$' | sed -E 's/Wave [0-9]+/Wave N/' | awk '!seen[$0]++' | paste -sd'|' -)"
+if [ "$heads" = "## Abordagem|## Reuso|## must_haves|### truths|### artifacts|### tests|## Interfaces|## Wave N|## Wave final|## Decisões" ]; then
+  ok "seções na ordem: Abordagem, Reuso, must_haves, Interfaces, waves, wave final, Decisões"
+else ko "seções na ordem: Abordagem, Reuso, must_haves, Interfaces, waves, wave final, Decisões" "$heads"; fi
+if sed -n '/^## Abordagem/,/^## [^A]/p' "$PF" | grep -qE '^- Escolhida: .+ — .+'; then ok "Abordagem com a escolhida e o motivo"; else ko "Abordagem com a escolhida e o motivo" "$(sed -n '/^## Abordagem/,/^## [^A]/p' "$PF" | head -n 5)"; fi
+if sed -n '/^## Reuso/,/^## [^R]/p' "$PF" | grep -E '^\| *R[0-9]+ *\|' | grep -F 'saveUsers' | grep -qE '\| *(usar|estender)'; then ok "Reuso acha o saveUsers existente"
+else ko "Reuso acha o saveUsers existente" "$(sed -n '/^## Reuso/,/^## [^R]/p' "$PF" | head -n 10)"; fi
+if grep -E '^  - action:' "$PF" | grep -qE '\(R[0-9]+[:)]'; then ok "tarefa cita linha do Reuso"; else ko "tarefa cita linha do Reuso" "nenhuma action com (R<n>)"; fi
+if tr -d '\r' <"$PF" | grep -qE '^Revisão: (aprovado \(rodada [1-3]\)|reprovado após 3 rodadas)'; then ok "Revisão com veredito"; else ko "Revisão com veredito" "$(grep -E '^Revisão:' "$PF")"; fi
 # Cada tarefa numerada tem files, behavior, action, verify e done, nessa ordem.
 bad_tasks="$(tr -d '\r' <"$PF" | awk '
   function flush() { if (t != "" && f != "files|behavior|action|verify|done") print t " -> " f }
@@ -120,7 +126,7 @@ calls="$(tools_called "$d.jsonl")"
 text="$(final_text "$d.jsonl")"
 # Em claude -p o AskUserQuestion pode nao estar disponivel; vale a chamada ou a pergunta no texto final.
 if grep -qx 'AskUserQuestion' <<<"$calls" || grep -qE '\?|[Rr]esponda|[Ee]scolha' <<<"$text"; then ok "pergunta ao usuário"; else ko "pergunta ao usuário" "$(tail -n 10 <<<"$text")"; fi
-if grep -qiE 'tentativas|limite' <<<"$text$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.name == "AskUserQuestion") | .input | tostring' "$d.jsonl" 2>/dev/null)"; then
+if grep -qiE 'tentativas|limite|senhas? erradas?|bloque' <<<"$text$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.name == "AskUserQuestion") | .input | tostring' "$d.jsonl" 2>/dev/null)"; then
   ok "pergunta trata do limite de tentativas"
 else ko "pergunta trata do limite de tentativas" "$(tail -n 10 <<<"$text")"; fi
 if [ ! -f "$P" ]; then ok "PLAN.md não gravado antes da resposta"; else ko "PLAN.md não gravado antes da resposta" "$(head -n 20 "$P")"; fi
@@ -173,6 +179,7 @@ for h in '## Objetivo' '## Escopo' '## Fora de escopo' '## Casos de borda' '## V
   grep -qx "$h" <(tr -d '\r' <"$S" 2>/dev/null) || { ko "SPEC.md com as seções do formato" "falta $h"; h=x; break; }
 done
 [ "$h" = x ] || ok "SPEC.md com as seções do formato"
+if tr -d '\r' <"$S" 2>/dev/null | grep -qE '^Revisão: (aprovado \(rodada [1-3]\)|reprovado após 3 rodadas)'; then ok "SPEC.md com Revisão e veredito"; else ko "SPEC.md com Revisão e veredito" "$(grep -E '^Revisão:' "$S" 2>/dev/null)"; fi
 if grep -qx 'Agent:kit:spec-reviewer\|Task:kit:spec-reviewer' <<<"$calls"; then ok "kit:spec-reviewer chamado"; else ko "kit:spec-reviewer chamado" "$(tr '\n' ' ' <<<"$calls")"; fi
 if git -C "$d" diff --quiet HEAD -- src test data; then ok "nenhum código de produção alterado"; else ko "nenhum código de produção alterado" "$(git -C "$d" diff --stat HEAD -- src test data | tr '\n' ' ')"; fi
 if final_text "$d.jsonl" | grep -q '/kit:plan'; then ok "recomenda o /kit:plan"; else ko "recomenda o /kit:plan" "$(final_text "$d.jsonl" | tail -n 5)"; fi

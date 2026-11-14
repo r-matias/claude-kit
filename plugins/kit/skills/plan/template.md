@@ -1,5 +1,17 @@
 # Plano: <título>
 Spec: ./SPEC.md
+Revisão: <pendente | aprovado (rodada N) | reprovado após 3 rodadas — ids>
+
+## Abordagem
+- Escolhida: <abordagem em uma linha> — <motivo>
+- Descartada: <abordagem em uma linha> — <por que não>
+
+## Reuso
+| # | Necessidade | Existente | Veredito |
+|---|---|---|---|
+| R1 | <o que a SPEC precisa> | `<caminho:linha>` `<símbolo>` | usar |
+| R2 | <...> | `<caminho:linha>` `<símbolo>` | estender: <o que acrescenta> |
+| R3 | <...> | buscado: `<termo>`, `<glob>` | nenhum |
 
 ## must_haves
 ### truths
@@ -19,7 +31,7 @@ Paralelo: <números das tarefas com arquivos disjuntos, ou "nenhum">
   - files: `<caminho>`, `<caminho>`
   - behavior:
     - <situação ou entrada> → <resultado esperado>
-  - action: <como fazer>; molde: `<caminho:linha>`
+  - action: <como fazer>; molde: `<caminho:linha>`; reuso: usar `<símbolo>` (R1), novo (R3: nenhum)
   - verify: `<chave do kit.json>`
   - done: <assertiva testável>
 - [ ] Checkpoint wave 1: re-rodar os verify da wave, confirmar cada done, revisar o diff da wave, avaliar o contexto

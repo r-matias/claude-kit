@@ -10,6 +10,7 @@ O que você ganha:
 - **Menos estrago.** Comandos destrutivos (`rm -rf` fora do projeto, `git push --force`, `DROP TABLE`) e escrita em segredos (`.env`, chaves) são barrados antes de rodar.
 - **Turno só termina verde.** Quando o Claude mexe em código, build e testes rodam antes de ele dizer que acabou.
 - **Feature com plano conferível.** SPEC → PLAN com tarefas testáveis → execução em etapas, com revisão de código e de segurança no fim.
+- **Menos código duplicado.** Antes de planejar, o kit procura no projeto o que cada parte da feature precisa e só cria o que não existe; o revisor de código aponta o que foi refeito mesmo assim.
 - **Bug pela causa raiz.** Primeiro um teste que reproduz, depois a correção.
 
 ## Começar
@@ -86,10 +87,10 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
    - `/kit:spec exportar o relatório de vendas em CSV`
    - `/kit:spec usuário pode trocar o e-mail com confirmação por link`
 2. `/clear` limpa o contexto antes de planejar.
-3. `/kit:plan` transforma a SPEC num `PLAN.md` com tarefas testáveis agrupadas em etapas (waves). Decide sozinho os detalhes técnicos e registra cada decisão no plano; só pergunta o que é decisão de produto. Um revisor confere o plano contra a SPEC antes de entregar: cada achado cita uma regra com id e severidade fixa (por exemplo `BLOCKER [B1]`, tarefa que usa algo da mesma wave), e o plano só sai quando o revisor diz `aprovado`.
+3. `/kit:plan` transforma a SPEC num `PLAN.md` com tarefas testáveis agrupadas em etapas (waves). Decide sozinho os detalhes técnicos e registra cada decisão no plano; só pergunta o que é decisão de produto. Um revisor confere o plano contra a SPEC antes de entregar: cada achado cita uma regra com id e severidade fixa (por exemplo `BLOCKER [B1]`, tarefa que usa algo da mesma wave), e o plano só sai quando o revisor diz `aprovado`. Antes das tarefas, o plano procura no código o que cada parte da SPEC precisa (seção Reuso) e só cria o que não existe; também registra a abordagem escolhida e as descartadas, para o revisor apontar se uma mais simples ficou de fora.
    - `/kit:plan docs/specs/export-csv/SPEC.md`
    - `/kit:plan` (sem argumento: usa a SPEC mais recente)
-4. `/kit:execute` implementa wave a wave, escreve os testes de cada tarefa e só marca uma tarefa como feita com evidência. Ao fim de cada wave revisa o diff; no fim do plano passa por revisão de código e de segurança. Para antes de qualquer ação irreversível (deploy, push, migração em banco real) e nunca commita sem você pedir.
+4. `/kit:execute` implementa wave a wave, escreve os testes de cada tarefa e só marca uma tarefa como feita com evidência. Ao fim de cada wave revisa o diff, inclusive procurando código novo que repete o que o projeto já tem; no fim do plano passa por revisão de código e de segurança. Plano que ficou sem revisão (sessão interrompida entre gravar e revisar, marcado `Revisão: pendente`) é revisado antes de executar. Para antes de qualquer ação irreversível (deploy, push, migração em banco real) e nunca commita sem você pedir.
    - `/kit:execute docs/specs/export-csv/PLAN.md`
    - `/kit:execute` (retoma o plano mais recente da primeira tarefa pendente; útil depois de um `/compact`)
 

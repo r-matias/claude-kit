@@ -33,8 +33,10 @@ Cada regra tem um id e uma severidade fixa. Todo achado cita o id da regra que e
 - **M6** Tarefa sem algum dos campos `files`, `behavior`, `action`, `verify`, `done` (nessa ordem), ou `done` que não é assertiva testável.
 - **M7** Doc de referência ou arquivo acoplado (`coupled_changes` do `kit.json`) afetado sem tarefa que o atualize.
 - **M8** Plano acima de `plan.max_tasks` tarefas numeradas (padrão 15) ou `plan.max_waves` waves sem contar a wave final (padrão 6), lidos do `kit.json`, sem Decisão do usuário registrada: uma linha de Decisões com origem `usuário` e `tamanho: manter`, no PLAN.md ou na SPEC.md. Cite as contagens e o limite.
+- **M9** Tarefa cria o que o código já tem: componente, módulo, serviço, função utilitária, validação, rota, chave de texto ou helper de teste que já existe, ou o que a seção Reuso marca `usar` ou `estender`. Refaça a busca de cada linha `nenhum` do Reuso e de cada arquivo novo sem linha (Grep/Glob pelo nome e pelo que faz) e cite o `arquivo:linha` existente.
+- **M10** Abordagem mais simples ignorada: código existente que o plano não usa nem cita em Reuso ou Abordagem substituiria um arquivo novo ou uma wave inteira. Cite o `arquivo:linha` e o que ele substitui. Preferência entre dois desenhos equivalentes não é achado.
 
-Também confira o formato que não tem id próprio e reporte como MINOR `[-]`: `behavior` fora da forma `<situação> → <resultado>`, wave sem checkpoint, wave final sem F1 a F3 (ou com F4 sem `smoke` no `kit.json`), linha de Decisões sem data, origem ou motivo.
+Também confira o formato que não tem id próprio e reporte como MINOR `[-]`: `behavior` fora da forma `<situação> → <resultado>`, wave sem checkpoint, wave final sem F1 a F3 (ou com F4 sem `smoke` no `kit.json`), linha de Decisões sem data, origem ou motivo, seção Reuso ausente, Abordagem sem `Escolhida` (ou sem `Descartada` em plano com mais de uma wave), `action` que cria arquivo sem citar a linha do Reuso.
 
 ## Saída
 Um achado por linha:

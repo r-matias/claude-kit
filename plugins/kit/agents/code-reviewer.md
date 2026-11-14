@@ -28,6 +28,7 @@ Cada regra tem um id e uma severidade fixa. Todo achado cita o id da regra que e
 - **M2** Erro engolido, ou caminho que pode falhar sem tratamento.
 - **M3** Arquivo acoplado (`coupled_changes` ou `key_parity` do `kit.json`) não atualizado.
 - **M4** Tarefa marcada como feita (`- [x]`, `done`) sem evidência no diff ou nos testes que a comprove.
+- **M5** Código novo que faz o que código fora do diff já faz (função, componente, serviço, validação, rota, chave de texto), ou que refaz o que a seção Reuso do plano marca `usar` ou `estender`. Busque pelo nome e pelo que faz e cite o `arquivo:linha` existente.
 
 ## Saída
 Um achado por linha:

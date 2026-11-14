@@ -1407,7 +1407,7 @@ if [ -z "$FILTER" ]; then
 
   TPL="$REPO/plugins/kit/skills/plan/template.md"
   tpl_got="$(grep -E '^##+ |^  - (files|behavior|action|verify|done):' "$TPL" | sed -E 's/^(##+ [^—]*[^ —]).*/\1/; s/:.*//; s/^ *- //' | tr -d '\r' | paste -sd'|' -)"
-  tpl_want="## must_haves|### truths|### artifacts|### tests|## Interfaces|## Wave 1|files|behavior|action|verify|done|## Wave final|## Decisões|## Riscos"
+  tpl_want="## Abordagem|## Reuso|## must_haves|### truths|### artifacts|### tests|## Interfaces|## Wave 1|files|behavior|action|verify|done|## Wave final|## Decisões|## Riscos"
   if [ "$tpl_got" = "$tpl_want" ]; then ok "template do PLAN.md: seções e campos na ordem"; else ko "template do PLAN.md: seções e campos na ordem" "$tpl_got"; fi
   tpl_bad="$(grep -E '\[[ xX]\]' "$TPL" | grep -vE '^- \[ \] ([0-9]+\.|Checkpoint wave [0-9]+:|F[0-9]+\.) ' || true)"
   if [ -z "$tpl_bad" ]; then ok "template do PLAN.md: caixa so em tarefa, checkpoint e wave final"; else ko "template do PLAN.md: caixa so em tarefa, checkpoint e wave final" "$tpl_bad"; fi
@@ -1479,6 +1479,27 @@ if [ -z "$FILTER" ]; then
   [ -z "$via_epic" ] || size_bad+="'via /kit:epic': $via_epic "
   if [ -z "$size_bad" ]; then ok "spec e plano grandes: limites, pergunta única de quebra, M8 e README"
   else ko "spec e plano grandes: limites, pergunta única de quebra, M8 e README" "$size_bad"; fi
+
+  # Reuso e abordagem: inventario pelo investigator, secoes no plano, revisores e revisao interrompida.
+  ru_bad=""
+  for want in 'inventário de reuso' 'seção Reuso marca `nenhum`' '**Abordagem:**' 'novo (R3: nenhum)' 'Revisão: pendente' 'Revisão: aprovado (rodada N)' 'passo 6 do `/kit:spec`'; do
+    grep -qF -- "$want" "$PLAN_MD" || ru_bad+="plan:'$want' "
+  done
+  for want in 'Revisão: <pendente' '- Escolhida:' '- Descartada:' '| # | Necessidade | Existente | Veredito |' 'reuso: usar'; do
+    grep -qF -- "$want" "$REPO/plugins/kit/skills/plan/template.md" || ru_bad+="template:'$want' "
+  done
+  for want in 'inventário de reuso' 'Revisão: pendente' '- Reuso: `caminho`' 'Revisão: aprovado (rodada N)'; do
+    grep -qF -- "$want" "$SPEC_MD" || ru_bad+="spec:'$want' "
+  done
+  grep -qF 'Revisão: pendente' "$REPO/plugins/kit/skills/epic/SKILL.md" || ru_bad+="epic "
+  EXEC_MD="$REPO/plugins/kit/skills/execute/SKILL.md"
+  grep -qF 'seção Reuso do plano' "$EXEC_MD" && grep -qF 'passo 11 do `/kit:plan`' "$EXEC_MD" || ru_bad+="execute "
+  grep -qF 'inventário de reuso' "$REPO/plugins/kit/agents/investigator.md" && grep -qF '| # | Necessidade | Existente | Veredito |' "$REPO/plugins/kit/agents/investigator.md" || ru_bad+="investigator "
+  for id in M9 M10; do grep -qE "^- \*\*$id\*\* " "$REPO/plugins/kit/agents/plan-reviewer.md" || ru_bad+="plan-reviewer:$id "; done
+  grep -qE '^- \*\*M5\*\* ' "$REPO/plugins/kit/agents/code-reviewer.md" || ru_bad+="code-reviewer:M5 "
+  grep -qF 'M10 código existente' "$REPO/docs/reference.md" && grep -qF 'M5 código novo' "$REPO/docs/reference.md" || ru_bad+="reference "
+  if [ -z "$ru_bad" ]; then ok "reuso e abordagem: inventário, seções do plano, M9/M10/M5 e Revisão: pendente"
+  else ko "reuso e abordagem: inventário, seções do plano, M9/M10/M5 e Revisão: pendente" "$ru_bad"; fi
 
   # Revisor de SPEC e drift: ids fixos, veredito na ultima linha, somente leitura e chamados pelas skills.
   SR="$REPO/plugins/kit/agents/spec-reviewer.md"

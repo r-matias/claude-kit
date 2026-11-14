@@ -42,6 +42,7 @@ O time de suporte precisa de 20 operações administrativas sobre `data/users.js
 ## Casos de borda
 - Arquivo vazio (`[]`) → `contarUsuarios()` devolve 0 e `exportarCsv()` devolve só o cabeçalho.
 - `criarUsuario` com e-mail já usado → lança `EMAIL_EM_USO`.
+- `importarCsv` com linha de e-mail já usado ou repetido no CSV → lança `EMAIL_EM_USO`; sem `@` → lança `EMAIL_INVALIDO`. Nos dois casos nada é gravado.
 - `restaurarBackup` com arquivo inválido → lança `BACKUP_INVALIDO` e não altera `data/users.json`.
 
 ## Verificação ponta a ponta
