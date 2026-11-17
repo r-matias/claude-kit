@@ -104,7 +104,20 @@ cmd_check() {
   if userns_restricted; then
     echo "aviso sandbox: o AppArmor restringe user namespaces (Ubuntu 24.04+) e o bwrap pode falhar; veja a seção de sandbox no Linux da documentação do Claude Code"
   fi
+  if [ "$p" = "windows" ] && command -v jq >/dev/null 2>&1 && ! powershell_denied; then
+    echo "aviso powershell: comandos pela ferramenta PowerShell não passam pelo guard-bash; aplique o grupo powershell do /kit:init ou ponha \"PowerShell\" em permissions.deny"
+  fi
   return "$missing"
+}
+
+# 0 se "PowerShell" esta em permissions.deny do settings do usuario ou do projeto atual.
+powershell_denied() {
+  local s
+  for s in "$CONFIG/settings.json" .claude/settings.json .claude/settings.local.json; do
+    [ -f "$s" ] || continue
+    jq -e '(.permissions.deny // []) | index("PowerShell") != null' "$s" >/dev/null 2>&1 && return 0
+  done
+  return 1
 }
 
 # Maquina pronta para o kit? check mais o marketplace conhecido. O settings do usuario nao conta.
@@ -191,19 +204,25 @@ cmd_permissions() {
     rm -f "$frag" "$frag.m"
     return 2
   fi
-  jq . "$frag.m" | tr -d '\r' >"$prop"
+  if ! jq . "$frag.m" | tr -d '\r' >"$prop.new" || [ ! -s "$prop.new" ]; then
+    rm -f "$frag" "$frag.m" "$prop.new"
+    echo "setup: falha ao gravar $prop" >&2
+    return 2
+  fi
+  mv "$prop.new" "$prop"
   rm -f "$frag" "$frag.m"
   echo "grupos: ${ids:-nenhum}"
   return 0
 }
 
-# guards e permissions.groups do kit.json: glob largo ou segredo em allow_write, item sem glob e
-# grupo desconhecido.
+# Confere o kit.json: glob largo ou segredo em allow_write, item sem glob, grupo desconhecido, campo
+# com tipo errado, chave de verify_on_stop sem comando, verify_on_stop sem source_globs e entrada
+# de repos que nao e repositorio git.
 cmd_guards() {
   local kit="${1:-.claude/kit.json}" out="" g
   command -v jq >/dev/null 2>&1 || { echo "setup: jq não encontrado; rode setup.sh check" >&2; return 2; }
   [ -f "$kit" ] || { echo "setup: kit.json não encontrado: $kit" >&2; return 2; }
-  jq empty "$kit" >/dev/null 2>&1 || { echo "setup: $kit não é JSON válido" >&2; return 2; }
+  kit_json_ok "$kit" || { echo "setup: $kit não é um objeto JSON válido" >&2; return 2; }
   KIT_JSON="$kit"
   while IFS= read -r g; do
     [ -n "$g" ] || continue
@@ -222,7 +241,22 @@ cmd_guards() {
          else to_entries[] | select(.value | noglob) | "inválido: guards.\($k)[\(.key)] sem glob" end) end),
       ((.permissions.groups // []) |
        if type != "array" then "inválido: permissions.groups precisa ser lista"
-       else .[] | select(. as $i | ($gr[0].groups | map(.id) | index($i)) == null) | "inválido: permissions.groups \(tojson) desconhecido" end)' "$kit" 2>/dev/null | tr -d '\r')"
+       else .[] | select(. as $i | ($gr[0].groups | map(.id) | index($i)) == null) | "inválido: permissions.groups \(tojson) desconhecido" end),
+      (["protected_paths", "source_globs", "verify_on_stop", "repos", "plan_dirs", "coupled_changes", "key_parity"][] as $k
+       | select(has($k) and (.[$k] | type) != "array") | "inválido: \($k) precisa ser lista"),
+      (select(has("commands") and (.commands | type) != "object") | "inválido: commands precisa ser objeto"),
+      ((if (.commands | type) == "object" then .commands else {} end) as $c
+       | (if (.verify_on_stop | type) == "array" then .verify_on_stop else [] end)
+       | .[] | strings | select(($c[.] // "") == "") | "inválido: verify_on_stop \(tojson) não existe em commands; o gate pula essa verificação"),
+      (select(((.verify_on_stop | type) == "array") and (.verify_on_stop | length) > 0
+         and ((if (.source_globs | type) == "array" then .source_globs else [] end) | length) == 0)
+       | "inválido: verify_on_stop sem source_globs; o gate não roda nenhum comando")' "$kit" 2>/dev/null | tr -d '\r')"
+  local kd r
+  kd="$(cd "$(dirname "$kit")/.." 2>/dev/null && pwd)"
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    [ -e "$kd/${r#./}/.git" ] || out+=$'\n'"inválido: repos \"$r\" não é repositório git; o kit ignora"
+  done < <(jq -r '(.repos // []) | if type == "array" then .[] | strings else empty end' "$kit" 2>/dev/null | tr -d '\r')
   out="$(printf '%s\n' "$out" | sed '/^$/d')"
   if [ -z "$out" ]; then
     echo "ok guards"
@@ -267,14 +301,16 @@ cmd_lsp() {
 }
 
 cmd_plans() {
-  local dir="${1:-.}" root now m d t f
+  local dir="${1:-.}" root now m d t f r
+  local -a repos=()
   command -v jq >/dev/null 2>&1 || { echo "setup: jq não encontrado" >&2; return 2; }
   root="$(kit_session_root "$(cd "$dir" && pwd)")"
+  command -v git >/dev/null 2>&1 && while IFS= read -r r; do [ -n "$r" ] && repos+=("$r"); done < <(kit_repos "$root" "")
   now="$(date +%s)"
   while IFS=$'\t' read -r m d t f; do
     [ -n "$f" ] || continue
     echo "plano parado há $(((now - m) / 86400)) dias: $(kit_rel_to "$root" "$f") ($d/$t)"
-  done < <(kit_stale_plans "$root")
+  done < <(kit_stale_plans "$root" ${repos[@]+"${repos[@]}"})
   return 0
 }
 

@@ -121,7 +121,6 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 | `/kit:epic` | Trabalho grande, várias entregas | `docs/specs/<epico>/EPIC.md` | Só manual |
 | `/kit:fix` | Bug com sintoma claro ou teste falhando | Teste que reproduz + correção | Manual ou sozinho, quando você relata um bug |
 | `/kit:hunt` | Falha intermitente, lentidão, causa desconhecida | Hipóteses com evidência, sem editar código | Manual ou sozinho, quando você relata uma falha vaga |
-
 | `/kit:setup` | Avançado: conferir a máquina sem abrir um projeto | Só um resumo: não grava nada | Só manual |
 | `/kit:map` | Avançado: mapear de novo, uma área ou só o que mudou | `.claude/rules/map-*.md`, `docs/codemap.md` | Só manual |
 | `/kit:drift` | Avançado: conferir se as SPECs já entregues ainda batem com o código | `docs/specs/DRIFT.md` | Só manual |
@@ -144,7 +143,7 @@ Só confere a máquina, sem abrir um projeto e sem gravar nada:
 Comandos do próprio Claude Code, úteis depois do `/kit:init` se você quiser verificação com o app rodando:
 
 - `/run-skill-generator` sobe o app a partir de um ambiente limpo e grava a receita em `.claude/skills/run-<nome>/`;
-- `/verify` grava a skill de verificação do projeto em `.claude/skills/verify/SKILL.md`, que o Claude Code roda antes de cada commit.
+- `/verify` grava a skill de verificação do projeto em `.claude/skills/verify/SKILL.md`, que o Claude Code é orientado a rodar antes de commitar mudança de código (commit só de docs ou testes fica de fora).
 
 ### `/kit:map`
 
@@ -184,11 +183,11 @@ Spec em andamento ou sem plano fica de fora e aparece em "Puladas". Custa um sub
 Sem você chamar nada, em todo projeto com o kit ligado:
 
 - **Guardas.** Antes de cada comando ou escrita, o kit barra o que é destrutivo ou sensível:
-  - `rm -rf` fora do projeto, `git push --force`, `git reset --hard`, `git clean -fdx`;
+  - `rm -r`/`rm -rf` e `find ... -delete` fora do projeto, `git push --force`/`--mirror`/`--delete`, `git reset --hard`, `git clean -fdx`;
   - `DROP`/`TRUNCATE` em SQL, `curl ... | sh`;
-  - escrita em `.env`, chaves e `secrets/`, e nos caminhos protegidos do projeto (código gerado, migrações).
+  - escrita em `.env`, chaves, `keys/` e `secrets/`, e nos caminhos protegidos do projeto (código gerado, migrações).
 
-  O Claude recebe o motivo e procura outro caminho.
+  O Claude recebe o motivo e procura outro caminho. Os guardas olham só as ferramentas `Bash` e de edição, e o Bash por padrões de comando: apagar por outro interpretador (`python -c`, `node -e`), git destrutivo local (`git checkout -- .`, `git restore .`, `git clean -f`, `git branch -D`) e ler ou escrever `.env` pelo shell não são barrados. A leitura de segredo fica com o grupo `segredos` do `/kit:init`.
 - **Formatação.** Cada arquivo editado passa pelo formatter do projeto, se o `kit.json` declarar um.
 - **Gate de fim de turno.** Se o Claude mexeu em código, os comandos de verificação do projeto (build, testes relacionados) rodam antes de ele encerrar. Falhou: ele recebe o erro e continua corrigindo. O gate também confere regras do projeto, como "mudou a tela, atualize o manual" e "todo texto existe nas 3 línguas".
 - **Avisos.** Regras de acoplamento leves ("se mudou a API, confira o site") viram um lembrete para o Claude na hora da edição, sem bloquear nada.
@@ -294,7 +293,7 @@ O `push` precisa estar no `notify` (o init já grava assim). Servidor ntfy próp
 - Caminho protegido do projeto (`protected_paths`): a mensagem diz o que fazer em vez de editar, como o comando que regenera o arquivo. Se a proteção estiver errada e o arquivo não é segredo, adicione o caminho em `guards.allow_write` no `.claude/kit.json` (ver [Ajustar o kit ao projeto](#ajustar-o-kit-ao-projeto)).
 - Arquivo de segredo (`.env`, `.env.test`, chave): não tem exceção. Arquivo de exemplo leva um sufixo `.example`, `.sample`, `.template` ou `.dist`.
 
-**O gate não deixa o turno terminar.** Ele mostra numa única mensagem tudo o que falhou: comando de build ou teste, chave de tradução faltando, arquivo acoplado não atualizado. O Claude tenta corrigir; se ainda falhar na tentativa seguinte, o turno termina e a falha fica visível para você. Se o comando de verificação estiver errado ou lento demais, ajuste `verify_on_stop` e `commands` no `.claude/kit.json`.
+**O gate não deixa o turno terminar.** Ele mostra numa única mensagem tudo o que falhou: comando de build ou teste, chave de tradução faltando, arquivo acoplado não atualizado. O Claude tenta corrigir e o gate verifica de novo; se ainda falhar, o turno termina com a falha numa mensagem para você, sem a notificação de concluído. Se o comando de verificação estiver errado ou lento demais, ajuste `verify_on_stop` e `commands` no `.claude/kit.json`.
 
 **Regra de acoplamento que não se aplica a esta mudança.** Grave uma linha de justificativa em `.claude/kit-skip` (ex.: `só renomeei uma variável na tela, o manual não muda`). Isso libera só os acoplamentos (`coupled_changes`), não build, testes nem tradução. O arquivo é apagado quando o gate passa e a justificativa fica registrada em `docs/claude-adoption.md` (ou `.claude/kit-skip.log`). Arquivo vazio não libera.
 
@@ -377,13 +376,13 @@ Exemplo completo em [`plugins/kit/templates/kit.example.json`](plugins/kit/templ
   | Recurso usado pelo kit | Desde | Efeito em versão anterior |
   | --- | --- | --- |
   | `onFailure: "block"` nos guardas | 2.1.295 | Guarda ausente ou quebrado deixa a ação passar |
-  | Skill `verify` do projeto rodada antes de cada commit | 2.1.286 | O commit não roda a receita do `/verify` sozinho |
+  | Skill `verify` do projeto sugerida antes de commit de código | 2.1.286 | O Claude não é orientado a rodar a receita do `/verify` antes do commit |
   | Auto mode como modo padrão | 2.1.283 (provedores terceiros ou sem telemetria); 2.1.284 (todos) | A sessão começa no modo default e pede mais confirmações |
   | `/skill-doctor` | 2.1.261 | Não existe; a rotina de poda usa só o `/doctor` |
-  | `claude plugin validate` | 2.1.47 ou anterior (`/plugin validate` desde 2.0.12); 2.1.233 passou a checar `.claude/skills` | Sem validação de manifesto pela CLI |
+  | `claude plugin validate` | 2.1.47 ou anterior; 2.1.233 passou a checar `.claude/skills` | Sem validação de manifesto pela CLI |
 
   Fonte: [changelog oficial](https://code.claude.com/docs/en/changelog) e [referência de hooks](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails).
-- **`bash` 3.2 ou mais novo, `git` e `jq`.** Os scripts rodam no `/bin/bash` 3.2 do macOS, sem `realpath` nem `readlink -f`. No Windows, Git for Windows (traz Git Bash) e `jq` no PATH.
+- **`bash` 3.2 ou mais novo, `git` e `jq`.** Os scripts são escritos para o `/bin/bash` 3.2 do macOS, sem `realpath` nem `readlink -f`, e o CI roda a suíte em Linux, Windows e macOS (com o `/bin/bash` do sistema). No Windows, Git for Windows (traz Git Bash) e `jq` no PATH.
 - **Linux e WSL2: `bwrap` e `socat`** para o sandbox (`sudo apt install bubblewrap socat`). Sem eles, o `/kit:init` propõe instalar na confirmação; até lá o grupo `sandbox` não é oferecido. No Ubuntu 24.04 ou mais novo, o AppArmor pode restringir os user namespaces que o `bwrap` usa; o `/kit:init` avisa quando isso acontece.
 - **Plataformas:**
 

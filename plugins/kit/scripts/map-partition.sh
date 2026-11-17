@@ -27,11 +27,14 @@ ROOT="."
 AREA=""
 SINCE=()
 STATUS=0
+need_value() {
+  [ "$#" -ge 2 ] || { echo "map-partition: $1 precisa de um valor" >&2; exit 2; }
+}
 while [ $# -gt 0 ]; do
   case "$1" in
-    --root) ROOT="${2:-}"; shift 2 ;;
-    --path) AREA="${2:-}"; shift 2 ;;
-    --since) SINCE+=("${2:-}"); shift 2 ;;
+    --root) need_value "$@"; ROOT="$2"; shift 2 ;;
+    --path) need_value "$@"; AREA="$2"; shift 2 ;;
+    --since) need_value "$@"; SINCE+=("$2"); shift 2 ;;
     --status) STATUS=1; shift ;;
     *) echo "uso: map-partition.sh [--root <pasta>] [--status] [--path <subpasta>] [--since [<repo>=]<commit>]..." >&2; exit 2 ;;
   esac

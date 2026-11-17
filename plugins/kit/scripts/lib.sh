@@ -65,6 +65,32 @@ kit_read_input() {
   KIT_INPUT="$(cat)"
 }
 
+# 0 se a entrada do hook e um objeto JSON. Guardas bloqueiam quando nao e.
+kit_input_ok() {
+  printf '%s' "$KIT_INPUT" | jq -e 'type == "object"' >/dev/null 2>&1
+}
+
+# Guardas: entrada vazia ou truncada bloqueia com exit 2.
+kit_require_input() {
+  kit_input_ok && return 0
+  echo "kit: entrada do hook vazia ou ilegível; chamada bloqueada" >&2
+  exit 2
+}
+
+# 0 se o arquivo e um objeto JSON valido. Uso: kit_json_ok <arquivo>
+kit_json_ok() {
+  jq -e 'type == "object"' "$1" >/dev/null 2>&1
+}
+
+# 0 se protected_paths, guards.allow_write e guards.deny_write tem a forma que os guardas leem
+# (lista, ou ausente). Uso: kit_guard_cfg_ok <arquivo>
+kit_guard_cfg_ok() {
+  jq -e '((.protected_paths // []) | type == "array")
+    and ((.guards // {}) | type == "object")
+    and (((.guards // {}).allow_write // []) | type == "array")
+    and (((.guards // {}).deny_write // []) | type == "array")' "$1" >/dev/null 2>&1
+}
+
 # Le um campo do JSON de entrada do hook. Uso: kit_field '.tool_input.command'
 kit_field() {
   printf '%s' "$KIT_INPUT" | jq -r "$1 // empty" 2>/dev/null | tr -d '\r'
@@ -184,14 +210,15 @@ kit_use_root() {
 }
 
 # Repositorios git da sessao: o do proprio cwd e os filhos (ate 3 niveis) ou a lista "repos"
-# do kit.json do cwd. Um por linha, caminho absoluto. Cache por session_id em $TMPDIR.
+# do kit.json do cwd. Um por linha, caminho absoluto. Cache por session_id em $TMPDIR; com o
+# terceiro argumento "refresh", descobre de novo e regrava o cache.
 kit_repos() {
-  local cwd="$1" sid="${2:-}" own="" sig cache d list=""
+  local cwd="$1" sid="${2:-}" refresh="${3:-}" own="" sig cache d list=""
   local tmp="${TMPDIR:-${TMP:-/tmp}}"
   if [ -f "$cwd/.claude/kit.json" ]; then sig="$cwd|$(cksum <"$cwd/.claude/kit.json")"; else sig="$cwd|none"; fi
   if [ -n "$sid" ]; then
     cache="$tmp/kit-repos-${sid//[^A-Za-z0-9_-]/_}"
-    if [ -f "$cache" ] && [ "$(head -n 1 "$cache")" = "$sig" ]; then
+    if [ -z "$refresh" ] && [ -f "$cache" ] && [ "$(head -n 1 "$cache")" = "$sig" ]; then
       tail -n +2 "$cache"
       return 0
     fi
@@ -236,7 +263,8 @@ kit_session_root() {
 }
 
 # Planos com tarefa "- [ ]" pendente: docs/specs/**/PLAN.md na raiz e em cada repositorio, mais os
-# .md de "plan_dirs" do kit.json da raiz, filtrados pelo -mtime do find ($1: -14 ou +14).
+# .md de "plan_dirs" do kit.json da raiz, filtrados pelo -mtime do find ($1: -14 ou +13; o find
+# trunca a idade em dias, entao +13 e "14 dias ou mais").
 # Saida: "mtime<TAB>feitas<TAB>total<TAB>caminho", do mais recente para o mais antigo.
 kit_plans_by_age() {
   local age="$1" root="$2" d f done total
@@ -266,10 +294,10 @@ kit_active_plans() {
   kit_plans_by_age -14 "$@" | cut -f2-
 }
 
-# Planos parados: tarefa pendente e mais de 14 dias sem mudanca. Mesma saida de kit_plans_by_age.
+# Planos parados: tarefa pendente e 14 dias ou mais sem mudanca. Mesma saida de kit_plans_by_age.
 # Uso: kit_stale_plans <raiz> [repositorio...]
 kit_stale_plans() {
-  kit_plans_by_age +14 "$@"
+  kit_plans_by_age +13 "$@"
 }
 
 # Caminho de $2 relativo a $1 (ou o proprio $2 se estiver fora).
@@ -497,18 +525,28 @@ kit_platform() {
   esac
 }
 
+# Prefixo de instalacao do gerenciador de pacotes presente no Linux/WSL; apt se nenhum for achado.
+kit_pkg_install() {
+  if command -v apt-get >/dev/null 2>&1; then echo "sudo apt install"
+  elif command -v dnf >/dev/null 2>&1; then echo "sudo dnf install"
+  elif command -v pacman >/dev/null 2>&1; then echo "sudo pacman -S"
+  elif command -v zypper >/dev/null 2>&1; then echo "sudo zypper install"
+  elif command -v apk >/dev/null 2>&1; then echo "sudo apk add"
+  else echo "sudo apt install"; fi
+}
+
 # Comando de instalacao de uma dependencia (jq, git, bash, claude, bwrap, socat) na plataforma dada.
 kit_install_hint() {
   case "$1" in
     claude) echo "claude update"; return 0 ;;
   esac
   case "$2:$1" in
-    *:bwrap) echo "sudo apt install bubblewrap" ;;
-    *:socat) echo "sudo apt install socat" ;;
+    *:bwrap) echo "$(kit_pkg_install) bubblewrap" ;;
+    *:socat) echo "$(kit_pkg_install) socat" ;;
     windows:jq) echo "winget install jqlang.jq" ;;
     windows:*) echo "winget install Git.Git" ;;
     macos:*) echo "brew install $1" ;;
-    *) echo "sudo apt install $1" ;;
+    *) echo "$(kit_pkg_install) $1" ;;
   esac
 }
 
@@ -523,6 +561,48 @@ kit_dependency_notes() {
     echo "kit: Claude Code < $KIT_MIN_CLAUDE, guardas sem onFailure:block — rode claude update (versão atual: $v) e depois /kit:setup"
   fi
   return 0
+}
+
+# UserPromptSubmit: grava o HEAD de cada repositorio no inicio do turno em <gitdir>/kit-turn-head
+# ("session_id sha"). O verify-gate usa para enxergar o que foi commitado durante o turno.
+# Uso: kit_turn_head_mark <session_id> [repositorio...]
+kit_turn_head_mark() {
+  local sid="$1" repo gd head
+  shift
+  [ -n "$sid" ] || return 0
+  for repo in "$@"; do
+    gd="$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null | tr -d '\r')"
+    head="$(git -C "$repo" rev-parse --verify -q HEAD 2>/dev/null | tr -d '\r')"
+    [ -n "$gd" ] && [ -n "$head" ] || continue
+    printf '%s %s\n' "$sid" "$head" >"$gd/kit-turn-head" 2>/dev/null
+  done
+  return 0
+}
+
+# Avisos de configuracao do kit.json da raiz e de cada repositorio, um por linha: JSON invalido,
+# chave de verify_on_stop sem comando, verify_on_stop sem source_globs e entrada de "repos" que nao
+# e repositorio git. Uso: kit_config_notes <raiz> [repositorio...]
+kit_config_notes() {
+  local root="$1" d f rel k
+  for d in "$@"; do
+    f="$d/.claude/kit.json"
+    [ -f "$f" ] || continue
+    rel="$(kit_rel_to "$root" "$f")"
+    if ! kit_json_ok "$f"; then
+      echo "kit: $rel não é JSON válido; escrita nessa pasta fica bloqueada e o gate acusa até corrigir (jq . $rel mostra o erro)"
+      continue
+    fi
+    while IFS= read -r k; do
+      [ -n "$k" ] && echo "kit: $rel: verify_on_stop cita \"$k\", que não existe em commands; essa verificação não roda"
+    done < <(jq -r '(.commands // {}) as $c | (.verify_on_stop // []) | if type == "array" then .[] | strings | select(($c[.] // "") == "") else empty end' "$f" 2>/dev/null | tr -d '\r')
+    if jq -e '((.verify_on_stop // []) | length > 0) and ((.source_globs // []) | length == 0)' "$f" >/dev/null 2>&1; then
+      echo "kit: $rel: verify_on_stop sem source_globs; o gate não roda nenhum comando"
+    fi
+    while IFS= read -r k; do
+      [ -n "$k" ] || continue
+      [ -e "$d/${k#./}/.git" ] || echo "kit: $rel: repos cita \"$k\", que não é repositório git; ignorado"
+    done < <(jq -r '(.repos // []) | if type == "array" then .[] | strings else empty end' "$f" 2>/dev/null | tr -d '\r')
+  done | awk '!seen[$0]++'
 }
 
 # Aviso de codemap desatualizado: procura docs/codemap.md com cabecalho "kit:map" na raiz e em cada
@@ -544,13 +624,12 @@ kit_codemap_note() {
     [ -n "$top" ] || continue
     if ! git -C "$d" cat-file -e "$commit^{commit}" 2>/dev/null; then
       echo "kit: o commit do $(kit_rel_to "$root" "$f") ($commit) não está no histórico; rode /kit:map para remapear"
-      return 0
+      continue
     fi
     n="$(git -C "$d" rev-list --count "$commit..HEAD" 2>/dev/null | tr -d '\r')"
     if [ -n "$n" ] && [ "$n" -gt "$limit" ]; then
       echo "kit: $(kit_rel_to "$root" "$f") está $n commits atrás (limite $limit); rode /kit:map --update"
     fi
-    return 0
   done
   return 0
 }

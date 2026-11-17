@@ -13,7 +13,7 @@ REL="$(kit_rel "$FILE")"
 CMD=""
 while IFS= read -r glob; do
   [ -n "$glob" ] || continue
-  if glob_match "$glob" "$REL"; then
+  if glob_match "$(kit_fold "$glob")" "$(kit_fold "$REL")"; then
     CMD="$(jq -r --arg g "$glob" '.format[$g] // empty' "$KIT_JSON" | tr -d '\r')"
     break
   fi

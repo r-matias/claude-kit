@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Stop: roda verify_on_stop, key_parity e coupled_changes (level block) sobre os arquivos alterados
-# de todos os repositorios da sessao. Todas as falhas saem numa unica mensagem com exit 2.
-# Turno liberado (gate passou, nada a verificar ou stop_hook_active): notificacao de concluido, se notify.done.
+# (inclusive os commitados neste turno) de todos os repositorios da sessao. Todas as falhas saem numa
+# unica mensagem com exit 2. Na passada seguinte a um bloqueio (stop_hook_active) verifica de novo:
+# se ainda falhar, libera o turno com a falha em systemMessage e sem notificacao de concluido.
+# Turno liberado (gate passou ou nada a verificar): notificacao de concluido, se notify.done.
 # Compativel com bash 3.2: sem arrays associativos nem mapfile; os mapas ficam em arquivos de $TMPD.
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -14,8 +16,7 @@ finish() {
   exit 0
 }
 
-# Segunda passada depois de um bloqueio: libera sem verificar de novo e avisa o concluido.
-[ "$(kit_field '.stop_hook_active')" = "true" ] && finish
+ACTIVE="$(kit_field '.stop_hook_active')"
 
 command -v git >/dev/null 2>&1 || finish
 
@@ -33,7 +34,7 @@ KIT_CEILING="$CWD"
 SID="$(kit_field '.session_id')"
 
 REPOS=()
-while IFS= read -r r; do [ -n "$r" ] && REPOS+=("$r"); done < <(kit_repos "$CWD" "$SID")
+while IFS= read -r r; do [ -n "$r" ] && REPOS+=("$r"); done < <(kit_repos "$CWD" "$SID" refresh)
 [ "${#REPOS[@]}" -gt 0 ] || finish
 MULTI=0
 [ "${#REPOS[@]}" -gt 1 ] && MULTI=1
@@ -42,12 +43,26 @@ TMPD="$(mktemp -d)"
 trap 'rm -rf "$TMPD"' EXIT
 OUT="$TMPD/out"
 
-# Arquivos alterados (diff contra HEAD + nao rastreados) de todos os repositorios, caminho absoluto.
+# Arquivos dos commits feitos neste turno: do HEAD gravado no UserPromptSubmit ate o HEAD de agora.
+turn_committed() {
+  local gd owner="" base=""
+  gd="$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null | tr -d '\r')"
+  [ -n "$gd" ] && [ -f "$gd/kit-turn-head" ] || return 0
+  IFS=' ' read -r owner base <"$gd/kit-turn-head" || true
+  [ -n "$base" ] && [ -n "$SID" ] && [ "$owner" = "$SID" ] || return 0
+  git -C "$1" cat-file -e "$base^{commit}" 2>/dev/null || return 0
+  git -c core.quotepath=off -C "$1" diff --name-only "$base" HEAD 2>/dev/null
+  return 0
+}
+
+# Arquivos alterados (diff contra HEAD + nao rastreados + commitados no turno) de todos os
+# repositorios, caminho absoluto.
 for repo in ${REPOS[@]+"${REPOS[@]}"}; do
   {
     git -c core.quotepath=off -C "$repo" diff --name-only HEAD 2>/dev/null ||
       git -c core.quotepath=off -C "$repo" diff --name-only --cached 2>/dev/null
     git -c core.quotepath=off -C "$repo" ls-files --others --exclude-standard 2>/dev/null
+    turn_committed "$repo"
   } | tr -d '\r' | sed '/^$/d' | sort -u | R="$repo" awk 'BEGIN { r = ENVIRON["R"] } { print r "/" $0 }'
 done >"$TMPD/all"
 [ -s "$TMPD/all" ] || finish
@@ -124,8 +139,8 @@ run_verify() {
       {
         cat "$KIT_JSON"
         git -C "$KIT_ROOT" diff HEAD -- . 2>/dev/null
-        cat "$TMPD/matched"
-        R="$KIT_ROOT" awk 'BEGIN { r = ENVIRON["R"] } { print r "/" $0 }' "$TMPD/matched" | while IFS= read -r m; do
+        cat "$TMPD/rels"
+        R="$KIT_ROOT" awk 'BEGIN { r = ENVIRON["R"] } { print r "/" $0 }' "$TMPD/rels" | while IFS= read -r m; do
           [ -f "$m" ] && printf '%s\n' "$m"
         done | git hash-object --stdin-paths 2>/dev/null
       } | git hash-object --stdin 2>/dev/null
@@ -134,14 +149,19 @@ run_verify() {
     [ -n "$state" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$state" ] && return 0
   fi
 
-  # Mesma citacao do kit_quote, sem um subshell por arquivo.
-  while IFS= read -r m; do files+="'${m//\'/\'\\\'\'}' "; done <"$TMPD/matched"
+  # Mesma citacao do kit_quote, sem um subshell por arquivo. Arquivo apagado nao entra em {files}.
+  while IFS= read -r m; do
+    [ -e "$KIT_ROOT/$m" ] || continue
+    files+="'${m//\'/\'\\\'\'}' "
+  done <"$TMPD/matched"
   files="${files% }"
 
   while IFS= read -r key; do
     [ -n "$key" ] || continue
     cmd="$(kit_cmd "$key")"
     [ -n "$cmd" ] || continue
+    # So arquivos apagados: comando que recebe {files} nao tem o que conferir.
+    case "$cmd" in *'{files}'*) [ -n "$files" ] || continue ;; esac
     cmd="$(kit_subst_files "$cmd" "$files")"
     if ! kit_run "$cmd" "$OUT"; then
       add_fail "'$key' falhou em ${KIT_ROOT}
@@ -303,6 +323,10 @@ rels_under() {
 
 for root in ${ROOTS[@]+"${ROOTS[@]}"}; do
   kit_use_root "$root"
+  if ! kit_json_ok "$KIT_JSON"; then
+    add_fail "kit.json inválido em ${KIT_ROOT}: nenhuma verificação desta pasta pôde rodar. Corrija o arquivo (jq . .claude/kit.json mostra o erro)."
+    continue
+  fi
   rels_under "$root" 2 <"$TMPD/group" >"$TMPD/grels"
   rels_under "$root" 0 <"$TMPD/all" >"$TMPD/rels"
   run_verify
@@ -311,14 +335,23 @@ for root in ${ROOTS[@]+"${ROOTS[@]}"}; do
 done
 
 if [ "${#FAILS[@]}" -gt 0 ]; then
-  {
-    echo "kit verify-gate: ${#FAILS[@]} problema(s) neste turno."
+  report="$(
     n=0
     for f in "${FAILS[@]}"; do
       n=$((n + 1))
       echo
       echo "$n) $f"
     done
+  )"
+  # Passada seguinte a um bloqueio: o turno termina, a falha vai ao usuario e nao ha "concluido".
+  if [ "$ACTIVE" = "true" ]; then
+    jq -cn --arg m "kit verify-gate: ${#FAILS[@]} problema(s) continuam depois da tentativa de correção; o turno terminou com a verificação vermelha.
+$report" '{systemMessage: $m}'
+    exit 0
+  fi
+  {
+    echo "kit verify-gate: ${#FAILS[@]} problema(s) neste turno."
+    printf '%s\n' "$report"
     echo
     echo "Corrija a causa e tente terminar de novo."
   } >&2

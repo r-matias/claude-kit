@@ -11,6 +11,8 @@ if [ "${1:-}" = "--net" ]; then NET_ONLY=1; shift; fi
 ROOT="${1:-.}"
 cd "$ROOT" || exit 2
 
+USER_SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+
 NET_RE='(^|[^A-Za-z0-9_.-])(curl|wget)([^A-Za-z0-9_-]|$)'
 
 # Script citado num comando de hook ($CLAUDE_PROJECT_DIR vira .), se existir no projeto.
@@ -39,7 +41,7 @@ net_users() {
       done < <(jq -r '(.hooks // {})[][]?.hooks[]? | "\(.command // "")\(if .args then " " + (.args | join(" ")) else "" end)"' "$s" 2>/dev/null | tr -d '\r')
     done
     # Regra de allow/ask com curl/wget: um deny de curl/wget a sombrearia (deny vence em qualquer escopo).
-    for s in .claude/settings.json .claude/settings.local.json "$HOME/.claude/settings.json"; do
+    for s in .claude/settings.json .claude/settings.local.json "$USER_SETTINGS"; do
       [ -f "$s" ] || continue
       if jq -r '(.permissions // {}) | [.allow, .ask] | map(. // []) | add | .[] | strings' "$s" 2>/dev/null | tr -d '\r' | grep -Eq -- "$NET_RE"; then
         case "$s" in "$HOME"/*) printf '%s\n' "~/${s#"$HOME"/}" ;; *) printf '%s\n' "$s" ;; esac
@@ -111,7 +113,7 @@ echo
 echo "## Settings e hooks"
 settings_summary ".claude/settings.json" ".claude/settings.json (projeto, versionado)"
 settings_summary ".claude/settings.local.json" ".claude/settings.local.json (local, nao versionado)"
-settings_summary "$HOME/.claude/settings.json" "~/.claude/settings.json (usuario: so leitura para o init)"
+settings_summary "$USER_SETTINGS" "~/.claude/settings.json (usuario: so leitura para o init)"
 for f in .claude/hooks/* .claude/scripts/*; do
   [ -f "$f" ] && echo "- arquivo de hook/script: \`$f\` ($(wc -l <"$f" | tr -d ' ') linhas)"
 done
@@ -154,12 +156,12 @@ done
 echo
 echo "## Rules"
 found=0
-for f in .claude/rules/*.md .claude/rules/**/*.md; do
+while IFS= read -r f; do
   [ -f "$f" ] || continue
   found=1
   paths="$(awk 'NR == 1 && !/^---/ { exit } NR > 1 && /^---/ { exit } NR > 1 { sub(/\r$/, ""); print }' "$f" | sed -n '/^paths:/,$p' | tr -d '\n' | sed 's/^paths://; s/  */ /g')"
   echo "- \`$f\`${paths:+ paths:$paths}"
-done
+done < <(find .claude/rules -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)
 [ "$found" -eq 1 ] || echo "- nenhuma"
 
 echo
@@ -284,7 +286,7 @@ for s in .claude/settings.json .claude/settings.local.json; do
 done
 
 secret_deny=0
-for s in .claude/settings.json .claude/settings.local.json "$HOME/.claude/settings.json"; do
+for s in .claude/settings.json .claude/settings.local.json "$USER_SETTINGS"; do
   [ -f "$s" ] || continue
   jq -e '(.permissions.deny // []) | any(test("^Read\\(.*(\\.env|secret|\\.pem|\\.key)"))' "$s" >/dev/null 2>&1 && secret_deny=1
 done

@@ -116,17 +116,27 @@ env_value() {
   printf '%s' "${!1:-}"
 }
 
+# Destino de push descartado: sai no dry-run e no stderr, so com o nome da variavel (o valor e segredo).
+skip_push() {
+  if [ -n "$DRY" ]; then printf 'notify: push ignorado: %s\n' "$1"; else printf 'kit notify: push ignorado: %s\n' "$1" >&2; fi
+  return 0
+}
+
 # ntfy: tópico simples vai para https://ntfy.sh; URL completa (servidor proprio) e dividida em
 # servidor e topico. Publicacao em JSON, sem titulo em cabecalho HTTP.
 push_ntfy() {
   local v server topic body
   v="$(env_value "${KIT_NOTIFY_NTFY_ENV:-}")"
   [ -n "$v" ] || return 0
+  v="${v%/}"
   case "$v" in
-    http://* | https://*) server="${v%/*}"; topic="${v##*/}" ;;
+    http://*/* | https://*/*) server="${v%/*}"; topic="${v##*/}" ;;
+    http://* | https://*) skip_push "ntfy: ${KIT_NOTIFY_NTFY_ENV} tem URL sem tópico (esperado https://servidor/topico)"; return 0 ;;
     *) server="https://ntfy.sh"; topic="$v" ;;
   esac
-  case "$topic" in '' | *[!A-Za-z0-9_-]*) return 0 ;; esac
+  case "$topic" in
+    '' | *[!A-Za-z0-9_-]*) skip_push "ntfy: tópico em ${KIT_NOTIFY_NTFY_ENV} inválido (só letras, números, _ e -)"; return 0 ;;
+  esac
   body="$(jq -cn --arg t "$topic" --arg ti "$KIT_NOTIFY_TITLE" --arg m "$KIT_NOTIFY_MSG" '{topic: $t, title: $ti, message: $m}')" || return 0
   run "$body" curl -fsS --max-time 5 -H "Content-Type: application/json" -d @- "$server/"
 }
@@ -135,7 +145,8 @@ push_ntfy() {
 push_discord() {
   local url body
   url="$(env_value "${KIT_NOTIFY_DISCORD_ENV:-}")"
-  case "$url" in https://*) ;; *) return 0 ;; esac
+  [ -n "$url" ] || return 0
+  case "$url" in https://*) ;; *) skip_push "discord: ${KIT_NOTIFY_DISCORD_ENV} precisa ser uma URL https://"; return 0 ;; esac
   body="$(jq -cn --arg ti "$KIT_NOTIFY_TITLE" --arg m "$KIT_NOTIFY_MSG" \
     '{content: ("**" + $ti + "**\n" + $m)[0:1900], allowed_mentions: {parse: []}}')" || return 0
   run "$body" curl -fsS --max-time 5 -H "Content-Type: application/json" -d @- "$url"

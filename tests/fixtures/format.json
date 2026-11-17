@@ -7,6 +7,8 @@
       "kit": { "format": { "**/*.cs": "test -f {files}" } }, "exit": 0 },
     { "name": "formatter que falha sai 2", "tool": "Edit", "file": "src/App.cs",
       "kit": { "format": { "**/*.cs": "echo erro de formatacao; false" } }, "exit": 2, "stderr": "erro de formatacao" },
+    { "name": "caixa diferente no caminho tambem formata (Windows e macOS)", "platforms": ["windows", "macos"], "tool": "Edit", "file": "SRC/App.cs",
+      "files": { ".claude/kit.json": { "format": { "src/**/*.cs": "echo formatou; false" } } }, "exit": 2, "stderr": "formatou" },
     { "name": "sem kit.json sai 0", "tool": "Edit", "file": "__NOKIT__/notes.md", "exit": 0 }
   ]
 }

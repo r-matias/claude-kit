@@ -9,6 +9,7 @@ set -u
 kit_guard_fail_closed
 kit_require_jq_strict
 kit_read_input
+kit_require_input
 
 TOOL="$(kit_field '.tool_name')"
 RAW="$(kit_field '.tool_input.file_path')"
@@ -66,6 +67,7 @@ check_path() {
   fi
   case "/$(kit_fold "$file")" in
     */secrets/*) kit_deny_pretool "kit: escrita em diretorio secrets/ bloqueada." ;;
+    */keys/*) kit_deny_pretool "kit: escrita em diretorio keys/ bloqueada." ;;
   esac
 
   # Valem os guards e o protected_paths do kit.json mais proximo e dos kit.json acima dele (pasta-mae).
@@ -75,6 +77,15 @@ check_path() {
     kit_use_root "$root"
     rel="$(kit_rel "$file")"
     cmp="$(kit_fold "$rel")"
+    # kit.json ilegivel: as regras nao podem ser conferidas. So o proprio kit.json pode ser escrito.
+    if [ "$cmp" != ".claude/kit.json" ]; then
+      if ! kit_json_ok "$KIT_JSON"; then
+        kit_deny_pretool "kit: $KIT_JSON não é JSON válido; protected_paths e guards não podem ser conferidos. Corrija o kit.json (jq . mostra o erro) e tente de novo."
+      fi
+      if ! kit_guard_cfg_ok "$KIT_JSON"; then
+        kit_deny_pretool "kit: $KIT_JSON tem protected_paths ou guards com tipo errado (precisam ser lista); as regras não podem ser conferidas. Corrija o kit.json e tente de novo."
+      fi
+    fi
     while IFS=$'	' read -r glob message; do
       [ -n "$glob" ] || continue
       glob_match "$(kit_fold "$glob")" "$cmp" || continue

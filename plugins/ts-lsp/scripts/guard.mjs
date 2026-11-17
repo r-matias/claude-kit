@@ -40,10 +40,18 @@ function stop(code) {
   setTimeout(() => process.exit(code), 500);
 }
 
-// Linhas "pid ppid bytes" de todos os processos.
+let warned = false;
+
+// Linhas "pid ppid bytes" de todos os processos; null se a medição falhou.
 function snapshot() {
   return new Promise((resolve) => {
-    const done = (err, out) => resolve(err ? '' : String(out));
+    const done = (err, out) => {
+      if (err && !warned) {
+        warned = true;
+        process.stderr.write(`ts-lsp: não consegui medir a memória (${String(err.message).split('\n')[0]}); o limite de ${limitMb} MB não está valendo\n`);
+      }
+      resolve(err ? null : String(out));
+    };
     if (win) {
       execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
         'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,PrivatePageCount | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.PrivatePageCount)" }'],
@@ -83,7 +91,9 @@ function treeBytes(text, root) {
 
 async function check() {
   if (stopping) return;
-  const mb = Math.round(treeBytes(await snapshot(), child.pid) / 1048576);
+  const text = await snapshot();
+  if (text === null) return;
+  const mb = Math.round(treeBytes(text, child.pid) / 1048576);
   if (mb > limitMb && !stopping) {
     process.stderr.write(`ts-lsp: language server com ${mb} MB (limite ${limitMb} MB); reiniciando\n`);
     stop(1);

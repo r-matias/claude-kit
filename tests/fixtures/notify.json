@@ -182,10 +182,47 @@
         "KIT_NTFY_TOPIC": "a b;c"
       },
       "stdout_not": [
-        "curl"
+        "curl",
+        "a b;c"
       ],
       "stdout": [
-        "notify: run: notify-send"
+        "notify: run: notify-send",
+        "notify: push ignorado: ntfy: tópico em KIT_NTFY_TOPIC inválido"
+      ]
+    },
+    {
+      "name": "URL ntfy com barra final usa o tópico",
+      "kit": {
+        "notify": {
+          "waiting": true,
+          "push": {}
+        }
+      },
+      "env": {
+        "KIT_NTFY_TOPIC": "https://ntfy.example.com/kit-teste/"
+      },
+      "stdout": [
+        "-d @- https://ntfy.example.com/",
+        "\"topic\":\"kit-teste\""
+      ]
+    },
+    {
+      "name": "URL ntfy sem tópico é ignorada com aviso",
+      "kit": {
+        "notify": {
+          "waiting": true,
+          "push": {}
+        }
+      },
+      "env": {
+        "KIT_NTFY_TOPIC": "https://ntfy.example.com"
+      },
+      "stdout_not": [
+        "curl",
+        "ntfy.example.com"
+      ],
+      "stdout": [
+        "notify: push ignorado: ntfy: KIT_NTFY_TOPIC tem URL sem tópico"
       ]
     },
     {
@@ -238,10 +275,12 @@
         "KIT_DISCORD_WEBHOOK": "file:///etc/passwd"
       },
       "stdout_not": [
-        "curl"
+        "curl",
+        "/etc/passwd"
       ],
       "stdout": [
-        "notify: run: notify-send"
+        "notify: run: notify-send",
+        "notify: push ignorado: discord: KIT_DISCORD_WEBHOOK precisa ser uma URL https://"
       ]
     },
     {

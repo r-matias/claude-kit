@@ -33,7 +33,7 @@
     ],
     "SessionStart": [
       {
-        "matcher": "startup|resume|compact|fork",
+        "matcher": "startup|resume|clear|compact|fork",
         "hooks": [
           { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-context.sh\"", "timeout": 15 }
         ]
@@ -50,7 +50,7 @@
       {
         "matcher": "permission_prompt|idle_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input",
         "hooks": [
-          { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh\"", "timeout": 20, "async": true }
+          { "type": "command", "shell": "bash", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh\"", "async": true }
         ]
       }
     ],

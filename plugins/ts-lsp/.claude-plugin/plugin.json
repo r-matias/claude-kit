@@ -1,6 +1,6 @@
 {
   "name": "ts-lsp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript/JavaScript LSP com teto de memória: heap do tsserver limitado e reinício quando a árvore passa do limite",
   "author": {
     "name": "Rafael"

@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     defaults:
@@ -18,10 +18,21 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      # O runner da suite usa touch -d @epoch e timeout (GNU). Os scripts seguem no /bin/bash 3.2,
+      # com sed, awk e find do sistema.
+      - name: coreutils e jq no macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install coreutils jq
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >>"$GITHUB_PATH"
       - name: Ferramentas
         run: |
           jq --version
           git --version
           bash --version | head -n 1
       - name: Suite inteira
+        if: runner.os != 'macOS'
         run: bash tests/run-tests.sh
+      - name: Suite inteira com o bash 3.2 do sistema
+        if: runner.os == 'macOS'
+        run: bash tests/run-tests.sh --bash /bin/bash

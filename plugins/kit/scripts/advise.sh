@@ -26,7 +26,7 @@ while IFS= read -r root; do
     hit=0
     while IFS= read -r g; do
       [ -n "$g" ] || continue
-      if glob_match "$g" "$REL"; then hit=1; break; fi
+      if glob_match "$(kit_fold "$g")" "$(kit_fold "$REL")"; then hit=1; break; fi
     done < <(kit_rule_list coupled_changes "$i" when)
     [ "$hit" -eq 1 ] || continue
 

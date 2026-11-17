@@ -6,6 +6,7 @@ set -u
 kit_guard_fail_closed
 kit_require_jq_strict --allow-jq-install
 kit_read_input
+kit_require_input
 
 CMD="$(kit_field '.tool_input.command')"
 [ -n "$CMD" ] || exit 0
@@ -16,6 +17,28 @@ PROJECT="$CWD"
 PROJECT_REAL="$(kit_path_norm "$PROJECT" /)"
 START_DIR="$(kit_path_norm "$CWD" "$PROJECT_REAL")"
 PROJECT_CMP="$(kit_fold "$PROJECT_REAL")"
+PLATFORM="$(kit_platform)"
+
+# No Git Bash, /c/pasta e C:/pasta sao o mesmo caminho, e /tmp e outras montagens tem um caminho
+# Windows. cygpath resolve pela tabela de montagem, sem tocar no disco; sem ele, so a letra do drive.
+msys_drive() {
+  local p="$1" c=""
+  if [ "$PLATFORM" = "windows" ]; then
+    case "$p" in
+      /*)
+        command -v cygpath >/dev/null 2>&1 && c="$(cygpath -m -- "$p" 2>/dev/null | tr -d '\r')"
+        if [ -n "$c" ]; then
+          p="$c"
+        else
+          case "$p" in
+            /[A-Za-z]) p="${p#/}:/" ;;
+            /[A-Za-z]/*) p="${p:1:1}:${p:2}" ;;
+          esac
+        fi ;;
+    esac
+  fi
+  printf '%s' "$p"
+}
 
 # Continuacao de linha vira espaco; escapes de aspas, $, crase e espaco perdem a barra; o resto
 # das barras invertidas vira / (caminho Windows). Depois as aspas saem: o conteudo de sh -c "..."
@@ -25,12 +48,17 @@ FLAT="$(printf '%s' "$FLAT" | sed -E "s/\\\\([\"'\$\` ])/\\1/g; s/\\\\+/\\//g" |
 
 has() { printf '%s' "$FLAT" | grep -Eiq -- "$1"; }
 
-if has '(^|[^a-z0-9_])drop[[:space:]]+(database|table|schema)([^a-z0-9_]|$)'; then
-  kit_deny_pretool "kit: DROP DATABASE/TABLE bloqueado. Rode manualmente se for intencional."
-fi
-if has '(^|[^a-z0-9_.-])truncate[[:space:]]+(table[[:space:]]|[a-z_`\[])'; then
-  kit_deny_pretool "kit: TRUNCATE bloqueado. Rode manualmente se for intencional."
-fi
+# DROP/TRUNCATE: o texto inteiro so marca a suspeita; quem nega e check_sql, trecho a trecho.
+DROP_RE='(^|[^a-z0-9_])drop[[:space:]]+(database|table|schema)([^a-z0-9_]|$)'
+TRUNC_RE='(^|[^a-z0-9_.-])truncate[[:space:]]+(table[[:space:]]|[a-z_`\[])'
+SQL_DROP=0
+SQL_TRUNC=0
+has "$DROP_RE" && SQL_DROP=1
+has "$TRUNC_RE" && SQL_TRUNC=1
+FIND_DELETE=0
+has '(^|[[:space:]])-delete([[:space:]]|$)' && FIND_DELETE=1
+ESC_PAREN=0
+case "$CMD" in *'\('*) ESC_PAREN=1 ;; esac
 
 # Shell que executa o que recebe: sh, bash, zsh, dash, ksh, fish, com ou sem caminho e prefixos
 # como sudo, env, /usr/bin/env, nohup ou VAR=x.
@@ -183,6 +211,7 @@ rm_target_unsafe() {
       [ "$CUR_OK" -eq 1 ] || return 0
       case "${t%%/*}" in *[*?[]*) return 0 ;; esac ;;
   esac
+  t="$(msys_drive "$t")"
   r="$(kit_path_norm "$t" "$CUR")"
   case "$t" in
     *[*?[]*)
@@ -215,7 +244,7 @@ check_rm() {
     targets+=("$tok")
     i=$((i + 1))
   done
-  [ "$rec" -eq 1 ] && [ "$force" -eq 1 ] || return 0
+  [ "$rec" -eq 1 ] || return 0
   if [ "$XARGS" -eq 1 ]; then
     kit_deny_pretool "kit: rm -rf com alvos vindos do xargs bloqueado (alvo nao resolvivel). Liste os caminhos explicitamente."
   fi
@@ -241,7 +270,7 @@ do_cd() {
   [ "$i" -lt "$n" ] && t="${w[$i]}"
   case "$t" in
     '' | - | '~'* | *'$'* | *'`'* | [+-][0-9]*) CUR_OK=0; return 0 ;;
-    /* | [A-Za-z]:*) CUR="$(kit_path_norm "$t" /)"; CUR_OK=1 ;;
+    /* | [A-Za-z]:*) CUR="$(kit_path_norm "$(msys_drive "$t")" /)"; CUR_OK=1 ;;
     *) [ "$CUR_OK" -eq 1 ] && CUR="$(kit_path_norm "$t" "$CUR")" ;;
   esac
   return 0
@@ -267,9 +296,13 @@ check_git() {
       for tok in ${rest[@]+"${rest[@]}"}; do
         case "$tok" in
           --force | --force-if-includes) kit_deny_pretool "kit: git push --force bloqueado. Use --force-with-lease manualmente se necessario." ;;
+          --mirror) kit_deny_pretool "kit: git push --mirror bloqueado (sobrescreve e apaga refs do remoto)." ;;
+          --delete) kit_deny_pretool "kit: git push --delete bloqueado (apaga ref do remoto). Rode manualmente se for intencional." ;;
           --*) ;;
           -*f*) kit_deny_pretool "kit: git push -f bloqueado. Use --force-with-lease manualmente se necessario." ;;
+          -*d*) kit_deny_pretool "kit: git push -d bloqueado (apaga ref do remoto). Rode manualmente se for intencional." ;;
           +*) kit_deny_pretool "kit: git push com refspec forcado (+) bloqueado." ;;
+          :?*) kit_deny_pretool "kit: git push com refspec ':<ref>' bloqueado (apaga ref do remoto). Rode manualmente se for intencional." ;;
         esac
       done ;;
     reset)
@@ -310,18 +343,88 @@ check_chmod() {
   return 0
 }
 
+# 0 se o caminho inicial de um find que apaga estiver fora do projeto ou nao for resolvivel.
+find_start_unsafe() {
+  local t="$1" r
+  case "$t" in
+    '~'* | *'$'* | *'`'*) return 0 ;;
+  esac
+  case "$t" in
+    [A-Za-z]: | [A-Za-z]:[!/]*) return 0 ;;
+    /* | [A-Za-z]:/*) ;;
+    *) [ "$CUR_OK" -eq 1 ] || return 0 ;;
+  esac
+  r="$(kit_fold "$(kit_path_norm "$(msys_drive "$t")" "$CUR")")"
+  case "$r" in "$PROJECT_CMP" | "$PROJECT_CMP"/*) return 1 ;; esac
+  return 0
+}
+
+# find com -delete ou -exec rm: os caminhos iniciais precisam estar dentro do projeto.
+check_find() {
+  local -a w=("$@")
+  local i=1 n=$# tok danger="$FIND_DELETE" inexec=0
+  local -a starts=()
+  while [ "$i" -lt "$n" ]; do
+    tok="${w[$i]}"
+    case "$tok" in
+      -H | -L | -P) i=$((i + 1)); continue ;;
+      -* | '!') break ;;
+    esac
+    starts+=("$tok")
+    i=$((i + 1))
+  done
+  # "\(" chega aqui como "/" no fim do trecho (a barra invertida vira / e o parentese separa).
+  if [ "$ESC_PAREN" -eq 1 ] && [ "$i" -eq "$n" ] && [ "${#starts[@]}" -gt 0 ] && [ "${starts[$((${#starts[@]} - 1))]}" = "/" ]; then
+    unset "starts[$((${#starts[@]} - 1))]"
+  fi
+  while [ "$i" -lt "$n" ]; do
+    case "${w[$i]}" in
+      -exec | -execdir | -ok | -okdir) inexec=1 ;;
+      rm | */rm | rm.exe | */rm.exe) [ "$inexec" -eq 1 ] && danger=1 ;;
+    esac
+    i=$((i + 1))
+  done
+  [ "$danger" -eq 1 ] || return 0
+  [ "${#starts[@]}" -gt 0 ] || starts=(".")
+  for tok in ${starts[@]+"${starts[@]}"}; do
+    if find_start_unsafe "$tok"; then
+      kit_deny_pretool "kit: find que apaga a partir de '$tok' bloqueado (fora do projeto ou alvo nao resolvivel)."
+    fi
+  done
+  return 0
+}
+
+# DROP/TRUNCATE num trecho. git e os buscadores de texto so carregam o texto como argumento.
+check_sql() {
+  [ "$SQL_DROP" -eq 1 ] || [ "$SQL_TRUNC" -eq 1 ] || return 0
+  case "${1##*/}" in
+    git | git.exe | grep | egrep | fgrep | rg | ag | ack) return 0 ;;
+  esac
+  local seg="$*"
+  if [ "$SQL_DROP" -eq 1 ] && printf '%s' "$seg" | grep -Eiq -- "$DROP_RE"; then
+    kit_deny_pretool "kit: DROP DATABASE/TABLE bloqueado. Rode manualmente se for intencional."
+  fi
+  if [ "$SQL_TRUNC" -eq 1 ] && printf '%s' "$seg" | grep -Eiq -- "$TRUNC_RE"; then
+    kit_deny_pretool "kit: TRUNCATE bloqueado. Rode manualmente se for intencional."
+  fi
+  return 0
+}
+
 # Um comando simples (ja separado de ;, &&, |...). sh -c/bash -c analisa o resto como comando.
 check_segment() {
   [ "$#" -gt 0 ] || return 0
   check_chmod "$@"
   skip_prefix "$@"
-  [ "$CMD_I" -lt "$#" ] || return 0
   local -a w=("$@")
+  if [ "$CMD_I" -ge "$#" ]; then check_sql "" "$@"; return 0; fi
   local -a c=("${w[@]:$CMD_I}")
   local j=1 found=0
+  check_sql "${c[@]}"
   case "${c[0]}" in
     cd | pushd | popd) do_cd "${c[@]}" ;;
     rm | */rm | rm.exe | */rm.exe) check_rm "${c[@]}" ;;
+    find | */find | find.exe | */find.exe) check_find "${c[@]}" ;;
+    *'$'*) check_rm "${c[@]}" ;;
     git | */git | git.exe | */git.exe) check_git "${c[@]}" ;;
     sh | bash | zsh | dash | ksh | */sh | */bash | */zsh | */dash | */ksh)
       while [ "$j" -lt "${#c[@]}" ]; do

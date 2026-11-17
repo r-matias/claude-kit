@@ -664,6 +664,20 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   else ko "inventory --net: commands, comando e script de hook, package.json scripts e Makefile; sem falso positivo" "$out"; fi
   out="$(HOME="$U/home" "$TBASH" "$SCRIPTS/inventory.sh" --net "$HERE/sample" 2>&1)"
   if [ -z "$out" ]; then ok "inventory --net: projeto sem curl/wget não lista nada (o deny entra)"; else ko "inventory --net: projeto sem curl/wget não lista nada (o deny entra)" "$out"; fi
+
+  # Regras em subpasta de .claude/rules e settings do usuario em CLAUDE_CONFIG_DIR.
+  IV="$U/inv-cfg"
+  mkdir -p "$IV/p/.claude/rules/sub/deep" "$IV/cfg" "$IV/home"
+  printf '# a\n' >"$IV/p/.claude/rules/top.md"
+  printf '# b\n' >"$IV/p/.claude/rules/sub/deep/two.md"
+  printf '%s' '{"permissions":{"deny":["Read(**/.env)"],"allow":["Bash(curl *)"]}}' >"$IV/cfg/settings.json"
+  git_q init "$IV/p"
+  HOME="$IV/home" CLAUDE_CONFIG_DIR="$IV/cfg" "$TBASH" "$SCRIPTS/inventory.sh" "$IV/p" >"$IV/out" 2>&1
+  out="$(HOME="$IV/home" CLAUDE_CONFIG_DIR="$IV/cfg" "$TBASH" "$SCRIPTS/inventory.sh" --net "$IV/p" 2>&1)"
+  if grep -qF '`.claude/rules/sub/deep/two.md`' "$IV/out" && grep -qF '`.claude/rules/top.md`' "$IV/out" &&
+    ! grep -qF '[sem deny de segredos]' "$IV/out" && grep -qF 'settings.json' <<<"$out"; then
+    ok "inventory: regras em subpasta e settings do usuário em CLAUDE_CONFIG_DIR"
+  else ko "inventory: regras em subpasta e settings do usuário em CLAUDE_CONFIG_DIR" "net='$out' $(grep -n 'rules\|deny' "$IV/out" | head -5)"; fi
   NR="$U/netrules"
   mkdir -p "$NR/.claude" "$U/home/.claude"
   printf '%s' '{"permissions":{"ask":["Bash(curl *rubinot.com.br*)"]}}' >"$NR/.claude/settings.json"
@@ -867,6 +881,12 @@ if [ -z "$FILTER" ] || [[ "map-partition" == *"$FILTER"* ]]; then
     ok "map-partition --status: ausente, em dia e desatualizado"
   else ko "map-partition --status: ausente, em dia e desatualizado" "$c1:$st1 | $c2:$st2 | $c3:$st3"; fi
   if ! "$TBASH" "$MP" --root "$(mktemp -d "$TMP_ALL/nogit.XXXXXX")" >/dev/null 2>&1; then ok "map-partition: sem repositório git sai com erro"; else ko "map-partition: sem repositório git sai com erro" ""; fi
+  mp_bad=""
+  for opt in --root --path --since; do
+    timeout 10 "$TBASH" "$MP" "$opt" >/dev/null 2>"$TMP_ALL/mp-opt.err"; code=$?
+    { [ "$code" = "2" ] && grep -qF "map-partition: $opt precisa de um valor" "$TMP_ALL/mp-opt.err"; } || mp_bad+="$opt=$code "
+  done
+  [ -z "$mp_bad" ] && ok "map-partition: opção sem valor sai com erro, sem travar" || ko "map-partition: opção sem valor sai com erro, sem travar" "$mp_bad"
 fi
 }
 
@@ -1034,6 +1054,20 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/g2.json" 2>&1)"
   code=$?
   if [ "$code" = "0" ] && [ "$out" = "ok guards" ]; then ok "setup guards: kit.json válido dá ok guards"; else ko "setup guards: kit.json válido dá ok guards" "exit $code, $out"; fi
+  mkdir -p "$PP/tipos/.claude" "$PP/tipos/api/.git"
+  printf '%s\n' '{"protected_paths":"gen/**","commands":{"test":"true"},"verify_on_stop":["tset"],"repos":["api","nope"]}' >"$PP/tipos/.claude/kit.json"
+  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/tipos/.claude/kit.json" 2>&1)"
+  code=$?
+  if [ "$code" = "1" ] && grep -qxF 'inválido: protected_paths precisa ser lista' <<<"$out" &&
+    grep -qF 'inválido: verify_on_stop "tset" não existe em commands' <<<"$out" &&
+    grep -qxF 'inválido: verify_on_stop sem source_globs; o gate não roda nenhum comando' <<<"$out" &&
+    grep -qF 'inválido: repos "nope" não é repositório git' <<<"$out" && ! grep -qF '"api"' <<<"$out"; then
+    ok "setup guards: tipo errado, verify_on_stop sem comando ou sem source_globs e repos sem git"
+  else ko "setup guards: tipo errado, verify_on_stop sem comando ou sem source_globs e repos sem git" "exit $code, $out"; fi
+  printf '%s\n' '{"protected_paths":["gen/**"],}' >"$PP/invalido.json"
+  run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/invalido.json" >/dev/null 2>&1
+  code=$?
+  [ "$code" = "2" ] && ok "setup guards: kit.json inválido sai com 2" || ko "setup guards: kit.json inválido sai com 2" "exit $code"
 
   # Windows nativo simulado: check avisa que nao ha sandbox.
   C3="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
@@ -1042,6 +1076,16 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   if [ "$code" = "0" ] && grep -qF 'plataforma: windows nativo — sem sandbox' <<<"$out"; then
     ok "setup check: Windows nativo simulado avisa que não há sandbox"
   else ko "setup check: Windows nativo simulado avisa que não há sandbox" "exit $code, $out"; fi
+  CPS="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
+  ps1="$(cd "$CPS" && run_setup "$CPS" "$WIN_BIN:$NOCLAUDE_PATH" check 2>&1)"
+  printf '%s\n' '{"permissions":{"deny":["PowerShell"]}}' >"$CPS/settings.json"
+  ps2="$(cd "$CPS" && run_setup "$CPS" "$WIN_BIN:$NOCLAUDE_PATH" check 2>&1)"
+  ps3="$(cd "$CPS" && run_setup "$CPS" "$LINUX_BIN:$NOCLAUDE_PATH" check 2>&1)"
+  rm -f "$CPS/settings.json"
+  ps4="$(cd "$CPS" && run_setup "$CPS" "$LINUX_BIN:$NOCLAUDE_PATH" check 2>&1)"
+  if grep -qF 'aviso powershell:' <<<"$ps1" && ! grep -qF 'aviso powershell' <<<"$ps2$ps3$ps4"; then
+    ok "setup check: Windows sem deny de PowerShell avisa; com deny ou fora do Windows, não"
+  else ko "setup check: Windows sem deny de PowerShell avisa; com deny ou fora do Windows, não" "1=$ps1 2=$ps2"; fi
   C4="$(mktemp -d "$TMP_ALL/cfg.XXXXXX")"
   out="$(WSL_DISTRO_NAME=Ubuntu CLAUDE_CONFIG_DIR="$C4" PATH="$LINUX_BIN:$NOCLAUDE_PATH" "$TBASH" "$SU" check 2>&1)"
   if grep -qF 'plataforma: wsl2 — sandbox disponível' <<<"$out"; then
@@ -1149,6 +1193,16 @@ exit 0
   if [ "$code" = "0" ] && [ "$out" = "plano parado há 20 dias: docs/specs/velho/PLAN.md (1/2)" ]; then
     ok "setup plans: só plano pendente com mais de 14 dias sem mudança"
   else ko "setup plans: só plano pendente com mais de 14 dias sem mudança" "exit $code, $out"; fi
+  # Pasta-mae: plano parado de repositorio filho aparece; 14 dias e 6 horas ja conta como parado.
+  PM="$(mktemp -d "$TMP_ALL/plans-mae.XXXXXX")"
+  mkdir -p "$PM/api/docs/specs/x"
+  printf -- '- [ ] 1. a\n' >"$PM/api/docs/specs/x/PLAN.md"
+  git_q init "$PM/api"
+  touch -d "@$(($(date +%s) - 14 * 86400 - 6 * 3600))" "$PM/api/docs/specs/x/PLAN.md"
+  out="$(run_setup "$C1" "$LINUX_BIN:$NOCLAUDE_PATH" plans "$PM" 2>&1)"; code=$?
+  if [ "$code" = "0" ] && [ "$out" = "plano parado há 14 dias: api/docs/specs/x/PLAN.md (0/1)" ]; then
+    ok "setup plans: pasta-mãe lista plano de repositório filho, 14 dias já é parado"
+  else ko "setup plans: pasta-mãe lista plano de repositório filho, 14 dias já é parado" "exit $code, $out"; fi
   out="$(KIT_USERNS_SYSCTL="$TMP_ALL/userns-1" run_setup "$C5" "$LINUX_BIN:$NOCLAUDE_PATH" check 2>&1)"
   if grep -qF 'aviso sandbox: o AppArmor restringe user namespaces' <<<"$out"; then ok "setup check: AppArmor restringindo userns gera aviso"; else ko "setup check: AppArmor restringindo userns gera aviso" "$out"; fi
   out="$(KIT_USERNS_SYSCTL="$TMP_ALL/userns-1" run_setup "$C5" "$MAC_BIN:$NOCLAUDE_PATH" check 2>&1)"
@@ -1336,6 +1390,81 @@ if [ -z "$FILTER" ] || [[ "guardas" == *"$FILTER"* ]]; then
     ok "verify-gate: 2002 arquivos, & e apostrofo no {files} ($((t1 - t0))s)"
   else ko "verify-gate: 2002 arquivos, & e apostrofo no {files}" "exit $code, $(wc -l <"$G/out.txt" 2>/dev/null) linhas, $(head -c 300 "$TMP_ALL/big.err")"; fi
   [ "$((t1 - t0))" -le 30 ] && ok "verify-gate: 2002 arquivos em ate 30s ($((t1 - t0))s)" || ko "verify-gate: 2002 arquivos em ate 30s" "$((t1 - t0))s"
+
+  # Entrada vazia ou JSON truncado: os guardas bloqueiam (exit 2), nunca liberam.
+  in_bad=""
+  for gs in guard-bash.sh guard-files.sh; do
+    printf '' | "$TBASH" "$SCRIPTS/$gs" >/dev/null 2>&1; code=$?
+    [ "$code" = "2" ] || in_bad+="$gs vazio=$code "
+    printf '{"tool_name":"Bash","tool_input":{"command":"rm -rf /' | "$TBASH" "$SCRIPTS/$gs" >/dev/null 2>&1; code=$?
+    [ "$code" = "2" ] || in_bad+="$gs truncado=$code "
+  done
+  [ -z "$in_bad" ] && ok "guardas: entrada vazia ou truncada bloqueia com exit 2" || ko "guardas: entrada vazia ou truncada bloqueia com exit 2" "$in_bad"
+
+  # Git Bash: /c/... dentro do projeto e o mesmo caminho que C:/...; fora do projeto continua negado.
+  if [ "$TEST_PLATFORM" = "windows" ]; then
+    G="$(mktemp -d "$TMP_ALL/msys.XXXXXX")"
+    mkdir -p "$G/p/build"
+    np="$(native_path "$G/p")"
+    msys="/$(printf '%s' "${np:0:1}" | tr 'A-Z' 'a-z')${np:2}"
+    gb() { jq -cn --arg c "$1" --arg d "$np" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' | "$TBASH" "$SCRIPTS/guard-bash.sh" 2>/dev/null; }
+    o1="$(gb "rm -rf $msys/build")"
+    o2="$(gb "cd $msys/build && rm -rf ../build")"
+    o3="$(gb "rm -rf /c/Windows/Temp/kit-x")"
+    if [ -z "$o1" ] && [ -z "$o2" ] && grep -qF '"deny"' <<<"$o3"; then ok "guard-bash: caminho /c/... dentro do projeto liberado, fora negado"
+    else ko "guard-bash: caminho /c/... dentro do projeto liberado, fora negado" "1='$o1' 2='$o2' 3='$o3'"; fi
+  fi
+
+  # Stamp do gate: arquivo nao rastreado fora de source_globs muda o estado e o gate roda de novo.
+  G="$(mktemp -d "$TMP_ALL/stamp.XXXXXX")"
+  mkdir -p "$G/.claude" "$G/src"
+  printf '%s\n' '{"commands":{"t":"test ! -e broken.json"},"verify_on_stop":["t"],"source_globs":["src/**"]}' >"$G/.claude/kit.json"
+  git_q init "$G"; git_q -C "$G" add -A; git_q -C "$G" commit -m init
+  printf 'x\n' >"$G/src/a.ts"
+  gin="$(jq -cn --arg d "$(native_path "$G")" '{cwd: $d, session_id: "stamp"}')"
+  TMPDIR="$G" "$TBASH" "$SCRIPTS/verify-gate.sh" <<<"$gin" >/dev/null 2>&1; c1=$?
+  printf '{}\n' >"$G/broken.json"
+  TMPDIR="$G" "$TBASH" "$SCRIPTS/verify-gate.sh" <<<"$gin" >/dev/null 2>&1; c2=$?
+  if [ "$c1" = "0" ] && [ "$c2" = "2" ]; then ok "verify-gate: não rastreado fora de source_globs invalida o stamp"
+  else ko "verify-gate: não rastreado fora de source_globs invalida o stamp" "1=$c1 2=$c2"; fi
+
+  # Commit feito dentro do turno: o gate compara com o HEAD gravado no UserPromptSubmit da mesma sessao.
+  G="$(mktemp -d "$TMP_ALL/turno.XXXXXX")"
+  mkdir -p "$G/.claude" "$G/src"
+  printf '%s\n' '{"commands":{"t":"false"},"verify_on_stop":["t"],"source_globs":["src/**"]}' >"$G/.claude/kit.json"
+  printf 'x\n' >"$G/src/a.ts"
+  git_q init "$G"; git_q -C "$G" add -A; git_q -C "$G" commit -m init
+  jq -cn --arg d "$(native_path "$G")" '{hook_event_name: "UserPromptSubmit", cwd: $d, session_id: "turno"}' |
+    TMPDIR="$G" "$TBASH" "$SCRIPTS/session-context.sh" --plan-only >/dev/null 2>&1
+  printf 'y\n' >>"$G/src/a.ts"
+  git_q -C "$G" commit -am mudou
+  jq -cn --arg d "$(native_path "$G")" '{cwd: $d, session_id: "turno"}' | TMPDIR="$G" "$TBASH" "$SCRIPTS/verify-gate.sh" >/dev/null 2>&1; c1=$?
+  jq -cn --arg d "$(native_path "$G")" '{cwd: $d, session_id: "outra"}' | TMPDIR="$G" "$TBASH" "$SCRIPTS/verify-gate.sh" >/dev/null 2>&1; c2=$?
+  if [ "$c1" = "2" ] && [ "$c2" = "0" ]; then ok "verify-gate: commit dentro do turno é verificado; marca de outra sessão é ignorada"
+  else ko "verify-gate: commit dentro do turno é verificado; marca de outra sessão é ignorada" "mesma=$c1 outra=$c2"; fi
+
+  # Repositorio criado durante a sessao entra no gate (o cache de kit_repos e refeito no Stop).
+  G="$(mktemp -d "$TMP_ALL/novo.XXXXXX")"
+  mkdir -p "$G/.claude" "$G/api"
+  printf '%s\n' '{"commands":{"t":"false"},"verify_on_stop":["t"],"source_globs":["**/*.ts"]}' >"$G/.claude/kit.json"
+  printf 'x\n' >"$G/api/a.ts"
+  git_q init "$G/api"; git_q -C "$G/api" add -A; git_q -C "$G/api" commit -m init
+  gin="$(jq -cn --arg d "$(native_path "$G")" '{cwd: $d, session_id: "novo"}')"
+  TMPDIR="$G" "$TBASH" "$SCRIPTS/verify-gate.sh" <<<"$gin" >/dev/null 2>&1; c1=$?
+  mkdir -p "$G/web"; git_q init "$G/web"; printf 'x\n' >"$G/web/b.ts"
+  TMPDIR="$G" "$TBASH" "$SCRIPTS/verify-gate.sh" <<<"$gin" >/dev/null 2>&1; c2=$?
+  if [ "$c1" = "0" ] && [ "$c2" = "2" ]; then ok "verify-gate: repositório criado na sessão entra na verificação"
+  else ko "verify-gate: repositório criado na sessão entra na verificação" "antes=$c1 depois=$c2"; fi
+
+  # ts-lsp: sem o comando de medicao de memoria, o guard avisa uma vez no stderr e segue repassando.
+  if command -v node >/dev/null 2>&1; then
+    GD="$(mktemp -d "$TMP_ALL/tsmed.XXXXXX")"
+    mkdir -p "$GD/vazio"
+    printf '%s\n' "process.stdin.on('data', () => {}); process.stdin.on('end', () => process.exit(0));" >"$GD/fake.cjs"
+    out="$(timeout 20 env PATH="$GD/vazio" KIT_TS_LSP_SERVER="$GD/fake.cjs" KIT_TS_LSP_INTERVAL_S=1 "$(command -v node)" "$REPO/plugins/ts-lsp/scripts/guard.mjs" 2>&1 >/dev/null < <(sleep 4))"; code=$?
+    if [ "$code" = "0" ] && [ "$(grep -c 'não consegui medir a memória' <<<"$out")" = "1" ]; then ok "ts-lsp guard: sem medição de memória avisa uma vez e segue"
+    else ko "ts-lsp guard: sem medição de memória avisa uma vez e segue" "exit $code, $out"; fi
+  fi
 fi
 }
 

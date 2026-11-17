@@ -56,6 +56,16 @@
     { "name": "guards.deny_write string bloqueia arquivo novo", "kit": { "guards": { "deny_write": ["vendor/**"] } },
       "tool": "Write", "file": "vendor/lib.js", "expect": "deny", "reason": "casa guards.deny_write (vendor/**)" },
     { "name": "guards.deny_write vence guards.allow_write", "kit": { "guards": { "deny_write": ["vendor/**"], "allow_write": ["vendor/lib.js"] } },
-      "tool": "Write", "file": "vendor/lib.js", "expect": "deny" }
+      "tool": "Write", "file": "vendor/lib.js", "expect": "deny" },
+    { "name": "kit.json invalido: Edit negado com aviso", "files": { ".claude/kit.json": "{\"protected_paths\":[\"gen/**\"],}" },
+      "tool": "Edit", "file": "src/App.cs", "expect": "deny", "reason": "não é JSON válido" },
+    { "name": "kit.json invalido: Write de arquivo novo negado", "files": { ".claude/kit.json": "{\"guards\":{\"deny_write\":[\"src/legacy/**\"]},}" },
+      "tool": "Write", "file": "src/legacy/x.ts", "expect": "deny", "reason": "não é JSON válido" },
+    { "name": "kit.json invalido: o proprio kit.json pode ser corrigido", "files": { ".claude/kit.json": "{\"protected_paths\":[\"gen/**\"],}" },
+      "tool": "Edit", "file": ".claude/kit.json", "expect": "allow" },
+    { "name": "protected_paths com tipo errado nega com aviso", "kit": { "protected_paths": "web/generated/**" },
+      "tool": "Edit", "file": "web/generated/strings.ts", "expect": "deny", "reason": "tipo errado" },
+    { "name": "guards.deny_write com tipo errado nega com aviso", "kit": { "guards": { "deny_write": "vendor/**" } },
+      "tool": "Write", "file": "vendor/lib.js", "expect": "deny", "reason": "tipo errado" }
   ]
 }

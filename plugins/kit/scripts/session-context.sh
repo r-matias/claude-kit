@@ -39,12 +39,16 @@ REPOS=()
 command -v git >/dev/null 2>&1 && while IFS= read -r r; do [ -n "$r" ] && REPOS+=("$r"); done < <(kit_repos "$CWD" "$SID")
 
 if [ "${1:-}" = "--plan-only" ]; then
+  kit_turn_head_mark "$SID" ${REPOS[@]+"${REPOS[@]}"}
   [ -f "$ROOT/.claude/kit.json" ] || exit 0
   [ "$(jq -r '.inject_plan_on_prompt // false' "$ROOT/.claude/kit.json" 2>/dev/null | tr -d '\r')" = "true" ] || exit 0
   line="$(plans_line)"
   [ -n "$line" ] && echo "Plano ativo do kit: $line"
   exit 0
 fi
+
+# Marcas por sessao no $TMPDIR (avisos do advise e cache de repositorios) com mais de um dia.
+find "${TMPDIR:-${TMP:-/tmp}}" -maxdepth 1 -type f \( -name 'kit-advise-*' -o -name 'kit-repos-*' \) -mtime +0 -exec rm -f {} + 2>/dev/null
 
 if [ "${#REPOS[@]}" -eq 0 ]; then
   [ -n "$NOTES" ] && printf '%s\n' "$NOTES"
@@ -53,6 +57,8 @@ fi
 
 echo "## Contexto do kit"
 [ -n "$NOTES" ] && printf '%s\n' "$NOTES"
+CFGNOTE="$(kit_config_notes "$ROOT" ${REPOS[@]+"${REPOS[@]}"})"
+[ -n "$CFGNOTE" ] && printf '%s\n' "$CFGNOTE"
 MAPNOTE="$(kit_codemap_note "$ROOT" ${REPOS[@]+"${REPOS[@]}"})"
 [ -n "$MAPNOTE" ] && printf '%s\n' "$MAPNOTE"
 if [ "${#REPOS[@]}" -eq 1 ]; then
