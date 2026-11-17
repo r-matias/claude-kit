@@ -306,10 +306,21 @@ kit_rel_to() {
   if [ "${2#"$1"/}" != "$2" ]; then printf '%s' "${2#"$1"/}"; else printf '%s' "$2"; fi
 }
 
-# Valor de commands.<chave> no kit.json encontrado. Vazio se ausente.
+# Valor de commands.<chave>: string, ou objeto { "run", "files" }. cmd_run da o comando ("" se
+# ausente ou de tipo errado); cmd_files, a lista de globs (vazia na forma string).
+KIT_JQ_CMD='def cmd_run: if type == "string" then . elif type == "object" then ((.run // "") | if type == "string" then . else "" end) else "" end;
+  def cmd_files: if type == "object" then ((.files // []) | if type == "array" then map(strings) elif type == "string" then [.] else [] end) else [] end;'
+
+# Comando de commands.<chave> no kit.json encontrado. Vazio se ausente.
 kit_cmd() {
   [ -n "$KIT_JSON" ] || return 0
-  jq -r --arg k "$1" '.commands[$k] // empty' "$KIT_JSON" 2>/dev/null | tr -d '\r'
+  jq -r --arg k "$1" "$KIT_JQ_CMD"' .commands[$k] | cmd_run' "$KIT_JSON" 2>/dev/null | tr -d '\r'
+}
+
+# Globs de "files" de commands.<chave>, um por linha. Vazio na forma string.
+kit_cmd_files() {
+  [ -n "$KIT_JSON" ] || return 0
+  jq -r --arg k "$1" "$KIT_JQ_CMD"' .commands[$k] | cmd_files[]' "$KIT_JSON" 2>/dev/null | tr -d '\r'
 }
 
 # Lista de strings de um campo array do kit.json, uma por linha.
@@ -579,6 +590,83 @@ kit_turn_head_mark() {
   return 0
 }
 
+# Commit do inicio do turno gravado por esta sessao em <gitdir>/kit-turn-head, se ainda existe.
+# Vazio sem marca, com marca de outra sessao ou commit sumido. Uso: kit_turn_mark <repo> <session_id>
+kit_turn_mark() {
+  local gd owner="" base=""
+  [ -n "${2:-}" ] || return 0
+  gd="$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null | tr -d '\r')"
+  [ -n "$gd" ] && [ -f "$gd/kit-turn-head" ] || return 0
+  IFS=' ' read -r owner base <"$gd/kit-turn-head" || true
+  [ -n "$base" ] && [ "$owner" = "$2" ] || return 0
+  git -C "$1" cat-file -e "$base^{commit}" 2>/dev/null || return 0
+  printf '%s' "$base"
+}
+
+# Base das linhas novas do turno: a marca do turno ou, sem ela, o HEAD. Vazio em repositorio sem
+# commits. Uso: kit_turn_base <repo> <session_id>
+kit_turn_base() {
+  local b
+  b="$(kit_turn_mark "$1" "${2:-}")"
+  [ -n "$b" ] || b="$(git -C "$1" rev-parse --verify -q HEAD 2>/dev/null | tr -d '\r')"
+  printf '%s' "$b"
+}
+
+# Linhas adicionadas desde <base> (working tree contra o commit; nao rastreado conta inteiro, binario
+# fica de fora) como "caminho<TAB>linha<TAB>texto", caminho relativo ao repositorio. Os caminhos
+# vem de dois arquivos, um por linha: rastreados e nao rastreados. Sem base, todos contam inteiros.
+# Uso: kit_added_lines <repo> <base> <lista-rastreados> <lista-nao-rastreados>
+kit_added_lines() {
+  local repo="$1" base="$2"
+  {
+    if [ -n "$base" ]; then
+      # Prefixos fixos: diff.mnemonicPrefix e diff.noprefix do usuario mudariam o "b/" do cabecalho.
+      # Nome com espaco vem seguido de TAB na linha "+++".
+      kit_path_batches "" git --literal-pathspecs -c core.quotepath=off -C "$repo" diff -U0 --no-color --no-ext-diff --no-renames \
+        --src-prefix=a/ --dst-prefix=b/ "$base" -- <"$3" 2>/dev/null |
+        awk '/^diff --git / { h = 0; f = ""; next }
+          !h && /^\+\+\+ / { f = substr($0, 5); sub(/\t$/, "", f); sub(/^b\//, "", f); next }
+          /^@@ / { split($3, a, ","); n = substr(a[1], 2) + 0; h = 1; next }
+          h && f != "" && f != "/dev/null" && /^\+/ { print f "\t" n "\t" substr($0, 2); n++ }'
+      kit_whole_lines "$repo" <"$4"
+    else
+      cat "$4" "$3" | kit_whole_lines "$repo"
+    fi
+  } | tr -d '\r'
+}
+
+# Todas as linhas dos arquivos de texto lidos do stdin (um por linha, relativos a <repo>) como
+# "caminho<TAB>linha<TAB>texto". Binario fica de fora. Uso: kit_whole_lines <repo> <lista
+kit_whole_lines() {
+  (
+    cd "$1" 2>/dev/null || exit 0
+    kit_path_batches "./" grep -Il '' -- 2>/dev/null | tr -d '\r' |
+      kit_path_batches "" awk '{ f = FILENAME; sub(/^\.\//, "", f); print f "\t" FNR "\t" $0 }'
+  )
+}
+
+# Roda o comando com os caminhos lidos do stdin (um por linha) acrescentados no fim, em lotes de ate
+# ~8.000 caracteres: a linha de comando de um programa nativo do Windows (git.exe) nao passa de 32
+# mil, e uma lista maior falha com "Argument list too long". <prefixo> entra antes de cada caminho.
+# Uso: kit_path_batches <prefixo> comando [args...] <lista
+kit_path_batches() {
+  local pre="$1" p len=0
+  local -a batch=()
+  shift
+  while IFS= read -r p <&3; do
+    [ -n "$p" ] || continue
+    if [ "${#batch[@]}" -gt 0 ] && [ $((len + ${#pre} + ${#p} + 3)) -gt 8000 ]; then
+      "$@" ${batch[@]+"${batch[@]}"} </dev/null
+      batch=()
+      len=0
+    fi
+    batch+=("$pre$p")
+    len=$((len + ${#pre} + ${#p} + 3))
+  done 3<&0
+  [ "${#batch[@]}" -eq 0 ] || "$@" ${batch[@]+"${batch[@]}"} </dev/null
+  return 0
+}
+
 # Avisos de configuracao do kit.json da raiz e de cada repositorio, um por linha: JSON invalido,
 # chave de verify_on_stop sem comando, verify_on_stop sem source_globs e entrada de "repos" que nao
 # e repositorio git. Uso: kit_config_notes <raiz> [repositorio...]
@@ -594,10 +682,13 @@ kit_config_notes() {
     fi
     while IFS= read -r k; do
       [ -n "$k" ] && echo "kit: $rel: verify_on_stop cita \"$k\", que não existe em commands; essa verificação não roda"
-    done < <(jq -r '(.commands // {}) as $c | (.verify_on_stop // []) | if type == "array" then .[] | strings | select(($c[.] // "") == "") else empty end' "$f" 2>/dev/null | tr -d '\r')
-    if jq -e '((.verify_on_stop // []) | length > 0) and ((.source_globs // []) | length == 0)' "$f" >/dev/null 2>&1; then
-      echo "kit: $rel: verify_on_stop sem source_globs; o gate não roda nenhum comando"
-    fi
+    done < <(jq -r "$KIT_JQ_CMD"' (.commands // {}) as $c | (.verify_on_stop // []) | if type == "array" then .[] | strings | select(($c[.] | cmd_run) == "") else empty end' "$f" 2>/dev/null | tr -d '\r')
+    k="$(jq -r "$KIT_JQ_CMD"' (.commands // {}) as $c | select(((.source_globs // []) | length) == 0)
+      | [(.verify_on_stop // []) | if type == "array" then .[] | strings else empty end | select(($c[.] | cmd_files | length) == 0)] as $s
+      | if ($s | length) == 0 then empty
+        elif ([(.verify_on_stop // [])[] | strings] | length) == ($s | length) then "nenhum comando"
+        else "os comandos sem \"files\": " + ($s | join(", ")) end' "$f" 2>/dev/null | tr -d '\r')"
+    [ -n "$k" ] && echo "kit: $rel: verify_on_stop sem source_globs; o gate não roda $k"
     while IFS= read -r k; do
       [ -n "$k" ] || continue
       [ -e "$d/${k#./}/.git" ] || echo "kit: $rel: repos cita \"$k\", que não é repositório git; ignorado"

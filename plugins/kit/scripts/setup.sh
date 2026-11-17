@@ -216,8 +216,9 @@ cmd_permissions() {
 }
 
 # Confere o kit.json: glob largo ou segredo em allow_write, item sem glob, grupo desconhecido, campo
-# com tipo errado, chave de verify_on_stop sem comando, verify_on_stop sem source_globs e entrada
-# de repos que nao e repositorio git.
+# com tipo errado, comando que nao e texto nem { run, files }, chave de verify_on_stop sem comando,
+# verify_on_stop sem source_globs, regra de diff_deny sem pattern valido e entrada de repos que nao
+# e repositorio git.
 cmd_guards() {
   local kit="${1:-.claude/kit.json}" out="" g
   command -v jq >/dev/null 2>&1 || { echo "setup: jq não encontrado; rode setup.sh check" >&2; return 2; }
@@ -232,8 +233,9 @@ cmd_guards() {
       out+="ignorado: guards.allow_write \"$g\" — segredo não tem exceção"$'\n'
     fi
   done < <(kit_guard_allow_entries)
-  out+="$(jq -r --slurpfile gr "$GROUPS_FILE" '
+  out+="$(jq -r --slurpfile gr "$GROUPS_FILE" "$KIT_JQ_CMD"'
     def noglob: (type != "string") and ((type != "object") or ((.glob // "") | type) != "string" or (.glob // "") == "");
+    def strlist: type == "array" and all(.[]; type == "string");
     (.guards // {}) as $g
     | (if ($g | type) != "object" then "inválido: guards precisa ser objeto"
        else (["allow_write", "deny_write"][] as $k | ($g[$k] // []) |
@@ -242,16 +244,40 @@ cmd_guards() {
       ((.permissions.groups // []) |
        if type != "array" then "inválido: permissions.groups precisa ser lista"
        else .[] | select(. as $i | ($gr[0].groups | map(.id) | index($i)) == null) | "inválido: permissions.groups \(tojson) desconhecido" end),
-      (["protected_paths", "source_globs", "verify_on_stop", "repos", "plan_dirs", "coupled_changes", "key_parity"][] as $k
+      (["protected_paths", "source_globs", "verify_on_stop", "repos", "plan_dirs", "coupled_changes", "key_parity", "diff_deny"][] as $k
        | select(has($k) and (.[$k] | type) != "array") | "inválido: \($k) precisa ser lista"),
       (select(has("commands") and (.commands | type) != "object") | "inválido: commands precisa ser objeto"),
+      ((if (.commands | type) == "object" then .commands else {} end) | to_entries[]
+       | select((.value | type) != "string")
+       | if (.value | type) != "object" or ((.value.run // null) | type) != "string" or .value.run == ""
+           then "inválido: commands.\(.key) precisa ser texto ou objeto com \"run\""
+         elif (.value | has("files")) and ((.value.files | strlist) | not)
+           then "inválido: commands.\(.key).files precisa ser lista de globs"
+         else empty end),
       ((if (.commands | type) == "object" then .commands else {} end) as $c
        | (if (.verify_on_stop | type) == "array" then .verify_on_stop else [] end)
-       | .[] | strings | select(($c[.] // "") == "") | "inválido: verify_on_stop \(tojson) não existe em commands; o gate pula essa verificação"),
-      (select(((.verify_on_stop | type) == "array") and (.verify_on_stop | length) > 0
-         and ((if (.source_globs | type) == "array" then .source_globs else [] end) | length) == 0)
-       | "inválido: verify_on_stop sem source_globs; o gate não roda nenhum comando")' "$kit" 2>/dev/null | tr -d '\r')"
-  local kd r
+       | .[] | strings | select(($c[.] | cmd_run) == "") | "inválido: verify_on_stop \(tojson) não existe em commands; o gate pula essa verificação"),
+      ((if (.commands | type) == "object" then .commands else {} end) as $c
+       | select((if (.source_globs | type) == "array" then .source_globs else [] end) | length == 0)
+       | [(if (.verify_on_stop | type) == "array" then .verify_on_stop else [] end)[] | strings] as $v
+       | [$v[] | select(($c[.] | cmd_files | length) == 0)] as $s
+       | if ($s | length) == 0 then empty
+         elif ($s | length) == ($v | length) then "inválido: verify_on_stop sem source_globs; o gate não roda nenhum comando"
+         else "inválido: verify_on_stop sem source_globs; o gate não roda os comandos sem \"files\": \($s | join(", "))" end),
+      ((if (.diff_deny | type) == "array" then .diff_deny else [] end) | to_entries[]
+       | .key as $i | .value
+       | if type != "object" or ((.pattern // null) | type) != "string" or .pattern == ""
+           then "inválido: diff_deny[\($i)] sem pattern"
+         elif has("files") and ((.files | strlist) | not) then "inválido: diff_deny[\($i)].files precisa ser lista de globs"
+         elif has("level") and ((.level == "block" or .level == "warn") | not) then "inválido: diff_deny[\($i)].level precisa ser block ou warn"
+         else empty end)' "$kit" 2>/dev/null | tr -d '\r')"
+  local kd r i=0
+  # O gate casa o pattern com grep -E: o mesmo grep diz se ele e invalido.
+  while IFS= read -r r; do
+    grep -E -- "$r" </dev/null >/dev/null 2>&1
+    [ "$?" -gt 1 ] && out+=$'\n'"inválido: diff_deny[$i].pattern não é ERE válido: $r"
+    i=$((i + 1))
+  done < <(jq -r '(.diff_deny // []) | if type == "array" then .[] | (if type == "object" then (.pattern // "") else "" end) | if type == "string" then . else "" end else empty end' "$kit" 2>/dev/null | tr -d '\r')
   kd="$(cd "$(dirname "$kit")/.." 2>/dev/null && pwd)"
   while IFS= read -r r; do
     [ -n "$r" ] || continue

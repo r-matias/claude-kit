@@ -7,16 +7,58 @@ Valores de partida. Confirme sempre contra o que o projeto realmente usa (script
 | Stack | build | test | test_related | lint | typecheck | format (glob → comando) |
 | --- | --- | --- | --- | --- | --- | --- |
 | .NET | `dotnet build --nologo -v q` | `dotnet test --nologo` | — (filtro é por nome, não por arquivo) | `dotnet format --verify-no-changes` | — | `**/*.cs` → `dotnet format --include {files}` |
-| Node/TS (npm) | `npm run build` | `npm test` | `npx vitest related --run {files}` ou `npx jest --findRelatedTests {files}` | `npm run lint` | `npx tsc --noEmit` | `**/*.{ts,tsx,js,jsx,json,css,scss,html,md}` → `npx prettier --write {files}` |
+| Node/TS (npm) | `npm run build` | `npm test` | `npx vitest related --run {files}` ou `npx jest --findRelatedTests {files}` | `{ "run": "npx eslint {files}", "files": ["**/*.{ts,tsx,js,jsx}"] }` ou `npm run lint` | `npx tsc --noEmit` | `**/*.{ts,tsx,js,jsx,json,css,scss,html,md}` → `npx prettier --write {files}`; com Biome: `npx biome check --write {files}` |
 | Node (pnpm/yarn/bun) | troque `npm run`/`npx` por `pnpm`/`yarn`/`bun` | | | | | |
-| Python (uv) | `uv run python -m compileall -q src` | `uv run pytest -q` | `uv run pytest -q {files}` (só se os arquivos forem de teste) | `uv run ruff check .` | `uv run mypy .` ou `uv run pyright` | `**/*.py` → `uv run ruff format {files}` |
+| Python (uv) | `uv run python -m compileall -q src` | `uv run pytest -q` | `uv run pytest -q {files}` (só se os arquivos forem de teste) | `{ "run": "uv run ruff check {files}", "files": ["**/*.py"] }` | `uv run mypy .` ou `uv run pyright` | `**/*.py` → `uv run ruff check --fix {files} && uv run ruff format {files}` |
 | Python (pip/poetry) | troque `uv run` por `python -m` / `poetry run` | | | | | |
 | Go | `go build ./...` | `go test ./...` | — | `golangci-lint run` | `go vet ./...` | `**/*.go` → `gofmt -w {files}` |
 | Rust | `cargo build -q` | `cargo test -q` | — | `cargo clippy -q -- -D warnings` | `cargo check -q` | `**/*.rs` → `rustfmt {files}` |
 | Java (Maven) | `mvn -q -DskipTests compile` | `mvn -q test` | — | — | — | `**/*.java` → conforme o formatter do projeto (spotless: `mvn -q spotless:apply`) |
 | Java/Kotlin (Gradle) | `./gradlew -q assemble` | `./gradlew -q test` | — | `./gradlew -q check -x test` | — | spotless/ktlint se configurado |
-| Ruby | — | `bundle exec rspec` | `bundle exec rspec {files}` (só specs) | `bundle exec rubocop` | — | `**/*.rb` → `bundle exec rubocop -a {files}` |
-| PHP | — | `vendor/bin/phpunit` | — | `vendor/bin/phpstan analyse` | — | `**/*.php` → `vendor/bin/php-cs-fixer fix {files}` |
+| Ruby | — | `bundle exec rspec` | `bundle exec rspec {files}` (só specs) | `{ "run": "bundle exec rubocop {files}", "files": ["**/*.rb"] }` | — | `**/*.rb` → `bundle exec rubocop -a {files}` |
+| PHP | — | `vendor/bin/phpunit` | — | `{ "run": "vendor/bin/phpstan analyse {files}", "files": ["**/*.php"] }` | — | `**/*.php` → `vendor/bin/php-cs-fixer fix {files}` |
+
+### Lint: no `format` e no gate
+
+- **Forma objeto.** `{ "run": "<comando> {files}", "files": [<globs>] }` só roda no gate quando algum alterado casa `files`, e `{files}` recebe só esses. É a forma do `lint` sempre que a ferramenta aceita arquivos: num repositório com duas linguagens, o lint de uma não recebe arquivo da outra. Os globs de `files` valem no lugar de `source_globs` para esse comando.
+- **Autofix no `format`** (lint corrigido a cada edição, o que sobra chega ao Claude na hora): só com ferramenta que o projeto já usa, que aceita um arquivo e roda em cerca de um segundo, e só se o `lint` do projeto passa hoje. Com dívida antiga, toda edição de arquivo antigo devolveria os achados antigos: o `format` fica só formatando. Fora do `format`: `dotnet format` (carrega o projeto), ESLint com regras que usam tipos (`parserOptions.project` ou `projectService` na config), `golangci-lint` e `clippy` (pacote ou crate inteiro). ESLint sem regras de tipo pode entrar: `npx eslint --fix {files} && npx prettier --write {files}`.
+- **`lint` no `verify_on_stop`**: entra quando o projeto tem linter, de preferência na forma objeto com `{files}`. Lint sem `{files}` (projeto inteiro) só entra se passa hoje; com dívida antiga, fica fora do gate e o relatório diz em uma linha.
+
+## Teste junto com o código (`coupled_changes` com `warn`)
+
+Regra "código mudou sem teste": `when` com o código de produção, `require` com os testes, `level: "warn"`. Avisa na edição, uma vez por arquivo por sessão, e não bloqueia: refatoração e mudança sem comportamento novo não precisam de teste novo. Editar um arquivo que casa `require` não avisa, então glob de código que também cobre os testes (testes ao lado do código) funciona. Use a pasta e o padrão de nome de teste que o projeto já usa; sem pasta de testes nem padrão claro, não proponha.
+
+| Stack | `when` | `require` |
+| --- | --- | --- |
+| .NET | `src/**/*.cs` | `tests/**`, `**/*.Tests/**` |
+| Node/TS | `src/**/*.{ts,tsx,js,jsx}` | `**/*.{test,spec}.{ts,tsx,js,jsx}`, `**/__tests__/**`, `test/**`, `tests/**` |
+| Python | `src/**/*.py` (ou a pasta do pacote) | `tests/**`, `**/test_*.py`, `**/*_test.py` |
+| Go | `**/*.go` | `**/*_test.go` |
+| Rust | `src/**/*.rs` | `tests/**` (só se o projeto tem a pasta; teste em `mod tests` no mesmo arquivo não conta) |
+| Java/Kotlin | `src/main/**` | `src/test/**` |
+| Ruby | `app/**/*.rb`, `lib/**/*.rb` | `spec/**`, `test/**` |
+| PHP | `src/**/*.php`, `app/**/*.php` | `tests/**` |
+
+Mensagem sugerida: `Código mudou; se o comportamento mudou, o teste muda junto.`
+
+## `diff_deny` (padrões de partida)
+
+Padrões ERE checados só nas linhas adicionadas no turno. Proponha só os das linguagens do projeto, com `level: "block"` e a mensagem `Supressão nova. Corrija a causa; se for inevitável, justifique em .claude/kit-skip.` (ou `Teste pulado ou focado.` para a segunda coluna). Padrão curto e específico: regex largo bloqueia o que não devia.
+
+| Stack | `files` | Supressão de lint ou tipo | Teste pulado ou focado |
+| --- | --- | --- | --- |
+| Node/TS | `**/*.{ts,tsx,js,jsx}` | `@ts-ignore\|@ts-nocheck\|eslint-disable` | `(^\|[^A-Za-z0-9_.])(it\|test\|describe)\.(only\|skip)\(` |
+| Python | `**/*.py` | `#[[:space:]]*type:[[:space:]]*ignore\|#[[:space:]]*noqa\|#[[:space:]]*pyright:[[:space:]]*ignore` | `@pytest\.mark\.skip\|@unittest\.skip` |
+| Go | `**/*.go` | `//[[:space:]]*nolint` | `t\.Skip\(` |
+| Rust | `**/*.rs` | `#\[allow\(` | `#\[ignore\]` |
+| .NET | `**/*.cs` | `#pragma warning disable\|SuppressMessage` | `\[(Fact\|Theory)[^]]*Skip[[:space:]]*=\|\[Ignore[](]` |
+| Java/Kotlin | `**/*.{java,kt}` | `@SuppressWarnings\|@Suppress\(` | `@(Disabled\|Ignore)([^A-Za-z0-9_]\|$)` |
+| Ruby | `**/*.rb` | `rubocop:disable` | `^[[:space:]]*(xit\|xdescribe\|fit\|fdescribe)[[:space:]]` |
+| PHP | `**/*.php` | `@phpstan-ignore\|@psalm-suppress` | `markTestSkipped` |
+
+Na tabela, `\|` é o `|` do padrão (escapado só por causa da tabela). No JSON, cada `\` vira `\\`: `"pattern": "@ts-ignore|@ts-nocheck|eslint-disable"`, `"pattern": "t\\.Skip\\("`.
+
+Anotação de teste com homônimo no código de produção (o `@Ignore` do Room, em Android): na regra de teste pulado, troque `files` pelas pastas de teste do projeto (`**/src/test/**`, `**/src/androidTest/**`).
 
 ## Ask (instalação e migração)
 

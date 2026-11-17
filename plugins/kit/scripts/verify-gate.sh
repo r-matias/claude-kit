@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Stop: roda verify_on_stop, key_parity e coupled_changes (level block) sobre os arquivos alterados
-# (inclusive os commitados neste turno) de todos os repositorios da sessao. Todas as falhas saem numa
-# unica mensagem com exit 2. Na passada seguinte a um bloqueio (stop_hook_active) verifica de novo:
-# se ainda falhar, libera o turno com a falha em systemMessage e sem notificacao de concluido.
+# Stop: roda verify_on_stop, key_parity, coupled_changes e diff_deny (level block) sobre os arquivos
+# alterados (inclusive os commitados neste turno) de todos os repositorios da sessao. Roda todos os
+# comandos, mesmo depois de uma falha, e todas as falhas saem numa unica mensagem com exit 2. Na
+# passada seguinte a um bloqueio (stop_hook_active) verifica de novo: se ainda falhar, libera o
+# turno com a falha em systemMessage e sem notificacao de concluido.
 # Turno liberado (gate passou ou nada a verificar): notificacao de concluido, se notify.done.
 # Compativel com bash 3.2: sem arrays associativos nem mapfile; os mapas ficam em arquivos de $TMPD.
 set -u
@@ -41,16 +42,12 @@ MULTI=0
 
 TMPD="$(mktemp -d)"
 trap 'rm -rf "$TMPD"' EXIT
-OUT="$TMPD/out"
 
 # Arquivos dos commits feitos neste turno: do HEAD gravado no UserPromptSubmit ate o HEAD de agora.
 turn_committed() {
-  local gd owner="" base=""
-  gd="$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null | tr -d '\r')"
-  [ -n "$gd" ] && [ -f "$gd/kit-turn-head" ] || return 0
-  IFS=' ' read -r owner base <"$gd/kit-turn-head" || true
-  [ -n "$base" ] && [ -n "$SID" ] && [ "$owner" = "$SID" ] || return 0
-  git -C "$1" cat-file -e "$base^{commit}" 2>/dev/null || return 0
+  local base
+  base="$(kit_turn_mark "$1" "$SID")"
+  [ -n "$base" ] || return 0
   git -c core.quotepath=off -C "$1" diff --name-only "$base" HEAD 2>/dev/null
   return 0
 }
@@ -124,13 +121,42 @@ read_lines() {
   done
 }
 
+# Caminhos de um arquivo (um por linha) citados como no kit_quote, sem um subshell por arquivo.
+# Arquivo apagado nao entra.
+quote_files() {
+  local m out=""
+  while IFS= read -r m; do
+    [ -e "$KIT_ROOT/$m" ] || continue
+    out+="'${m//\'/\'\\\'\'}' "
+  done <"$1"
+  printf '%s' "${out% }"
+}
+
+# Roda todos os comandos de verify_on_stop que tem arquivo alterado e registra cada falha. Comando na
+# forma objeto { "run", "files" } usa os proprios globs; na forma string, os de source_globs.
 run_verify() {
-  local state="" stamp="" files="" m key cmd gitdir
-  local -a globs=()
+  local state="" stamp="" files m key cmd gitdir n=0 i nfail=0 keep=60
+  local -a globs=() cglobs=()
   read_lines globs < <(kit_list source_globs)
-  [ "${#globs[@]}" -gt 0 ] || return 0
-  kit_glob_filter "${globs[@]}" <"$TMPD/grels" >"$TMPD/matched"
-  [ -s "$TMPD/matched" ] || return 0
+  : >"$TMPD/vrun"
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    cmd="$(kit_cmd "$key")"
+    [ -n "$cmd" ] || continue
+    read_lines cglobs < <(kit_cmd_files "$key")
+    n=$((n + 1))
+    if [ "${#cglobs[@]}" -gt 0 ]; then
+      kit_glob_filter ${cglobs[@]+"${cglobs[@]}"} <"$TMPD/grels" >"$TMPD/vm-$n"
+    elif [ "${#globs[@]}" -gt 0 ]; then
+      kit_glob_filter "${globs[@]}" <"$TMPD/grels" >"$TMPD/vm-$n"
+    else
+      continue
+    fi
+    [ -s "$TMPD/vm-$n" ] || continue
+    printf '%s' "$cmd" >"$TMPD/vc-$n"
+    printf '%s\t%s\n' "$n" "$key" >>"$TMPD/vrun"
+  done < <(kit_list verify_on_stop)
+  [ -s "$TMPD/vrun" ] || return 0
 
   # Estado ja verificado com sucesso nao roda de novo.
   gitdir="$(git -C "$KIT_ROOT" rev-parse --absolute-git-dir 2>/dev/null | tr -d '\r')"
@@ -149,27 +175,31 @@ run_verify() {
     [ -n "$state" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$state" ] && return 0
   fi
 
-  # Mesma citacao do kit_quote, sem um subshell por arquivo. Arquivo apagado nao entra em {files}.
-  while IFS= read -r m; do
-    [ -e "$KIT_ROOT/$m" ] || continue
-    files+="'${m//\'/\'\\\'\'}' "
-  done <"$TMPD/matched"
-  files="${files% }"
-
-  while IFS= read -r key; do
-    [ -n "$key" ] || continue
-    cmd="$(kit_cmd "$key")"
-    [ -n "$cmd" ] || continue
+  : >"$TMPD/vfail"
+  while IFS=$'\t' read -r i key; do
+    cmd="$(cat "$TMPD/vc-$i")"
+    files="$(quote_files "$TMPD/vm-$i")"
     # So arquivos apagados: comando que recebe {files} nao tem o que conferir.
     case "$cmd" in *'{files}'*) [ -n "$files" ] || continue ;; esac
     cmd="$(kit_subst_files "$cmd" "$files")"
-    if ! kit_run "$cmd" "$OUT"; then
-      add_fail "'$key' falhou em ${KIT_ROOT}
-comando: $cmd
-$(tail -n 60 "$OUT")"
-      return 0
+    # stdin fechado: o comando nao pode consumir a lista do laco.
+    if ! kit_run "$cmd" "$TMPD/vo-$i" </dev/null; then
+      nfail=$((nfail + 1))
+      printf '%s' "$cmd" >"$TMPD/vc-$i"
+      printf '%s\t%s\n' "$i" "$key" >>"$TMPD/vfail"
     fi
-  done < <(kit_list verify_on_stop)
+  done <"$TMPD/vrun"
+
+  if [ "$nfail" -gt 0 ]; then
+    # Mais de uma falha: corte menor para a mensagem caber no teto de saida do hook.
+    [ "$nfail" -gt 1 ] && keep=30
+    while IFS=$'\t' read -r i key; do
+      add_fail "'$key' falhou em ${KIT_ROOT}
+comando: $(cat "$TMPD/vc-$i")
+$(tail -n "$keep" "$TMPD/vo-$i")"
+    done <"$TMPD/vfail"
+    return 0
+  fi
 
   [ -n "$stamp" ] && [ -n "$state" ] && printf '%s' "$state" >"$stamp"
   return 0
@@ -242,9 +272,12 @@ ${problems%$'\n'}"
   done
 }
 
+# Falhas de coupled_changes e diff_deny da raiz atual, que o .claude/kit-skip pode liberar.
+SKIPPABLE=()
+
 run_coupled() {
-  local n i msg hint level skip_file skip_text shown v ntrig
-  local -a when=() require=() violations=()
+  local n i msg hint level shown v ntrig
+  local -a when=() require=()
   n="$(kit_rule_count coupled_changes)"
   i=0
   while [ "$i" -lt "${n:-0}" ]; do
@@ -268,22 +301,107 @@ run_coupled() {
   disparado por: ${shown}
   esperado também alteração em: ${require[*]+${require[*]}}"
     [ -n "$hint" ] && v+=$'\n'"  dica: $hint"
-    violations+=("$v")
+    SKIPPABLE+=("$v")
   done
-  [ "${#violations[@]}" -gt 0 ] || return 0
+}
 
+# Linhas adicionadas dos alterados da raiz (sem apagados e sem o proprio kit.json) em $TMPD/dd-all,
+# como "caminho-relativo-a-raiz<TAB>linha<TAB>texto". Um git ls-files e um git diff por repositorio.
+dd_collect() {
+  local rel abs r best idx k base
+  : >"$TMPD/dd-all"
+  rm -f "$TMPD"/ddl-*
+  while IFS= read -r rel; do
+    [ "$rel" = ".claude/kit.json" ] && continue
+    abs="$KIT_ROOT/$rel"
+    [ -f "$abs" ] || continue
+    best=""
+    idx=0
+    k=0
+    for r in ${REPOS[@]+"${REPOS[@]}"}; do
+      k=$((k + 1))
+      if [ "${abs#"$r"/}" != "$abs" ] && [ "${#r}" -gt "${#best}" ]; then best="$r"; idx="$k"; fi
+    done
+    [ -n "$best" ] || continue
+    printf '%s\n' "$best" >"$TMPD/ddr-$idx"
+    printf '%s\n' "${abs#"$best"/}" >>"$TMPD/ddl-$idx"
+  done <"$TMPD/rels"
+  for k in "$TMPD"/ddl-*; do
+    [ -f "$k" ] || continue
+    idx="${k##*-}"
+    r="$(cat "$TMPD/ddr-$idx")"
+    kit_path_batches "" git --literal-pathspecs -c core.quotepath=off -C "$r" ls-files -- <"$k" 2>/dev/null | tr -d '\r' >"$TMPD/dd-tracked"
+    grep -vxF -f "$TMPD/dd-tracked" "$k" >"$TMPD/dd-untracked"
+    base="$(kit_turn_base "$r" "$SID")"
+    kit_added_lines "$r" "$base" "$TMPD/dd-tracked" "$TMPD/dd-untracked" |
+      R="$r" K="$KIT_ROOT" awk '{ p = ENVIRON["R"] "/"; k = ENVIRON["K"] "/"; t = $0; f = t; sub(/\t.*/, "", f); sub(/^[^\t]*/, "", t)
+        f = p f; if (index(f, k) == 1) f = substr(f, length(k) + 1); print f t }' >>"$TMPD/dd-all"
+    rm -f "$TMPD/ddr-$idx" "$k"
+  done
+}
+
+# diff_deny: padrao (ERE) proibido nas linhas adicionadas no turno dos alterados que casam "files"
+# (todos, sem "files"). level "warn" fica para o advise.sh, na edicao.
+run_diff_deny() {
+  local n i pattern msg level rc total v collected=0
+  local -a dglobs=()
+  n="$(kit_rule_count diff_deny)"
+  i=0
+  while [ "$i" -lt "${n:-0}" ]; do
+    level="$(kit_rule_str diff_deny "$i" level block)"
+    pattern="$(kit_rule_str diff_deny "$i" pattern "")"
+    msg="$(kit_rule_str diff_deny "$i" message "Padrão proibido em linha nova.")"
+    read_lines dglobs < <(kit_rule_list diff_deny "$i" files)
+    i=$((i + 1))
+    [ "$level" = "warn" ] && continue
+    [ -n "$pattern" ] || continue
+    if [ "$collected" -eq 0 ]; then dd_collect; collected=1; fi
+    [ -s "$TMPD/dd-all" ] || return 0
+    if [ "${#dglobs[@]}" -gt 0 ]; then
+      kit_glob_filter ${dglobs[@]+"${dglobs[@]}"} <"$TMPD/rels" >"$TMPD/dd-c"
+    else
+      cp "$TMPD/rels" "$TMPD/dd-c"
+    fi
+    # Texto das linhas candidatas num arquivo e "caminho:linha" no outro, na mesma ordem: o grep
+    # roda so sobre o texto, entao ^ e $ do padrao valem para a linha do codigo.
+    M="$TMPD/dd-m" T="$TMPD/dd-t" awk -F'\t' 'NR == FNR { c[$0] = 1; next }
+      ($1 in c) { t = $0; sub(/^[^\t]*\t[^\t]*\t/, "", t); print $1 ":" $2 >ENVIRON["M"]; print t >ENVIRON["T"] }' "$TMPD/dd-c" "$TMPD/dd-all"
+    [ -s "$TMPD/dd-t" ] || { rm -f "$TMPD/dd-m" "$TMPD/dd-t"; continue; }
+    grep -nE -- "$pattern" "$TMPD/dd-t" >"$TMPD/dd-h" 2>/dev/null
+    rc=$?
+    if [ "$rc" -gt 1 ]; then
+      add_fail "[diff_deny]$(where_label) padrão inválido em diff_deny[$((i - 1))]: $pattern"
+    elif [ "$rc" -eq 0 ]; then
+      awk 'NR == FNR { m[NR] = $0; next } { k = $0; sub(/:.*/, "", k); t = $0; sub(/^[0-9]+:[ \t]*/, "", t)
+        if (length(t) > 160) t = substr(t, 1, 160) "..."; print "  " m[k] ": " t }' "$TMPD/dd-m" "$TMPD/dd-h" >"$TMPD/dd-r"
+      total="$(wc -l <"$TMPD/dd-r" | tr -d ' ')"
+      v="[diff_deny]$(where_label) $msg
+$(head -n 20 "$TMPD/dd-r")"
+      [ "$total" -gt 20 ] && v+=$'\n'"  ... e mais $((total - 20)) linha(s)"
+      SKIPPABLE+=("$v")
+    fi
+    rm -f "$TMPD/dd-m" "$TMPD/dd-t"
+  done
+}
+
+# Libera as falhas de coupled_changes e diff_deny com uma linha de justificativa em .claude/kit-skip.
+apply_skip() {
+  local skip_file skip_text v
+  [ "${#SKIPPABLE[@]}" -gt 0 ] || return 0
   skip_file="$KIT_ROOT/.claude/kit-skip"
   if [ -f "$skip_file" ]; then
     skip_text="$(tr -d '\r' <"$skip_file" | sed '/^[[:space:]]*$/d' | head -n 1)"
     if [ -n "$skip_text" ]; then
-      printf '%s\t%s\n' "$KIT_ROOT" "$(printf '%s\n' "${violations[@]}" | sed -n 's/^\[coupled_changes\][^ ]* //p' | paste -sd ';' -)" >>"$TMPD/skip-released"
+      printf '%s\t%s\n' "$KIT_ROOT" "$(printf '%s\n' ${SKIPPABLE[@]+"${SKIPPABLE[@]}"} | sed -nE 's/^\[(coupled_changes|diff_deny)\][^ ]* //p' | paste -sd ';' -)" >>"$TMPD/skip-released"
+      SKIPPABLE=()
       return 0
     fi
-    violations[0]+=$'\n'"  .claude/kit-skip está vazio: escreva uma linha de justificativa para liberar."
+    SKIPPABLE[0]+=$'\n'"  .claude/kit-skip está vazio: escreva uma linha de justificativa para liberar."
   else
-    violations[0]+=$'\n'"  Se esta mudança realmente não exige o par, grave uma linha de justificativa em .claude/kit-skip (fica registrada)."
+    SKIPPABLE[0]+=$'\n'"  Se a regra realmente não se aplica a esta mudança, grave uma linha de justificativa em .claude/kit-skip (fica registrada)."
   fi
-  for v in "${violations[@]}"; do add_fail "$v"; done
+  for v in ${SKIPPABLE[@]+"${SKIPPABLE[@]}"}; do add_fail "$v"; done
+  SKIPPABLE=()
 }
 
 # Apaga o kit-skip usado e registra a justificativa.
@@ -332,9 +450,46 @@ for root in ${ROOTS[@]+"${ROOTS[@]}"}; do
   run_verify
   run_key_parity
   run_coupled
+  run_diff_deny
+  apply_skip
 done
 
+# Encaixa as falhas em <teto> caracteres: as curtas ficam inteiras e as longas dividem o resto por
+# igual, guardando o comeco (qual falha) e o fim (onde costuma estar o erro). Sem isso, uma saida
+# longa de comando ocuparia a mensagem e esconderia as outras falhas.
+fit_fails() {
+  local budget="$1" left="${#FAILS[@]}" changed=1 i per f head tail
+  local mark=$'\n... (cortado para caber no limite de saída do hook) ...\n'
+  local -a kept=()
+  for ((i = 0; i < ${#FAILS[@]}; i++)); do kept[i]=0; done
+  while [ "$changed" -eq 1 ] && [ "$left" -gt 0 ]; do
+    changed=0
+    per=$((budget / left))
+    for ((i = 0; i < ${#FAILS[@]}; i++)); do
+      [ "${kept[i]}" -eq 0 ] && [ "${#FAILS[i]}" -le "$per" ] || continue
+      kept[i]=1
+      budget=$((budget - ${#FAILS[i]}))
+      left=$((left - 1))
+      changed=1
+    done
+  done
+  [ "$left" -gt 0 ] || return 0
+  per=$((budget / left))
+  [ "$per" -ge 200 ] || per=200
+  head=$((per / 4))
+  [ "$head" -le 400 ] || head=400
+  tail=$((per - head - ${#mark}))
+  for ((i = 0; i < ${#FAILS[@]}; i++)); do
+    [ "${kept[i]}" -eq 0 ] || continue
+    f="${FAILS[i]}"
+    FAILS[i]="${f:0:head}${mark}${f:$((${#f} - tail))}"
+  done
+}
+
 if [ "${#FAILS[@]}" -gt 0 ]; then
+  # Acima de 10.000 caracteres o modelo recebe so uma previa. Na passada seguinte a um bloqueio a
+  # mensagem vai ao usuario (systemMessage) e sai inteira.
+  [ "$ACTIVE" = "true" ] || fit_fails $((9000 - 8 * ${#FAILS[@]}))
   report="$(
     n=0
     for f in "${FAILS[@]}"; do

@@ -1064,6 +1064,25 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
     grep -qF 'inválido: repos "nope" não é repositório git' <<<"$out" && ! grep -qF '"api"' <<<"$out"; then
     ok "setup guards: tipo errado, verify_on_stop sem comando ou sem source_globs e repos sem git"
   else ko "setup guards: tipo errado, verify_on_stop sem comando ou sem source_globs e repos sem git" "exit $code, $out"; fi
+  printf '%s\n' '{"commands":{"build":"true","lint":{"run":"x {files}","files":["**/*.ts"]},"bad1":5,"bad2":{"files":["a"]},"bad3":{"run":"x","files":"a"}},"verify_on_stop":["lint"],
+    "diff_deny":[{"pattern":"ok"},{"files":["x"]},{"pattern":"(","level":"x"},{"pattern":"y","files":"z"}]}' >"$PP/cmdobj.json"
+  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/cmdobj.json" 2>&1)"
+  code=$?
+  if [ "$code" = "1" ] && grep -qxF 'inválido: commands.bad1 precisa ser texto ou objeto com "run"' <<<"$out" &&
+    grep -qxF 'inválido: commands.bad2 precisa ser texto ou objeto com "run"' <<<"$out" &&
+    grep -qxF 'inválido: commands.bad3.files precisa ser lista de globs' <<<"$out" &&
+    grep -qxF 'inválido: diff_deny[1] sem pattern' <<<"$out" && grep -qxF 'inválido: diff_deny[2].level precisa ser block ou warn' <<<"$out" &&
+    grep -qxF 'inválido: diff_deny[3].files precisa ser lista de globs' <<<"$out" &&
+    grep -qxF 'inválido: diff_deny[2].pattern não é ERE válido: (' <<<"$out" &&
+    ! grep -qE 'commands\.(build|lint)|diff_deny\[0\]|source_globs' <<<"$out"; then
+    ok "setup guards: commands na forma objeto e regras de diff_deny"
+  else ko "setup guards: commands na forma objeto e regras de diff_deny" "exit $code, $out"; fi
+  printf '%s\n' '{"commands":{"build":"true","lint":{"run":"x {files}","files":["**/*.ts"]}},"verify_on_stop":["build","lint"]}' >"$PP/misto.json"
+  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/misto.json" 2>&1)"
+  code=$?
+  if [ "$code" = "1" ] && [ "$out" = 'inválido: verify_on_stop sem source_globs; o gate não roda os comandos sem "files": build' ]; then
+    ok "setup guards: sem source_globs, só os comandos sem files ficam de fora"
+  else ko "setup guards: sem source_globs, só os comandos sem files ficam de fora" "exit $code, $out"; fi
   printf '%s\n' '{"protected_paths":["gen/**"],}' >"$PP/invalido.json"
   run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/invalido.json" >/dev/null 2>&1
   code=$?
@@ -1391,6 +1410,26 @@ if [ -z "$FILTER" ] || [[ "guardas" == *"$FILTER"* ]]; then
   else ko "verify-gate: 2002 arquivos, & e apostrofo no {files}" "exit $code, $(wc -l <"$G/out.txt" 2>/dev/null) linhas, $(head -c 300 "$TMP_ALL/big.err")"; fi
   [ "$((t1 - t0))" -le 30 ] && ok "verify-gate: 2002 arquivos em ate 30s ($((t1 - t0))s)" || ko "verify-gate: 2002 arquivos em ate 30s" "$((t1 - t0))s"
 
+  # diff_deny com 500 arquivos rastreados alterados: a lista de caminhos passa de 32 mil caracteres
+  # (limite da linha de comando do git.exe no Windows) e vai em lotes. Supressao antiga nao bloqueia
+  # e a nova sai com o arquivo e a linha certos.
+  G="$(mktemp -d "$TMP_ALL/lote.XXXXXX")"
+  ld="src/componente-com-nome-comprido-para-encher-a-linha-de-comando"
+  mkdir -p "$G/.claude" "$G/$ld"
+  printf '%s\n' '{"diff_deny":[{"pattern":"@ts-ignore","files":["**/*.ts"],"message":"Supressão nova."}]}' >"$G/.claude/kit.json"
+  for f in $(seq 1 500); do printf '// @ts-ignore antigo\n' >"$G/$ld/arquivo-$f.ts"; done
+  git_q init "$G"; git_q -C "$G" add -A; git_q -C "$G" commit -m init
+  for f in $(seq 1 500); do printf 'const x = 1;\n' >>"$G/$ld/arquivo-$f.ts"; done
+  lote_in="$(jq -cn --arg d "$(native_path "$G")" '{cwd: $d, session_id: "lote"}')"
+  TMPDIR="$TMP_ALL" "$TBASH" "$SCRIPTS/verify-gate.sh" <<<"$lote_in" >/dev/null 2>"$TMP_ALL/lote.err"; code=$?
+  if [ "$code" = "0" ]; then ok "diff_deny: 500 arquivos alterados, supressão antiga não bloqueia"
+  else ko "diff_deny: 500 arquivos alterados, supressão antiga não bloqueia" "exit $code, $(head -c 300 "$TMP_ALL/lote.err")"; fi
+  printf '// @ts-ignore\n' >>"$G/$ld/arquivo-500.ts"
+  TMPDIR="$TMP_ALL" "$TBASH" "$SCRIPTS/verify-gate.sh" <<<"$lote_in" >/dev/null 2>"$TMP_ALL/lote.err"; code=$?
+  if [ "$code" = "2" ] && grep -qF "  $ld/arquivo-500.ts:3: // @ts-ignore" "$TMP_ALL/lote.err" && [ "$(grep -c 'arquivo-[0-9]*\.ts:' "$TMP_ALL/lote.err")" = "1" ]; then
+    ok "diff_deny: 500 arquivos alterados, supressão nova bloqueia com arquivo e linha"
+  else ko "diff_deny: 500 arquivos alterados, supressão nova bloqueia com arquivo e linha" "exit $code, $(head -c 300 "$TMP_ALL/lote.err")"; fi
+
   # Entrada vazia ou JSON truncado: os guardas bloqueiam (exit 2), nunca liberam.
   in_bad=""
   for gs in guard-bash.sh guard-files.sh; do
@@ -1443,6 +1482,22 @@ if [ -z "$FILTER" ] || [[ "guardas" == *"$FILTER"* ]]; then
   if [ "$c1" = "2" ] && [ "$c2" = "0" ]; then ok "verify-gate: commit dentro do turno é verificado; marca de outra sessão é ignorada"
   else ko "verify-gate: commit dentro do turno é verificado; marca de outra sessão é ignorada" "mesma=$c1 outra=$c2"; fi
 
+  # diff_deny: linha commitada dentro do turno conta; linha de antes do turno, nao.
+  G="$(mktemp -d "$TMP_ALL/ddturno.XXXXXX")"
+  mkdir -p "$G/.claude" "$G/src"
+  printf '%s\n' '{"diff_deny":[{"pattern":"^proibido","message":"Linha proibida."}]}' >"$G/.claude/kit.json"
+  printf 'proibido antigo\n' >"$G/src/a.ts"
+  git_q init "$G"; git_q -C "$G" add -A; git_q -C "$G" commit -m init
+  jq -cn --arg d "$(native_path "$G")" '{hook_event_name: "UserPromptSubmit", cwd: $d, session_id: "turno"}' |
+    TMPDIR="$G" "$TBASH" "$SCRIPTS/session-context.sh" --plan-only >/dev/null 2>&1
+  printf 'proibido novo\n' >>"$G/src/a.ts"
+  git_q -C "$G" commit -am mudou
+  e1="$(jq -cn --arg d "$(native_path "$G")" '{cwd: $d, session_id: "turno"}' | TMPDIR="$G" "$TBASH" "$SCRIPTS/verify-gate.sh" 2>&1 >/dev/null)"; c1=$?
+  jq -cn --arg d "$(native_path "$G")" '{cwd: $d, session_id: "outra"}' | TMPDIR="$G" "$TBASH" "$SCRIPTS/verify-gate.sh" >/dev/null 2>&1; c2=$?
+  if [ "$c1" = "2" ] && [ "$c2" = "0" ] && grep -qF 'src/a.ts:2: proibido novo' <<<"$e1" && ! grep -qF 'src/a.ts:1:' <<<"$e1"; then
+    ok "verify-gate: diff_deny conta linha commitada no turno e ignora a de antes"
+  else ko "verify-gate: diff_deny conta linha commitada no turno e ignora a de antes" "mesma=$c1 outra=$c2 $e1"; fi
+
   # Repositorio criado durante a sessao entra no gate (o cache de kit_repos e refeito no Stop).
   G="$(mktemp -d "$TMP_ALL/novo.XXXXXX")"
   mkdir -p "$G/.claude" "$G/api"
@@ -1491,7 +1546,7 @@ if [ -z "$FILTER" ]; then
   if [ -z "$manual" ]; then ok "nenhum resto do fluxo de sugestão (kit-settings.suggested) em docs, skills e scripts"; else ko "nenhum resto do fluxo de sugestão" "$manual"; fi
   # A tabela LSP do stacks.md tem os mesmos plugins e binarios do templates/lsp-plugins.txt.
   lsp_tpl="$(tr -d '\r' <"$REPO/plugins/kit/templates/lsp-plugins.txt" | awk -F"|" 'NF { p = $1; if (p !~ /@/) p = p "@claude-plugins-official"; print p " " $2 }' | sort)"
-  lsp_doc="$(tr -d '\r' <"$REPO/plugins/kit/skills/init/stacks.md" | awk -F'|' 'NF > 5 && $4 ~ /@/ { p = $4; b = $5; gsub(/[ `]/, "", p); gsub(/[ `]/, "", b); print p " " b }' | sort)"
+  lsp_doc="$(tr -d '\r' <"$REPO/plugins/kit/skills/init/stacks.md" | awk -F'|' '/^## / { lsp = ($0 == "## Plugin LSP") } lsp && NF > 5 && $4 ~ /@/ { p = $4; b = $5; gsub(/[ `]/, "", p); gsub(/[ `]/, "", b); print p " " b }' | sort)"
   if [ -n "$lsp_tpl" ] && [ "$lsp_tpl" = "$lsp_doc" ]; then ok "stacks.md: tabela LSP igual a templates/lsp-plugins.txt"
   else ko "stacks.md: tabela LSP igual a templates/lsp-plugins.txt" "$(diff <(printf '%s\n' "$lsp_tpl") <(printf '%s\n' "$lsp_doc") | tr '\n' ' ')"; fi
   lsp_marketplace="${HOME}/.claude/plugins/marketplaces/claude-plugins-official/.claude-plugin/marketplace.json"

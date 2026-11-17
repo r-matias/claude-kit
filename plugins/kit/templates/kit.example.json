@@ -7,7 +7,12 @@
     "build": "dotnet build --nologo -v q",
     "test": "dotnet test --nologo",
     "test_related": "dotnet test --nologo --filter {files}",
-    "lint": "npm run lint --prefix frontend",
+    "lint": {
+      "run": "npx eslint {files}",
+      "files": [
+        "**/*.{ts,tsx}"
+      ]
+    },
     "typecheck": "npx tsc --noEmit -p frontend",
     "smoke": "bash scripts/smoke.sh"
   },
@@ -30,7 +35,8 @@
   ],
   "verify_on_stop": [
     "build",
-    "test_related"
+    "test_related",
+    "lint"
   ],
   "source_globs": [
     "**/*.cs",
@@ -58,6 +64,34 @@
       ],
       "level": "warn",
       "message": "Se o formato da resposta mudou, ajuste os fetch do site."
+    },
+    {
+      "when": [
+        "src/**/*.cs"
+      ],
+      "require": [
+        "tests/**"
+      ],
+      "level": "warn",
+      "message": "Código mudou; se o comportamento mudou, o teste muda junto."
+    }
+  ],
+  "diff_deny": [
+    {
+      "pattern": "@ts-ignore|@ts-nocheck|eslint-disable",
+      "files": [
+        "**/*.{ts,tsx}"
+      ],
+      "message": "Supressão nova. Corrija a causa; se for inevitável, justifique em .claude/kit-skip.",
+      "level": "block"
+    },
+    {
+      "pattern": "#pragma warning disable|SuppressMessage",
+      "files": [
+        "**/*.cs"
+      ],
+      "message": "Supressão nova. Corrija a causa; se for inevitável, justifique em .claude/kit-skip.",
+      "level": "block"
     }
   ],
   "key_parity": [

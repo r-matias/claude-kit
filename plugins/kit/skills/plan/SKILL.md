@@ -11,7 +11,7 @@ allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
 - Formato do PLAN.md: [template.md](template.md). Siga as seções e os campos na ordem; não invente seções.
 - Só tarefas, checkpoints e passos da wave final levam caixa `- [ ]`. Truths, artifacts, tests, behavior e decisões são bullets simples: os hooks contam as caixas para mostrar o progresso.
 - Cada tarefa cabe num diff revisável (ordem de grandeza: até ~5 arquivos, uma ideia).
-- Comandos de `verify` vêm de `.claude/kit.json` (`build`, `test`, `test_related`, `lint`, `typecheck`, `smoke`). Chave ausente: use as que existem e anote a lacuna em Decisões.
+- Comandos de `verify` vêm de `.claude/kit.json` (`build`, `test`, `test_related`, `lint`, `typecheck`, `smoke`). O valor de uma chave é o comando ou um objeto `{ "run", "files" }`, cujo comando é o `run`. Chave ausente: use as que existem e anote a lacuna em Decisões.
 
 ## Lacunas: decidir ou perguntar
 O usuário não revisa planos. Lacuna técnica que a SPEC e os docs não cobrem (nome de coluna, campo interno, parâmetro, flag, estrutura de pastas, nome de módulo ou teste, uso de biblioteca já prevista no projeto) você decide sozinho:

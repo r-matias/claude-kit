@@ -293,9 +293,9 @@ O `push` precisa estar no `notify` (o init já grava assim). Servidor ntfy próp
 - Caminho protegido do projeto (`protected_paths`): a mensagem diz o que fazer em vez de editar, como o comando que regenera o arquivo. Se a proteção estiver errada e o arquivo não é segredo, adicione o caminho em `guards.allow_write` no `.claude/kit.json` (ver [Ajustar o kit ao projeto](#ajustar-o-kit-ao-projeto)).
 - Arquivo de segredo (`.env`, `.env.test`, chave): não tem exceção. Arquivo de exemplo leva um sufixo `.example`, `.sample`, `.template` ou `.dist`.
 
-**O gate não deixa o turno terminar.** Ele mostra numa única mensagem tudo o que falhou: comando de build ou teste, chave de tradução faltando, arquivo acoplado não atualizado. O Claude tenta corrigir e o gate verifica de novo; se ainda falhar, o turno termina com a falha numa mensagem para você, sem a notificação de concluído. Se o comando de verificação estiver errado ou lento demais, ajuste `verify_on_stop` e `commands` no `.claude/kit.json`.
+**O gate não deixa o turno terminar.** Ele mostra numa única mensagem tudo o que falhou: comando de build, teste ou lint (roda todos, mesmo depois de uma falha), chave de tradução faltando, arquivo acoplado não atualizado, padrão proibido numa linha nova. O Claude tenta corrigir e o gate verifica de novo; se ainda falhar, o turno termina com a falha numa mensagem para você, sem a notificação de concluído. Se o comando de verificação estiver errado ou lento demais, ajuste `verify_on_stop` e `commands` no `.claude/kit.json`.
 
-**Regra de acoplamento que não se aplica a esta mudança.** Grave uma linha de justificativa em `.claude/kit-skip` (ex.: `só renomeei uma variável na tela, o manual não muda`). Isso libera só os acoplamentos (`coupled_changes`), não build, testes nem tradução. O arquivo é apagado quando o gate passa e a justificativa fica registrada em `docs/claude-adoption.md` (ou `.claude/kit-skip.log`). Arquivo vazio não libera.
+**Regra de acoplamento que não se aplica a esta mudança.** Grave uma linha de justificativa em `.claude/kit-skip` (ex.: `só renomeei uma variável na tela, o manual não muda`). Isso libera só os acoplamentos (`coupled_changes`) e os padrões proibidos (`diff_deny`), não build, testes nem tradução. O arquivo é apagado quando o gate passa e a justificativa fica registrada em `docs/claude-adoption.md` (ou `.claude/kit-skip.log`). Arquivo vazio não libera.
 
 **"kit: jq não encontrado — instale com <comando> e reabra o Claude Code".** Sem `jq` os guardas bloqueiam toda chamada, de propósito: guarda que não consegue checar não deixa passar. A única exceção é o comando exato de instalação do `jq` da plataforma (`winget install jqlang.jq` no Windows, `brew install jq` no macOS, `sudo apt install jq`, `sudo apt-get install jq`, `sudo dnf install jq` ou `sudo pacman -S jq` no Linux/WSL), sozinho, sem nada junto. A mesma mensagem aparece ao abrir a sessão. Peça ao Claude para rodar o comando, ou rode num terminal, e reabra o Claude Code.
 
@@ -350,14 +350,15 @@ O `/kit:init` gera este arquivo. Todas as chaves são opcionais; chave ausente �
 
 | Chave | Para que serve | Exemplo |
 | --- | --- | --- |
-| `commands` | Comandos do stack: `build`, `test`, `test_related`, `lint`, `typecheck`, `smoke`. `{files}` vira a lista de arquivos alterados | `"test_related": "npx vitest related {files} --run"` |
-| `verify_on_stop` | Quais `commands` o gate roda ao fim do turno, em ordem | `["build", "test_related"]` |
+| `commands` | Comandos do stack: `build`, `test`, `test_related`, `lint`, `typecheck`, `smoke`. `{files}` vira a lista de arquivos alterados. Na forma `{ "run", "files" }`, o gate só roda o comando quando algum alterado casa `files`, e só esses vão para `{files}` | `"lint": { "run": "npx eslint {files}", "files": ["**/*.ts"] }` |
+| `verify_on_stop` | Quais `commands` o gate roda ao fim do turno, em ordem; roda todos e junta as falhas | `["build", "test_related", "lint"]` |
 | `source_globs` | Que arquivos contam como código (só eles disparam o gate) | `["src/**/*.ts"]` |
 | `format` | Formatter por tipo de arquivo, rodado a cada edição | `{ "**/*.py": "ruff format {files}" }` |
 | `protected_paths` | Caminhos que o Claude não edita, com mensagem do que fazer | `{ "glob": "src/generated/**", "message": "Gerado por npm run codegen." }` |
 | `guards` | `allow_write`: caminhos liberados apesar de `protected_paths`; `deny_write`: caminhos extras bloqueados, com `message` opcional | `{ "allow_write": ["src/generated/README.md"] }` |
 | `permissions` | `groups`: grupos de permissão escolhidos no `/kit:init` | `{ "groups": ["segredos", "push"] }` |
 | `coupled_changes` | Arquivos que mudam juntos; `block` barra no fim do turno, `warn` só avisa | `{ "when": ["src/views/**"], "require": ["manual/**"], "message": "Atualize o manual." }` |
+| `diff_deny` | Padrões proibidos nas linhas adicionadas no turno (supressão de lint, teste pulado); código antigo não conta | `{ "pattern": "@ts-ignore", "files": ["**/*.ts"], "message": "Supressão nova." }` |
 | `key_parity` | Arquivos de tradução que precisam ter as mesmas chaves | `{ "files": ["i18n/pt.json", "i18n/en.json"] }` |
 | `plan_dirs` | Pastas extras onde o projeto guarda planos | `[".claude/plans"]` |
 | `inject_plan_on_prompt` | Repete a linha do plano ativo a cada mensagem (custa contexto) | `false` |

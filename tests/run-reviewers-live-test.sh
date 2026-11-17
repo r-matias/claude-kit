@@ -6,14 +6,35 @@
 # Plano acima de plan.max_tasks sem Decisao do usuario sai com [M8]; com a Decisao, aprovado.
 # SPEC com contradicao, modulo reinventado e cache sem gargalo sai com [B4], [M1] e [M3]; a SPEC limpa,
 # aprovado. Drift: implementacao fiel sai "sem divergência"; limite diferente da SPEC sai com [D2].
-# Custa dez sessoes do Claude Code, em paralelo. Uso: tests/run-reviewers-live-test.sh [--keep]
+# Diff com utilitario duplicado, supressao sem justificativa, teste sobre o proprio mock e dependencia
+# nova sai com [M5] a [M8].
+# Custa uma sessao do Claude Code por caso (onze), em paralelo. O filtro roda so os casos cujo nome
+# contem o texto: "diff" calibra so o code-reviewer (tres sessoes); "plano", "spec" e "drift" os demais.
+# Uso: tests/run-reviewers-live-test.sh [--keep] [filtro]
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN="$(cd "$HERE/.." && pwd)/plugins/kit"
 FX="$HERE/reviewers"
 KEEP=0
-[ "${1:-}" = "--keep" ] && KEEP=1
+FILTER=""
+for a in "$@"; do
+  case "$a" in --keep) KEEP=1 ;; *) FILTER="$a" ;; esac
+done
+
+ALL_CASES="plano-ruim plano-limpo plano-grande plano-grande-decidido diff-ruim diff-limpo diff-qualidade spec-ruim spec-limpa drift-limpo drift-ruim"
+CASES=""
+for c in $ALL_CASES; do
+  case "$c" in *"$FILTER"*) CASES="$CASES $c" ;; esac
+done
+CASES="${CASES# }"
+[ -n "$CASES" ] || { echo "nenhum caso casa o filtro '$FILTER'; casos: $ALL_CASES" >&2; exit 1; }
+
+# 0 se o caso esta entre os selecionados pelo filtro.
+want() {
+  case " $CASES " in *" $1 "*) return 0 ;; esac
+  return 1
+}
 
 command -v claude >/dev/null 2>&1 || { echo "claude CLI nao encontrada" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "jq nao encontrado" >&2; exit 1; }
@@ -63,6 +84,19 @@ setup_drift() {
   sed 's/^- \[ \]/- [x]/' "$p" >"$p.tmp" && mv "$p.tmp" "$p"
   git -C "$d" -c core.autocrlf=false add -A
   git -C "$d" -c core.autocrlf=false -c user.name=kit-test -c user.email=kit@test commit -q --amend -m base
+}
+
+# Uso: setup_quality <nome>. Plano limpo com src/erros.js no commit base (o original que o diff
+# duplica) e a tarefa 2 de diffs/qualidade no segundo commit.
+setup_quality() {
+  local d="$W/$1"
+  setup_case "$1" limpo
+  cp -r "$FX/diffs/qualidade-base/." "$d/"
+  git -C "$d" -c core.autocrlf=false add -A
+  git -C "$d" -c core.autocrlf=false -c user.name=kit-test -c user.email=kit@test commit -q --amend -m base
+  cp -r "$FX/diffs/qualidade/." "$d/"
+  git -C "$d" -c core.autocrlf=false add -A
+  git -C "$d" -c core.autocrlf=false -c user.name=kit-test -c user.email=kit@test commit -qm "tarefa 2"
 }
 
 # Uso: setup_spec <nome> <spec>. Troca a SPEC por tests/reviewers/specs/<spec>.md e refaz o commit base.
@@ -170,54 +204,85 @@ SPEC="docs/specs/apelido/SPEC.md"
 PLAN="docs/specs/apelido/PLAN.md"
 PLAN_PROMPT="Chame o subagent kit:plan-reviewer para revisar $PLAN contra $SPEC. Não revise você mesmo e não edite nada. Quando ele responder, repita a resposta dele literalmente, sem comentar."
 
-setup_case plano-ruim ruim
-setup_case plano-limpo limpo
-setup_case diff-ruim limpo ruim
-setup_case diff-limpo limpo limpo
-setup_case plano-grande limpo
-shrink_limit plano-grande
-setup_case plano-grande-decidido limpo
-shrink_limit plano-grande-decidido "- 2026-10-01 · usuário · tamanho: manter num plano só (3 tarefas, 2 waves) — acima do limite de 2 tarefas"
-setup_spec spec-ruim ruim
-setup_case spec-limpa limpo
-setup_drift drift-limpo
-setup_drift drift-ruim ruim
-echo "rodando as dez revisões em $W (alguns minutos)..."
+want plano-ruim && setup_case plano-ruim ruim
+want plano-limpo && setup_case plano-limpo limpo
+want diff-ruim && setup_case diff-ruim limpo ruim
+want diff-limpo && setup_case diff-limpo limpo limpo
+want diff-qualidade && setup_quality diff-qualidade
+want plano-grande && { setup_case plano-grande limpo; shrink_limit plano-grande; }
+want plano-grande-decidido && { setup_case plano-grande-decidido limpo
+  shrink_limit plano-grande-decidido "- 2026-10-01 · usuário · tamanho: manter num plano só (3 tarefas, 2 waves) — acima do limite de 2 tarefas"; }
+want spec-ruim && setup_spec spec-ruim ruim
+want spec-limpa && setup_case spec-limpa limpo
+want drift-limpo && setup_drift drift-limpo
+want drift-ruim && setup_drift drift-ruim ruim
+echo "rodando $(set -- $CASES; echo $#) revisões em $W (alguns minutos): $CASES"
 for c in spec-ruim spec-limpa; do
+  want "$c" || continue
   run_review "$c" "Chame o subagent kit:spec-reviewer para revisar $SPEC. Não revise você mesmo e não edite nada. Quando ele responder, repita a resposta dele literalmente, sem comentar." &
 done
 for c in drift-limpo drift-ruim; do
+  want "$c" || continue
   run_review "$c" "Chame o subagent kit:drift-checker para comparar $SPEC (plano em $PLAN) com o código atual. Não confira você mesmo e não edite nada. Quando ele responder, repita a resposta dele literalmente, sem comentar." &
 done
-for c in plano-ruim plano-limpo plano-grande plano-grande-decidido; do run_review "$c" "$PLAN_PROMPT" & done
-for c in diff-ruim diff-limpo; do
+for c in plano-ruim plano-limpo plano-grande plano-grande-decidido; do
+  want "$c" || continue
+  run_review "$c" "$PLAN_PROMPT" &
+done
+for c in diff-ruim diff-limpo diff-qualidade; do
+  want "$c" || continue
   base="$(git -C "$W/$c" rev-parse HEAD~1 | tr -d '\r')"
   run_review "$c" "Chame o subagent kit:code-reviewer para revisar o diff da tarefa 2 (wave 1) do plano $PLAN, com a SPEC em $SPEC. O diff é \`git diff $base HEAD\` e contém só a tarefa 2; a tarefa 1 fica num diff separado e está fora desta revisão. Não revise você mesmo e não edite nada. Quando ele responder, repita a resposta dele literalmente, sem comentar." &
 done
 wait
 
-echo "plano com defeitos"
-expect_bad "plano ruim" "$(review_text "$W/plano-ruim.jsonl" kit:plan-reviewer)" B1 B2 B5
-echo "plano limpo"
-expect_clean "plano limpo" "$(review_text "$W/plano-limpo.jsonl" kit:plan-reviewer)"
-echo "plano acima de plan.max_tasks sem decisão"
-expect_bad "plano grande" "$(review_text "$W/plano-grande.jsonl" kit:plan-reviewer)" M8
-echo "plano acima de plan.max_tasks com Decisão do usuário"
-expect_clean "plano grande decidido" "$(review_text "$W/plano-grande-decidido.jsonl" kit:plan-reviewer)"
-echo "diff com caso de borda sem teste"
-expect_bad "diff ruim" "$(review_text "$W/diff-ruim.jsonl" kit:code-reviewer)" "M1|B1"
-echo "diff limpo"
-expect_clean "diff limpo" "$(review_text "$W/diff-limpo.jsonl" kit:code-reviewer)"
-echo "spec com contradição, módulo reinventado e cache sem gargalo"
-expect_bad "spec ruim" "$(review_text "$W/spec-ruim.jsonl" kit:spec-reviewer)" B4 M1 M3
-echo "spec limpa"
-expect_clean "spec limpa" "$(review_text "$W/spec-limpa.jsonl" kit:spec-reviewer)"
-echo "drift: implementação fiel à SPEC"
-expect_no_drift "drift limpo" "$(review_text "$W/drift-limpo.jsonl" kit:drift-checker)"
-echo "drift: limite do apelido diferente da SPEC"
-expect_drift "drift ruim" "$(review_text "$W/drift-ruim.jsonl" kit:drift-checker)" D2
+if want plano-ruim; then
+  echo "plano com defeitos"
+  expect_bad "plano ruim" "$(review_text "$W/plano-ruim.jsonl" kit:plan-reviewer)" B1 B2 B5
+fi
+if want plano-limpo; then
+  echo "plano limpo"
+  expect_clean "plano limpo" "$(review_text "$W/plano-limpo.jsonl" kit:plan-reviewer)"
+fi
+if want plano-grande; then
+  echo "plano acima de plan.max_tasks sem decisão"
+  expect_bad "plano grande" "$(review_text "$W/plano-grande.jsonl" kit:plan-reviewer)" M8
+fi
+if want plano-grande-decidido; then
+  echo "plano acima de plan.max_tasks com Decisão do usuário"
+  expect_clean "plano grande decidido" "$(review_text "$W/plano-grande-decidido.jsonl" kit:plan-reviewer)"
+fi
+if want diff-ruim; then
+  echo "diff com caso de borda sem teste"
+  expect_bad "diff ruim" "$(review_text "$W/diff-ruim.jsonl" kit:code-reviewer)" "M1|B1"
+fi
+if want diff-limpo; then
+  echo "diff limpo"
+  expect_clean "diff limpo" "$(review_text "$W/diff-limpo.jsonl" kit:code-reviewer)"
+fi
+if want diff-qualidade; then
+  echo "diff com utilitário duplicado, supressão sem justificativa, teste sobre o mock e dependência nova"
+  # package.json fica fora dos files da tarefa: a dependência pode sair como B4 (fora do escopo), que é mais grave.
+  expect_bad "diff qualidade" "$(review_text "$W/diff-qualidade.jsonl" kit:code-reviewer)" M5 M6 M7 "M8|B4"
+fi
+if want spec-ruim; then
+  echo "spec com contradição, módulo reinventado e cache sem gargalo"
+  expect_bad "spec ruim" "$(review_text "$W/spec-ruim.jsonl" kit:spec-reviewer)" B4 M1 M3
+fi
+if want spec-limpa; then
+  echo "spec limpa"
+  expect_clean "spec limpa" "$(review_text "$W/spec-limpa.jsonl" kit:spec-reviewer)"
+fi
+if want drift-limpo; then
+  echo "drift: implementação fiel à SPEC"
+  expect_no_drift "drift limpo" "$(review_text "$W/drift-limpo.jsonl" kit:drift-checker)"
+fi
+if want drift-ruim; then
+  echo "drift: limite do apelido diferente da SPEC"
+  expect_drift "drift ruim" "$(review_text "$W/drift-ruim.jsonl" kit:drift-checker)" D2
+fi
 
-for c in plano-ruim plano-limpo plano-grande plano-grande-decidido diff-ruim diff-limpo spec-ruim spec-limpa drift-limpo drift-ruim; do
+for c in $CASES; do
   if git -C "$W/$c" diff --quiet HEAD && [ -z "$(git -C "$W/$c" status --porcelain | tr -d '\r')" ]; then ok "$c: nenhum arquivo alterado"; else ko "$c: nenhum arquivo alterado" "$(git -C "$W/$c" status --short | tr '\n' ' ')"; fi
 done
 
