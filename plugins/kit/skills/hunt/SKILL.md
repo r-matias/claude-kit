@@ -13,7 +13,7 @@ allowed-tools: Bash(git status *) Bash(git log *)
 - Nunca entregue ao usuário comando com placeholder (`<...>`, `SEU_X`, `xxx`): ou o valor está configurado e o comando funciona como está, ou pergunte o valor antes (`AskUserQuestion`) e grave no lugar certo (o que não é segredo na config versionada do projeto, carregada pelo script; segredo em `.env`/`.env.test` carregado pelo script, nunca lido por você).
 - Você não edita, cria nem apaga arquivos nesta skill. Só investiga.
 - Toda hipótese precisa de evidência concreta (código, log, saída de comando, commit). Sem evidência, confiança baixa.
-- Comandos vêm de `.claude/kit.json`; não invente comandos do stack.
+- Comandos vêm de `.claude/kit.json`; não invente comandos do stack. Valor na forma objeto `{ "run", "files" }`: o comando é o `run`.
 
 ## Passos
 1. Colete o sintoma: $ARGUMENTS. Se faltar algo, pergunte com `AskUserQuestion` só o que muda a investigação: quando começou, frequência, mensagem de erro ou log, como reproduzir, o que mudou recentemente.

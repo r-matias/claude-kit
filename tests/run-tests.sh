@@ -129,6 +129,12 @@ path_without() {
   printf '%s' "$out"
 }
 
+# Caminho do comando $2 com o PATH $1; vazio e exit 1 se nao for encontrado. Subshell com "hash -r":
+# no bash 3.2, "PATH=... command -v" devolve o caminho lembrado de uma chamada anterior.
+found_in_path() {
+  (PATH="$1"; hash -r; command -v "$2") 2>/dev/null
+}
+
 # PATH dos scripts em cada caso: um "claude" falso responde a versao pedida em fake_claude
 # (padrao 9.9.9). fake_claude "ilegivel" responde sem versao; "ausente" tira o claude do PATH.
 NOCLAUDE_PATH="$(path_without claude)"
@@ -216,7 +222,11 @@ setup_ws() {
   if [ "$has_head0" = "1" ]; then
     local h0 f0
     h0="$(git -C "$ws/sample" rev-parse HEAD 2>/dev/null | tr -d '\r')"
-    while IFS= read -r f0; do [ -n "$f0" ] && sed -i "s/__HEAD0__/$h0/g" "$f0"; done < <(grep -rlF __HEAD0__ "$ws/sample" --exclude-dir=.git 2>/dev/null)
+    # Sem sed -i: no sed do macOS (BSD) o -i exige um argumento.
+    while IFS= read -r f0; do
+      [ -n "$f0" ] || continue
+      sed "s/__HEAD0__/$h0/g" "$f0" >"$f0.tmp" && mv "$f0.tmp" "$f0"
+    done < <(grep -rlF __HEAD0__ "$ws/sample" --exclude-dir=.git 2>/dev/null)
   fi
   local i
   for ((i = 1; i <= n_extra; i++)); do git_q -C "$ws/sample" commit --allow-empty -m "extra $i"; done
@@ -427,8 +437,8 @@ echo "sem jq no PATH"
 if [ -z "$FILTER" ] || [[ "sem jq" == *"$FILTER"* ]]; then
   NOJQ_PATH="$(path_without jq)"
   BASH_BIN="$(command -v bash)"
-  if PATH="$NOJQ_PATH" command -v jq >/dev/null 2>&1; then
-    ko "PATH de teste sem jq" "jq ainda encontrado em $(PATH="$NOJQ_PATH" command -v jq)"
+  if found_in_path "$NOJQ_PATH" jq >/dev/null; then
+    ko "PATH de teste sem jq" "jq ainda encontrado em $(found_in_path "$NOJQ_PATH" jq)"
   else
     case "$TEST_PLATFORM" in windows) JQ_INSTALL="winget install jqlang.jq" ;; macos) JQ_INSTALL="brew install jq" ;; *) JQ_INSTALL="sudo apt install jq" ;; esac
     JQ_MSG="kit: jq não encontrado — instale com $JQ_INSTALL e reabra o Claude Code"
@@ -467,8 +477,8 @@ if [ -z "$FILTER" ] || [[ "sem jq" == *"$FILTER"* ]]; then
     if [ "$?" = "0" ] && [ -z "$out" ]; then ok "session-context.sh --plan-only sem jq não avisa"; else ko "session-context.sh --plan-only sem jq não avisa" "stdout='$out'"; fi
   fi
   NOGIT_PATH="$(path_without git)"
-  if PATH="$NOGIT_PATH" command -v git >/dev/null 2>&1; then
-    ko "PATH de teste sem git" "git ainda encontrado em $(PATH="$NOGIT_PATH" command -v git)"
+  if found_in_path "$NOGIT_PATH" git >/dev/null; then
+    ko "PATH de teste sem git" "git ainda encontrado em $(found_in_path "$NOGIT_PATH" git)"
   else
     ng="$(mktemp -d "$TMP_ALL/nogit.XXXXXX")"
     out="$(jq -cn --arg d "$(native_path "$ng")" '{hook_event_name: "SessionStart", source: "startup", cwd: $d}' |
@@ -1393,6 +1403,25 @@ if [ -z "$FILTER" ] || [[ "guardas" == *"$FILTER"* ]]; then
   out2="$(TMPDIR="$TMP_ALL/temp de Joao~1" "$TBASH" "$SCRIPTS/advise.sh" <<<"$adv_in" 2>>"$TMP_ALL/adv.err")"
   if grep -qF 'Ajuste o site.' <<<"$out1" && [ -z "$out2" ] && [ ! -s "$TMP_ALL/adv.err" ]; then ok "advise: TEMP com espaço e ~ avisa uma vez só, sem erro"
   else ko "advise: TEMP com espaço e ~ avisa uma vez só, sem erro" "1='$out1' 2='$out2' err='$(head -c 300 "$TMP_ALL/adv.err")'"; fi
+
+  # advise com diff_deny warn: a mesma linha deslocada por uma edicao acima nao avisa de novo; uma
+  # segunda linha com o padrao avisa.
+  G="$TMP_ALL/adv-dd"
+  mkdir -p "$G/.claude" "$G/src"
+  printf '%s\n' '{"diff_deny":[{"pattern":"@ts-ignore","files":["**/*.ts"],"level":"warn","message":"Supressão nova."}]}' >"$G/.claude/kit.json"
+  printf 'const a = 1;\n' >"$G/src/a.ts"
+  git_q init "$G"; git_q -C "$G" add -A; git_q -C "$G" commit -m init
+  adv_in="$(jq -cn --arg f "$(native_path "$G/src/a.ts")" --arg d "$(native_path "$G")" \
+    '{hook_event_name: "PostToolUse", session_id: "adv-dd", tool_name: "Edit", tool_input: {file_path: $f}, cwd: $d}')"
+  printf 'const a = 1;\n// @ts-ignore\n' >"$G/src/a.ts"
+  out1="$(TMPDIR="$TMP_ALL" "$TBASH" "$SCRIPTS/advise.sh" <<<"$adv_in" 2>"$TMP_ALL/adv-dd.err")"
+  printf 'const z = 0;\nconst a = 1;\n// @ts-ignore\n' >"$G/src/a.ts"
+  out2="$(TMPDIR="$TMP_ALL" "$TBASH" "$SCRIPTS/advise.sh" <<<"$adv_in" 2>>"$TMP_ALL/adv-dd.err")"
+  printf 'const z = 0;\nconst a = 1;\n// @ts-ignore\nconst b = 2;\n// @ts-ignore\n' >"$G/src/a.ts"
+  out3="$(TMPDIR="$TMP_ALL" "$TBASH" "$SCRIPTS/advise.sh" <<<"$adv_in" 2>>"$TMP_ALL/adv-dd.err")"
+  if grep -qF 'linhas novas: 2"' <<<"$out1" && [ -z "$out2" ] && grep -qF 'linhas novas: 3, 5"' <<<"$out3" && [ ! -s "$TMP_ALL/adv-dd.err" ]; then
+    ok "advise: diff_deny warn não repete a linha deslocada e avisa a segunda"
+  else ko "advise: diff_deny warn não repete a linha deslocada e avisa a segunda" "1='$out1' 2='$out2' 3='$out3' err='$(head -c 300 "$TMP_ALL/adv-dd.err")'"; fi
 
   # verify-gate com 2000 arquivos nao rastreados: uma chamada de kit_kit_roots por pasta e
   # source_globs lido uma vez. Nome com & e apostrofo chega intacto no {files}.

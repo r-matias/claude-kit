@@ -476,8 +476,10 @@ kit_rel() {
 }
 
 kit_quote() {
-  local s="$1"
-  printf "'%s'" "${s//\'/\'\\\'\'}"
+  # Aspa e troca em variaveis: no bash 3.2, barra invertida escrita direto na troca de ${s//a/b}
+  # entre aspas duplas sai literal e o comando quebra em nome com apostrofo.
+  local s="$1" q="'" r="'\\''"
+  printf "'%s'" "${s//$q/$r}"
 }
 
 # Substitui {files} por argumentos ja citados.
@@ -668,8 +670,9 @@ kit_path_batches() {
 }
 
 # Avisos de configuracao do kit.json da raiz e de cada repositorio, um por linha: JSON invalido,
-# chave de verify_on_stop sem comando, verify_on_stop sem source_globs e entrada de "repos" que nao
-# e repositorio git. Uso: kit_config_notes <raiz> [repositorio...]
+# chave de verify_on_stop sem comando, verify_on_stop sem source_globs, comando "lint" fora do
+# verify_on_stop e entrada de "repos" que nao e repositorio git.
+# Uso: kit_config_notes <raiz> [repositorio...]
 kit_config_notes() {
   local root="$1" d f rel k
   for d in "$@"; do
@@ -689,6 +692,10 @@ kit_config_notes() {
         elif ([(.verify_on_stop // [])[] | strings] | length) == ($s | length) then "nenhum comando"
         else "os comandos sem \"files\": " + ($s | join(", ")) end' "$f" 2>/dev/null | tr -d '\r')"
     [ -n "$k" ] && echo "kit: $rel: verify_on_stop sem source_globs; o gate não roda $k"
+    if jq -e "$KIT_JQ_CMD"' ((.commands // {}).lint | cmd_run) != ""
+      and ((.verify_on_stop // []) | if type == "array" then index("lint") == null else true end)' "$f" >/dev/null 2>&1; then
+      echo "kit: $rel: commands tem \"lint\", mas ele não está em verify_on_stop; nenhum passo do kit roda o lint neste projeto (o /kit:init propõe como incluir)"
+    fi
     while IFS= read -r k; do
       [ -n "$k" ] || continue
       [ -e "$d/${k#./}/.git" ] || echo "kit: $rel: repos cita \"$k\", que não é repositório git; ignorado"

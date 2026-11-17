@@ -39,7 +39,9 @@ while [ $# -gt 0 ]; do
     *) echo "uso: map-partition.sh [--root <pasta>] [--status] [--path <subpasta>] [--since [<repo>=]<commit>]..." >&2; exit 2 ;;
   esac
 done
-ROOT="$(cd "$ROOT" 2>/dev/null && { pwd -W 2>/dev/null || pwd; })" || { echo "map-partition: pasta inexistente" >&2; exit 2; }
+# Caminho fisico (pwd -P): o git devolve a raiz com symlink resolvido (/var -> /private/var no
+# macOS) e a comparacao com os repositorios precisa da mesma forma.
+ROOT="$(cd "$ROOT" 2>/dev/null && { pwd -W 2>/dev/null || pwd -P; })" || { echo "map-partition: pasta inexistente" >&2; exit 2; }
 ROOT="$(kit_norm_path "$ROOT")"
 AREA="$(kit_norm_path "$AREA")"
 AREA="${AREA#./}"

@@ -90,8 +90,9 @@ while IFS= read -r root; do
       awk 'NR == FNR { n[NR] = $1; next } { print n[$1] }' "$TMPD/added" - | paste -sd ',' - | sed 's/,/, /g')"
     [ -n "$lines" ] || continue
 
-    # Mesmas linhas ja avisadas nesta sessao nao repetem; linha nova com o padrao avisa de novo.
-    key="$root|diff_deny|$i|$REL|$lines"
+    # Mesmas linhas ja avisadas nesta sessao nao repetem; linha nova com o padrao avisa de novo. A
+    # chave e o texto das linhas, nao o numero: edicao acima delas desloca o numero e nao e novidade.
+    key="$root|diff_deny|$i|$REL|$(grep -E -- "$pattern" "$TMPD/text" 2>/dev/null | cksum)"
     if [ -f "$SEEN" ] && grep -qxF -- "$key" "$SEEN"; then continue; fi
     printf '%s\n' "$key" >>"$SEEN" 2>/dev/null
 

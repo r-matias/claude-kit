@@ -124,10 +124,10 @@ read_lines() {
 # Caminhos de um arquivo (um por linha) citados como no kit_quote, sem um subshell por arquivo.
 # Arquivo apagado nao entra.
 quote_files() {
-  local m out=""
+  local m out="" q="'" r="'\\''"
   while IFS= read -r m; do
     [ -e "$KIT_ROOT/$m" ] || continue
-    out+="'${m//\'/\'\\\'\'}' "
+    out+="'${m//$q/$r}' "
   done <"$1"
   printf '%s' "${out% }"
 }

@@ -13,7 +13,7 @@ allowed-tools: Bash(git status *) Bash(git log *)
 - Nunca entregue ao usuário comando com placeholder (`<...>`, `SEU_X`, `xxx`): ou o valor está configurado e o comando funciona como está, ou pergunte o valor antes (`AskUserQuestion`) e grave no lugar certo (o que não é segredo na config versionada do projeto, carregada pelo script; segredo em `.env`/`.env.test` carregado pelo script, nunca lido por você).
 - Nunca corrija sem antes ter um teste que falha pelo motivo certo.
 - Corrija a causa, nunca silencie o erro (sem try/catch vazio, sem skip de teste, sem afrouxar asserção).
-- Comandos vêm de `.claude/kit.json`; não invente comandos do stack. Chave ausente: diga qual faltou e siga com o que existe.
+- Comandos vêm de `.claude/kit.json`; não invente comandos do stack. Valor na forma objeto `{ "run", "files" }`: o comando é o `run`. Chave ausente: diga qual faltou e siga com o que existe.
 - Diff mínimo: não refatore nem "melhore" código fora do caminho do bug.
 
 ## Passos
