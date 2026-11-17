@@ -3,14 +3,21 @@
 # editado, e regras diff_deny com level "warn" com o padrao numa linha nova do arquivo, viram
 # contexto para o Claude (additionalContext). Nunca bloqueia.
 set -u
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+KIT_HERE="${BASH_SOURCE[0]%/*}"
+[ "$KIT_HERE" != "${BASH_SOURCE[0]}" ] || KIT_HERE="."
+. "$KIT_HERE/lib.sh"
 kit_require_jq
 kit_read_input
 
-FILE="$(kit_norm_path "$(kit_field '.tool_input.file_path')")"
+FILE=""
+CWD=""
+SID=""
+kit_fields FILE '.tool_input.file_path' CWD '.cwd' SID '.session_id' || exit 0
+FILE="${FILE//\\//}"
 [ -n "$FILE" ] || exit 0
-KIT_CEILING="$(kit_cwd)"
-SID="$(kit_field '.session_id')"
+[ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-$PWD}"
+KIT_CEILING="${CWD//\\//}"
+kit_case_insensitive || true
 TMPBASE="${TMPDIR:-${TMP:-/tmp}}"
 SEEN_ID="${SID:-sem-sessao}"
 # So o id da sessao e saneado: o TEMP pode ter espaco ou ~ (C:\Users\RUNNER~1) e precisa ficar intacto.

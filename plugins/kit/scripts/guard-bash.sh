@@ -2,16 +2,26 @@
 # PreToolUse/Bash: nega comandos destrutivos, inclusive dentro de sh -c, bash -c, $() e crases.
 # Compativel com bash 3.2. Qualquer erro inesperado bloqueia (exit 2).
 set -u
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+KIT_HERE="${BASH_SOURCE[0]%/*}"
+[ "$KIT_HERE" != "${BASH_SOURCE[0]}" ] || KIT_HERE="."
+. "$KIT_HERE/lib.sh"
 kit_guard_fail_closed
 kit_require_jq_strict --allow-jq-install
 kit_read_input
-kit_require_input
 
-CMD="$(kit_field '.tool_input.command')"
+# Entrada lida num jq so: o guarda roda a cada comando, com limite de tempo.
+CMD=""
+CWD=""
+if ! kit_fields CMD '.tool_input.command' CWD '.cwd'; then
+  echo "kit: entrada do hook vazia ou ilegível; chamada bloqueada" >&2
+  exit 2
+fi
 [ -n "$CMD" ] || exit 0
 
-CWD="$(kit_cwd)"
+[ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-$PWD}"
+CWD="${CWD//\\//}"
+# No shell principal: os subshells herdam o sistema ja lido.
+kit_case_insensitive || true
 PROJECT="$CWD"
 [ -n "${CLAUDE_PROJECT_DIR:-}" ] && PROJECT="$(kit_norm_path "$CLAUDE_PROJECT_DIR")"
 PROJECT_REAL="$(kit_path_norm "$PROJECT" /)"

@@ -26,7 +26,7 @@ O fluxo inteiro é: **instalar o plugin → `/kit:init` → `/kit:spec`** (e dep
    ```
 
    Pelo terminal: `claude plugin marketplace add r-matias/claude-kit` e `claude plugin install kit@claude-kit`. Se o `/kit:init` não aparecer logo depois, reinicie a sessão.
-2. Abra o Claude Code na raiz do repositório e rode `/kit:init`. Ele mostra tudo o que vai fazer e pede **uma** confirmação; depois faz tudo e termina em `Pronto. Próximo: /kit:spec <ideia>`. É o único comando de configuração que você precisa conhecer.
+2. Abra o Claude Code na raiz do repositório e rode `/kit:init`. Ele mostra tudo o que vai fazer e pede **uma** confirmação; depois faz tudo e termina em `Pronto. Próximo: /kit:spec <ideia>`. É o único comando de configuração que você precisa conhecer. Numa pasta vazia, rode `/kit:init <o que o app faz>`: ele pergunta o mínimo (tipo de app, stack, dados), cria o esqueleto do projeto e segue com a configuração.
 3. Para cada feature: `/kit:spec` → `/clear` → `/kit:plan` → `/kit:execute` (ver [Fluxo do dia a dia](#fluxo-do-dia-a-dia)).
 
 ## O que o `/kit:init` faz
@@ -50,6 +50,7 @@ Na configuração do projeto:
   - `.claude/settings.json`, que liga o plugin e o LSP, libera os comandos do `kit.json`, pergunta antes de instalar dependência e traz os grupos de permissão que você marcar (abaixo);
   - um `CLAUDE.md` curto;
   - as linhas `.claude/state/` e `.claude/*.bak-kit-*` no `.gitignore`.
+- **Pasta vazia, sem código nem manifesto (modo do zero):** o init parte da ideia do app (`/kit:init <o que o app faz>`) e pergunta só o que muda o esqueleto: tipo de app e onde roda, stack (linguagem, framework, teste, lint e format, oferecidos como conjuntos, com um recomendado), dados e integrações obrigatórias. Com o seu "Criar", faz `git init` se precisar e cria o projeto mínimo: manifesto, um ponto de entrada que roda, um teste que passa, linter e formatter, `.gitignore` e README. Confere que build, teste e lint passam e segue como repositório sem configuração (item acima). Nenhuma feature entra aqui, e nada é commitado.
 - **Repositório que já tem `.claude/`, `CLAUDE.md` ou `.mcp.json` (modo adotar):** o init faz o inventário de hooks, skills, agents e rules, aponta sobreposições com o kit, soma ao `.claude/settings.json` o que falta e grava o relatório em `docs/claude-adoption.md`.
 
 ### Permissões: no projeto, você escolhe
@@ -114,7 +115,7 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 
 | Comando | Quando usar | O que gera | Como dispara |
 | --- | --- | --- | --- |
-| `/kit:init` | Uma vez por repositório; de novo para reparar | Máquina pronta, `.claude/kit.json`, `.claude/settings.json`, `CLAUDE.md` (e `docs/claude-adoption.md` no modo adotar, `docs/codemap.md` em projeto grande) | Só manual |
+| `/kit:init` | Uma vez por repositório; de novo para reparar; em pasta vazia, com a ideia do app | Máquina pronta, `.claude/kit.json`, `.claude/settings.json`, `CLAUDE.md` (e `docs/claude-adoption.md` no modo adotar, `docs/codemap.md` em projeto grande, o esqueleto do projeto em pasta vazia) | Só manual |
 | `/kit:spec` | Começo de uma feature sem especificação | `docs/specs/<slug>/SPEC.md` | Manual ou sozinho, quando você descreve uma feature nova |
 | `/kit:plan` | SPEC pronta | `PLAN.md` ao lado da SPEC | Manual ou sozinho, quando há uma SPEC para planejar |
 | `/kit:execute` | Plano pronto | Código e testes; caixas do `PLAN.md` marcadas com evidência | Só manual |
@@ -189,9 +190,9 @@ Sem você chamar nada, em todo projeto com o kit ligado:
 
   O Claude recebe o motivo e procura outro caminho. Os guardas olham só as ferramentas `Bash` e de edição, e o Bash por padrões de comando: apagar por outro interpretador (`python -c`, `node -e`), git destrutivo local (`git checkout -- .`, `git restore .`, `git clean -f`, `git branch -D`) e ler ou escrever `.env` pelo shell não são barrados. A leitura de segredo fica com o grupo `segredos` do `/kit:init`.
 - **Formatação.** Cada arquivo editado passa pelo formatter do projeto, se o `kit.json` declarar um.
-- **Gate de fim de turno.** Se o Claude mexeu em código, os comandos de verificação do projeto (build, testes relacionados) rodam antes de ele encerrar. Falhou: ele recebe o erro e continua corrigindo. O gate também confere regras do projeto, como "mudou a tela, atualize o manual" e "todo texto existe nas 3 línguas".
-- **Avisos.** Regras de acoplamento leves ("se mudou a API, confira o site") viram um lembrete para o Claude na hora da edição, sem bloquear nada.
-- **Contexto da sessão.** No início de cada sessão o Claude recebe a branch, os arquivos alterados e as tarefas pendentes do plano ativo. Antes de uma compactação, o kit salva esse estado e o devolve depois. Se faltar `jq` ou `git`, ou se o Claude Code estiver desatualizado, o aviso aparece aqui, com o comando para corrigir. O mesmo vale para um `docs/codemap.md` muito atrás do código: o aviso sugere `/kit:map --update`.
+- **Gate de fim de turno.** Se o Claude mexeu em código, os comandos de verificação do projeto (build, testes relacionados, lint) rodam antes de ele encerrar. Rodam todos, mesmo depois de uma falha, e as falhas chegam juntas numa mensagem só: ele recebe os erros e continua corrigindo. O gate também confere regras do projeto, como "mudou a tela, atualize o manual", "todo texto existe nas 3 línguas" e "nenhuma supressão de lint nem teste pulado em linha nova" (`diff_deny`, que olha só o que foi adicionado no turno).
+- **Avisos.** Regras leves viram um lembrete para o Claude na hora da edição, sem bloquear nada: acoplamentos ("se mudou a API, confira o site"), código de produção alterado sem teste e padrões de `diff_deny` com `level: "warn"`.
+- **Contexto da sessão.** No início de cada sessão o Claude recebe a branch, os arquivos alterados e as tarefas pendentes do plano ativo. Antes de uma compactação, o kit salva esse estado e o devolve depois. Se faltar `jq` ou `git`, ou se o Claude Code estiver desatualizado, o aviso aparece aqui, com o comando para corrigir. O mesmo vale para um `docs/codemap.md` muito atrás do código (o aviso sugere `/kit:map --update`) e para um `kit.json` com problema: JSON inválido, verificação que cita comando inexistente, ou comando `lint` que ficou fora do gate, caso em que nenhum passo do kit roda o lint.
 
 ## LSP de TypeScript com teto de memória
 
@@ -332,6 +333,8 @@ claude plugin list
 ```
 
 Reinicie a sessão do Claude Code para a nova versão valer e confira o `Version` de `kit@claude-kit` no `claude plugin list` (em todos os escopos listados). Se ele estiver em mais de um escopo, veja [O kit bloqueou, e agora?](#o-kit-bloqueou-e-agora).
+
+Depois de atualizar, rode `/kit:init` de novo em cada projeto (modo reparo): é ele que propõe o que a versão nova trouxe para o `kit.json`. Num projeto configurado antes da 0.9.3, isso inclui o `lint` no gate, os padrões de `diff_deny` e a regra de código sem teste. O revisor de código deixou de rodar lint e teste nessa versão, então sem o reparo um projeto com comando `lint` fora do `verify_on_stop` fica sem lint; o início da sessão avisa. O que mudou em cada versão está no [CHANGELOG.md](CHANGELOG.md).
 
 Desinstalar:
 

@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # PostToolUse/Edit|Write: roda o formatter do primeiro glob de "format" que casar com o arquivo.
 set -u
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+KIT_HERE="${BASH_SOURCE[0]%/*}"
+[ "$KIT_HERE" != "${BASH_SOURCE[0]}" ] || KIT_HERE="."
+. "$KIT_HERE/lib.sh"
 kit_require_jq
 kit_read_input
 
-FILE="$(kit_norm_path "$(kit_field '.tool_input.file_path')")"
+FILE=""
+kit_fields FILE '.tool_input.file_path' || exit 0
+FILE="${FILE//\\//}"
+kit_case_insensitive || true
 [ -n "$FILE" ] && [ -f "$FILE" ] || exit 0
 find_kit_json "$FILE" || exit 0
 

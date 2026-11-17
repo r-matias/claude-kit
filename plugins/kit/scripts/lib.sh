@@ -91,6 +91,33 @@ kit_guard_cfg_ok() {
     and (((.guards // {}).deny_write // []) | type == "array")' "$1" >/dev/null 2>&1
 }
 
+# Le varios campos da entrada do hook com um jq so, cada um na variavel indicada. Como o kit_field:
+# null e false viram vazio, CR sai e as quebras de linha do fim tambem. Retorna 1 se a entrada nao
+# e um objeto JSON. Uso: kit_fields CMD '.tool_input.command' CWD '.cwd'
+kit_fields() {
+  local prog ok="" v n
+  local -a names=()
+  prog='def f: if . == null or . == false then "" elif type == "string" then . else tostring end;
+    if type == "object" then "ok", "\u0000"'
+  while [ $# -ge 2 ]; do
+    names+=("$1")
+    prog+=", ((try ($2) catch null) // null | f), \"\\u0000\""
+    shift 2
+  done
+  prog+=' else empty end'
+  {
+    IFS= read -r -d '' ok
+    for n in ${names[@]+"${names[@]}"}; do
+      v=""
+      IFS= read -r -d '' v
+      v="${v//$'\r'/}"
+      while [ "${v%$'\n'}" != "$v" ]; do v="${v%$'\n'}"; done
+      printf -v "$n" '%s' "$v"
+    done
+  } < <(printf '%s' "$KIT_INPUT" | jq -j "$prog" 2>/dev/null)
+  [ "$ok" = "ok" ]
+}
+
 # Le um campo do JSON de entrada do hook. Uso: kit_field '.tool_input.command'
 kit_field() {
   printf '%s' "$KIT_INPUT" | jq -r "$1 // empty" 2>/dev/null | tr -d '\r'
@@ -123,32 +150,78 @@ kit_path_norm() {
   printf '%s/%s' "$prefix" "${stack[@]+"${stack[*]}"}"
 }
 
-# Sistema pelo uname; sem uname no PATH, pelo $OSTYPE do proprio bash.
-kit_uname() {
-  local u
-  u="$(uname -s 2>/dev/null)"
-  if [ -z "$u" ]; then
+# Os hooks rodam a cada chamada de ferramenta e, no Git Bash, criar um processo custa dezenas de
+# milissegundos. As funcoes "_to" abaixo devolvem o resultado numa variavel, sem $( ) nem programa
+# externo, para os lacos por regra do kit.json nao custarem um processo por item.
+
+# Sistema pelo uname, lido uma vez em KIT_UNAME; sem uname no PATH, pelo $OSTYPE do proprio bash.
+# Chamado no shell principal, os subshells herdam o valor.
+KIT_UNAME=""
+kit_uname_init() {
+  [ -z "$KIT_UNAME" ] || return 0
+  KIT_UNAME="$(uname -s 2>/dev/null)"
+  if [ -z "$KIT_UNAME" ]; then
     case "${OSTYPE:-}" in
-      msys* | cygwin* | win*) u="MINGW" ;;
-      darwin*) u="Darwin" ;;
-      *) u="Linux" ;;
+      msys* | cygwin* | win*) KIT_UNAME="MINGW" ;;
+      darwin*) KIT_UNAME="Darwin" ;;
+      *) KIT_UNAME="Linux" ;;
     esac
   fi
-  printf '%s' "$u"
+}
+
+kit_uname() {
+  kit_uname_init
+  printf '%s' "$KIT_UNAME"
 }
 
 # Verdadeiro em Windows e macOS, onde o sistema de arquivos padrao nao diferencia maiusculas.
 KIT_CI=""
 kit_case_insensitive() {
   if [ -z "$KIT_CI" ]; then
-    case "$(kit_uname)" in MINGW* | MSYS* | CYGWIN* | Darwin) KIT_CI=1 ;; *) KIT_CI=0 ;; esac
+    kit_uname_init
+    case "$KIT_UNAME" in MINGW* | MSYS* | CYGWIN* | Darwin) KIT_CI=1 ;; *) KIT_CI=0 ;; esac
   fi
   [ "$KIT_CI" = "1" ]
 }
 
 # Texto em minusculas onde o sistema de arquivos nao diferencia maiusculas; igual nos demais.
+# Resultado em KIT_FOLDED. Texto so com ASCII e trocado no proprio bash (o 3.2 nao tem ${x,,});
+# com outro byte, vai pelo tr.
+KIT_FOLDED=""
+kit_fold_to() {
+  local i
+  KIT_FOLDED="$1"
+  kit_case_insensitive || return 0
+  case "$1" in *[ABCDEFGHIJKLMNOPQRSTUVWXYZ]*) ;; *[![:ascii:]]*) ;; *) return 0 ;; esac
+  if [ -n "${1//[[:ascii:]]/}" ]; then
+    KIT_FOLDED="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    return 0
+  fi
+  for ((i = 0; i < 26; i++)); do
+    KIT_FOLDED="${KIT_FOLDED//${KIT_ASCII_UPPER:$i:1}/${KIT_ASCII_LOWER:$i:1}}"
+  done
+}
+KIT_ASCII_UPPER="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+KIT_ASCII_LOWER="abcdefghijklmnopqrstuvwxyz"
+
 kit_fold() {
-  if kit_case_insensitive; then printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; else printf '%s' "$1"; fi
+  kit_fold_to "$1"
+  printf '%s' "$KIT_FOLDED"
+}
+
+# Pasta-mae de um caminho ja normalizado com "/", em KIT_PARENT, como o dirname: "/a" -> "/",
+# "C:/a" -> "C:/", nome sem barra -> ".".
+KIT_PARENT=""
+kit_parent_to() {
+  local p="$1"
+  case "$p" in / | [A-Za-z]:/) KIT_PARENT="$p"; return 0 ;; esac
+  p="${p%/}"
+  case "$p" in
+    */*)
+      KIT_PARENT="${p%/*}"
+      case "$KIT_PARENT" in '') KIT_PARENT="/" ;; [A-Za-z]:) KIT_PARENT="$KIT_PARENT/" ;; esac ;;
+    *) KIT_PARENT="." ;;
+  esac
 }
 
 # Guardas: saida inesperada (erro, variavel nao definida) bloqueia com exit 2, nunca libera.
@@ -173,9 +246,10 @@ kit_kit_roots() {
   local start dir parent extended=0
   start="$(kit_norm_path "$1")"
   [ -n "$start" ] || return 0
-  if [ -d "$start" ]; then dir="$start"; else dir="$(dirname "$start")"; fi
+  if [ -d "$start" ]; then dir="$start"; else kit_parent_to "$start"; dir="$KIT_PARENT"; fi
   while [ -n "$dir" ] && [ ! -d "$dir" ]; do
-    parent="$(dirname "$dir")"
+    kit_parent_to "$dir"
+    parent="$KIT_PARENT"
     [ "$parent" = "$dir" ] && return 0
     dir="$parent"
   done
@@ -189,7 +263,8 @@ kit_kit_roots() {
         return 0
       fi
     fi
-    parent="$(dirname "$dir")"
+    kit_parent_to "$dir"
+    parent="$KIT_PARENT"
     if [ "$parent" = "$dir" ] || [ "$parent" = "." ]; then return 0; fi
     dir="$parent"
   done
@@ -376,9 +451,39 @@ kit_guard_deny_entries() {
     else empty end | select(.[0] != "") | @tsv' "$KIT_JSON" 2>/dev/null | tr -d '\r'
 }
 
+# As regras de escrita de um kit.json num jq so, para o guard-files, uma por linha:
+#   OK                              objeto com protected_paths e guards na forma certa
+#   X                               protected_paths ou guards com tipo errado (so esta linha)
+#   D<TAB>glob<TAB>mensagem         guards.deny_write
+#   A<TAB>glob                      guards.allow_write
+#   P<TAB>glob<TAB>write<TAB>msg    protected_paths (write: allow ou deny)
+# Sem saida: o arquivo nao e um objeto JSON. Item sem glob fica de fora. Uso: kit_guard_rules <arquivo>
+kit_guard_rules() {
+  jq -r 'def norm: if type == "string" then gsub("\\\\"; "/") | sub("^(\\./|/)+"; "") else "" end;
+    def text: if type == "string" then . else tostring end;
+    if type != "object" then empty
+    elif (((.protected_paths // []) | type == "array") and ((.guards // {}) | type == "object")
+      and (((.guards // {}).allow_write // []) | type == "array")
+      and (((.guards // {}).deny_write // []) | type == "array")) | not then "X"
+    else "OK",
+      ((.guards.deny_write // [])[]
+        | (if type == "string" then [norm, ""] elif type == "object" then [(.glob | norm), ((.message // "") | text)] else empty end)
+        | select(.[0] != "") | ["D"] + . | @tsv),
+      ((.guards.allow_write // [])[]
+        | (if type == "string" then norm elif type == "object" then (.glob | norm) else empty end)
+        | select(. != "") | ["A", .] | @tsv),
+      ((.protected_paths // [])[]
+        | (if type == "string" then [norm, "allow", ""]
+           elif type == "object" then [(.glob | norm), (if .write == "deny" then "deny" else "allow" end), ((.message // "") | text)]
+           else empty end)
+        | select(.[0] != "") | ["P"] + . | @tsv)
+    end' "$1" 2>/dev/null
+}
+
 # Nome de arquivo de exemplo: termina em .example, .sample, .template ou .dist.
 kit_is_example_name() {
-  case "$(kit_fold "${1##*/}")" in *.example | *.sample | *.template | *.dist) return 0 ;; esac
+  kit_fold_to "${1##*/}"
+  case "$KIT_FOLDED" in *.example | *.sample | *.template | *.dist) return 0 ;; esac
   return 1
 }
 
@@ -397,7 +502,8 @@ kit_glob_broad() {
 # secrets/, keys/). Esses caminhos nao tem excecao em guards.allow_write.
 kit_glob_secret() {
   local g base
-  g="$(kit_fold "${1//\\//}")"
+  kit_fold_to "${1//\\//}"
+  g="$KIT_FOLDED"
   case "/$g/" in */secrets/* | */keys/*) return 0 ;; esac
   base="${g##*/}"
   kit_is_example_name "$base" && return 1
@@ -412,8 +518,9 @@ kit_json_keys() {
   printf '%s\n' "$out" | tr -d '\r' | sed '/^$/d' | LC_ALL=C sort -u
 }
 
-# Converte glob (**, *, ?, {a,b}) em regex ERE ancorada.
-glob_to_regex() {
+# Converte glob (**, *, ?, {a,b}) em regex ERE ancorada, em KIT_GLOB_RE.
+KIT_GLOB_RE=""
+glob_to_regex_to() {
   local g="$1" out="" i=0 c n len=${#1} brace=0
   while [ "$i" -lt "$len" ]; do
     c="${g:$i:1}"
@@ -434,13 +541,19 @@ glob_to_regex() {
     esac
     i=$((i + 1))
   done
-  printf '^%s$' "$out"
+  KIT_GLOB_RE="^$out\$"
+}
+
+glob_to_regex() {
+  glob_to_regex_to "$1"
+  printf '%s' "$KIT_GLOB_RE"
 }
 
 # Uso: glob_match <glob> <caminho-relativo>. Glob sem "/" tambem casa pelo nome do arquivo.
 glob_match() {
   local re
-  re="$(glob_to_regex "$1")"
+  glob_to_regex_to "$1"
+  re="$KIT_GLOB_RE"
   [[ "$2" =~ $re ]] && return 0
   if [[ "$1" != */* ]]; then
     [[ "${2##*/}" =~ $re ]] && return 0
@@ -455,7 +568,8 @@ kit_glob_filter() {
   for g in "$@"; do
     [ -n "$g" ] || continue
     case "$g" in */*) spec+="P " ;; *) spec+="B " ;; esac
-    spec+="$(glob_to_regex "$g")"$'\n'
+    glob_to_regex_to "$g"
+    spec+="$KIT_GLOB_RE"$'\n'
   done
   [ -n "$spec" ] || return 0
   KIT_GLOB_SPEC="$spec" awk 'BEGIN { n = split(ENVIRON["KIT_GLOB_SPEC"], L, "\n")
@@ -529,7 +643,8 @@ kit_claude_version() {
 
 # windows (Git Bash/MSYS no Windows nativo), wsl, macos ou linux.
 kit_platform() {
-  case "$(kit_uname)" in
+  kit_uname_init
+  case "$KIT_UNAME" in
     MINGW* | MSYS* | CYGWIN*) echo windows ;;
     Darwin) echo macos ;;
     Linux)

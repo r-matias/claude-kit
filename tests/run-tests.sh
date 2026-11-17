@@ -1439,6 +1439,25 @@ if [ -z "$FILTER" ] || [[ "guardas" == *"$FILTER"* ]]; then
   else ko "verify-gate: 2002 arquivos, & e apostrofo no {files}" "exit $code, $(wc -l <"$G/out.txt" 2>/dev/null) linhas, $(head -c 300 "$TMP_ALL/big.err")"; fi
   [ "$((t1 - t0))" -le 30 ] && ok "verify-gate: 2002 arquivos em ate 30s ($((t1 - t0))s)" || ko "verify-gate: 2002 arquivos em ate 30s" "$((t1 - t0))s"
 
+  # guard-files com 300 entradas em protected_paths: o casamento por regra nao cria processo, entao
+  # o tempo nao cresce com a lista (no Git Bash, um processo por entrada estourava o limite do hook).
+  G="$(mktemp -d "$TMP_ALL/pp.XXXXXX")"
+  mkdir -p "$G/.claude" "$G/db/migrations" "$G/src"
+  { printf '{"protected_paths":['
+    for f in $(seq 1 300); do [ "$f" -gt 1 ] && printf ','; printf '{"glob":"db/migrations/%04d_*.sql","message":"Migração aplicada."}' "$f"; done
+    printf ']}\n'; } >"$G/.claude/kit.json"
+  printf 'x\n' >"$G/src/a.ts"; printf 'x\n' >"$G/db/migrations/0300_fim.sql"
+  git_q init "$G"
+  pp_in() { jq -cn --arg f "$(native_path "$G/$1")" --arg d "$(native_path "$G")" '{tool_name: "Edit", tool_input: {file_path: $f}, cwd: $d}'; }
+  t0="$(date +%s)"
+  out1="$(pp_in src/a.ts | "$TBASH" "$SCRIPTS/guard-files.sh" 2>&1)"; code=$?
+  out2="$(pp_in db/migrations/0300_fim.sql | "$TBASH" "$SCRIPTS/guard-files.sh" 2>&1)"
+  t1="$(date +%s)"
+  if [ "$code" = "0" ] && [ -z "$out1" ] && jq -e '.hookSpecificOutput.permissionDecision == "deny" and (.hookSpecificOutput.permissionDecisionReason | contains("db/migrations/0300_fim.sql é protegido. Migração aplicada."))' <<<"$out2" >/dev/null 2>&1; then
+    ok "guard-files: 300 protected_paths, libera o que não casa e nega a última entrada"
+  else ko "guard-files: 300 protected_paths, libera o que não casa e nega a última entrada" "exit $code, 1='$(head -c 200 <<<"$out1")' 2='$(head -c 300 <<<"$out2")'"; fi
+  [ "$((t1 - t0))" -le 10 ] && ok "guard-files: 300 protected_paths, duas chamadas em ate 10s ($((t1 - t0))s)" || ko "guard-files: 300 protected_paths, duas chamadas em ate 10s" "$((t1 - t0))s"
+
   # diff_deny com 500 arquivos rastreados alterados: a lista de caminhos passa de 32 mil caracteres
   # (limite da linha de comando do git.exe no Windows) e vai em lotes. Supressao antiga nao bloqueia
   # e a nova sai com o arquivo e a linha certos.
@@ -1565,6 +1584,18 @@ if [ -z "$FILTER" ]; then
     grep -qF 'setup.sh" plans' "$INIT_MD" && grep -qF 'merge-json.sh" --apply' "$INIT_MD"; then
     ok "init: relatório curto termina no /kit:spec, sem tarefa para o usuário"
   else ko "init: relatório curto termina no /kit:spec, sem tarefa para o usuário" "$init_bad"; fi
+  # Modo do zero: o init aponta para o new.md, que entrevista, cria o esqueleto e volta aos passos.
+  NEW_MD="$REPO/plugins/kit/skills/init/new.md"
+  zero_bad=""
+  grep -qF '**modo do zero**' "$INIT_MD" && grep -qF '[new.md](new.md)' "$INIT_MD" || zero_bad+="init:modo "
+  tr -d '\r' <"$INIT_MD" | grep -q '^allowed-tools:.* Bash(git init) ' || zero_bad+="init:git-init "
+  for want in 'AskUserQuestion' 'Criar o esqueleto com isso?' 'Stack, como conjunto' 'git init' 'Nunca escreva número de versão de memória' \
+    'Nenhuma feature do app' 'o kit nunca commita' 'Passos 1 a 12 do SKILL.md'; do
+    grep -qF -- "$want" "$NEW_MD" 2>/dev/null || zero_bad+="new:'$want' "
+  done
+  grep -qF 'modo do zero' "$REPO/README.md" && grep -qF '## Modo do zero' "$REPO/docs/reference.md" || zero_bad+="docs "
+  if [ -z "$zero_bad" ]; then ok "init: modo do zero entrevista, cria o esqueleto sem commit e volta aos passos"
+  else ko "init: modo do zero entrevista, cria o esqueleto sem commit e volta aos passos" "$zero_bad"; fi
   readme_adv="$(awk '/^## Avançado \(opcional\)/ { on = 1; next } on && /^## / { on = 0 } on' "$REPO/README.md")"
   if grep -qF '/run-skill-generator' <<<"$readme_adv" && grep -qF '/verify' <<<"$readme_adv" &&
     [ "$(grep -c 'run-skill-generator' "$REPO/README.md")" = "$(grep -c 'run-skill-generator' <<<"$readme_adv")" ]; then

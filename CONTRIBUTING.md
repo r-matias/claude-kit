@@ -11,7 +11,7 @@ claude-kit/
 ├── plugins/kit/
 │   ├── .claude-plugin/plugin.json
 │   ├── skills/{setup,init,map,spec,plan,execute,epic,fix,hunt,drift}/SKILL.md
-│   ├── skills/init/{adopt.md,stacks.md}  # modo adotar e referência de stacks
+│   ├── skills/init/{adopt.md,new.md,stacks.md}  # modo adotar, modo do zero e referência de stacks
 │   ├── skills/plan/template.md          # formato do PLAN.md
 │   ├── skills/map/output.md             # formato das rules e do codemap gerados
 │   ├── agents/{investigator,code-reviewer,spec-reviewer,plan-reviewer,security-reviewer,drift-checker,test-writer,mapper,map-verifier}.md
@@ -97,6 +97,7 @@ Para testar o plugin ao vivo sem instalar: `claude --plugin-dir ./plugins/kit`.
 
 - Editar o repo `claude-kit`, push; cada máquina atualiza como no README (seção Atualizar e desinstalar). Todos os projetos recebem a mudança; nenhum arquivo é copiado entre repositórios.
 - Mudar a versão em `plugin.json` a cada release ajuda a saber qual versão cada máquina usa.
+- Acrescentar a versão no topo do `CHANGELOG.md`: o que entrou, o que mudou de comportamento e o que foi corrigido, do ponto de vista de quem usa o kit.
 - Antes do commit: `bash tests/run-tests.sh`, `claude plugin validate --strict plugins/kit` e `claude plugin validate --strict .`.
 - Tag anotada `vX.Y.Z` e push de `main` e da tag.
 
