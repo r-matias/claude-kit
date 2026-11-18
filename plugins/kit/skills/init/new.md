@@ -45,5 +45,6 @@ Siga os Passos 1 a 12 do SKILL.md como repositório novo, com estas diferenças.
 
 - **Passo 1:** os manifestos são os que você acabou de criar. As listas do "Estado atual" foram lidas antes do esqueleto e estão vazias.
 - **Passo 7:** o `CLAUDE.md` leva o que foi decidido na entrevista e que o código não mostra: o que o app é, onde roda, as integrações e o motivo do stack. Mesmo limite de linhas.
+- **Passo 8c:** em app com tela, o `ui` entra com o `dev` e a `url` do esqueleto que você criou, e a `.claude/rules/kit-ui.md` registra a biblioteca de componentes escolhida na entrevista. Ainda não há tela de referência: a linha fica de fora.
 - **Passo 11:** não mapeie.
 - **Passo 12:** o relatório começa pelo esqueleto (stack e os comandos de build, teste e lint, com `ok`) e avisa em uma linha que nada foi commitado. A última linha continua a mesma.

@@ -41,8 +41,10 @@ Cada regra tem um id e uma severidade fixa. Todo achado cita o id da regra que e
 - **M7** Lógica nova em camada ou módulo diferente do padrão que o código segue para o mesmo tipo de coisa. Cite o `arquivo:linha` do padrão.
 - **M8** Caso de borda que quem usa ou chama a feature dispara em uso normal e que falta nos Casos de borda: entrada vazia ou duplicada, sem permissão, recurso inexistente, falha de serviço externo (rede, API de terceiro). Cite o item de Escopo que o torna alcançável. Arquivo local ou configuração corrompida não conta.
 - **M9** Objetivo promete um resultado que nenhum item de Escopo entrega e que Fora de escopo não exclui.
+- **M10** Feature com tela (algum item de Escopo descreve o que a pessoa vê ou opera numa interface) sem a seção Telas, ou com tela que não diz o que aparece em vazio, carregando ou erro quando o Escopo torna o estado alcançável: lista que pode vir vazia, dado que vem de rede ou banco, envio que pode falhar. Cite o item de Escopo.
+- **M11** Tela sem ação principal ou sem fluxo (não dá para dizer o que a pessoa faz ali e em que ordem), ou tela com tabela, grade ou mais de uma coluna sem dizer como fica na tela pequena.
 
-Decisão registrada pelo usuário em Decisões (como `tamanho: manter`) não é achado. Tamanho da SPEC também não: é conferido pela skill.
+Decisão registrada pelo usuário em Decisões (como `tamanho: manter`) não é achado. Tamanho da SPEC também não: é conferido pela skill. Em SPEC sem tela, M10 e M11 não se aplicam. Cor, fonte, espaçamento e nome de componente não são achado: seguem o padrão visual do projeto e são papel do plano.
 
 ## Saída
 Depois da paráfrase, um achado por linha:

@@ -17,7 +17,7 @@ Cada regra tem um id e uma severidade fixa. Todo achado cita o id da regra que e
 ### BLOCKER
 - **B1** Tarefa usa algo criado por outra tarefa da mesma wave (fora de ordem, inclusive em `Paralelo:`) ou de uma wave posterior.
 - **B2** Tarefas listadas na linha `Paralelo:` compartilham arquivo em `files`.
-- **B3** Item de Escopo, caso de borda ou Verificação ponta a ponta da SPEC sem truth correspondente. Item de Fora de escopo que virou truth também.
+- **B3** Item de Escopo, caso de borda, estado de tela da seção Telas (vazio, carregando, erro, sucesso) ou Verificação ponta a ponta da SPEC sem truth correspondente. Item de Fora de escopo que virou truth também.
 - **B4** Decisão de produto, escopo fora da SPEC ou decisão cara de reverter (schema público, contrato de API, dependência nova) com origem `kit` em Decisões.
 - **B5** Tarefa com migração ou alteração de dados persistentes sem passo de backup ou rollback na própria tarefa (em `action` ou `behavior`). Citar só em Riscos não conta.
 - **B6** `verify` cita chave que não existe em `commands` do `kit.json`.
@@ -33,8 +33,9 @@ Cada regra tem um id e uma severidade fixa. Todo achado cita o id da regra que e
 - **M6** Tarefa sem algum dos campos `files`, `behavior`, `action`, `verify`, `done` (nessa ordem), ou `done` que não é assertiva testável.
 - **M7** Doc de referência ou arquivo acoplado (`coupled_changes` do `kit.json`) afetado sem tarefa que o atualize.
 - **M8** Plano acima de `plan.max_tasks` tarefas numeradas (padrão 15) ou `plan.max_waves` waves sem contar a wave final (padrão 6), lidos do `kit.json`, sem Decisão do usuário registrada: uma linha de Decisões com origem `usuário` e `tamanho: manter`, no PLAN.md ou na SPEC.md. Cite as contagens e o limite.
+- **M9** Tarefa que cria ou altera tela (arquivo que casa `ui.globs` do `kit.json`) sem linha de `behavior` para um estado da seção Telas que ela implementa, ou sem apontar em `action` a tela, o componente ou os tokens existentes a seguir quando a SPEC cita um Padrão visual.
 
-Também confira o formato que não tem id próprio e reporte como MINOR `[-]`: `behavior` fora da forma `<situação> → <resultado>`, wave sem checkpoint, wave final sem F1 a F3 (ou com F4 sem `smoke` no `kit.json`), linha de Decisões sem data, origem ou motivo.
+Também confira o formato que não tem id próprio e reporte como MINOR `[-]`: `behavior` fora da forma `<situação> → <resultado>`, wave sem checkpoint, wave final sem F1 a F3 (ou com F4 sem `smoke` no `kit.json`), F1 sem `kit:ui-reviewer` em plano com tarefa em `ui.globs`, linha de Decisões sem data, origem ou motivo.
 
 ## Saída
 Um achado por linha:

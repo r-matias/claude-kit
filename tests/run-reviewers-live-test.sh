@@ -8,8 +8,11 @@
 # aprovado. Drift: implementacao fiel sai "sem divergência"; limite diferente da SPEC sai com [D2].
 # Diff com utilitario duplicado, supressao sem justificativa, teste sobre o proprio mock e dependencia
 # nova sai com [M5] a [M8].
-# Custa uma sessao do Claude Code por caso (onze), em paralelo. O filtro roda so os casos cujo nome
-# contem o texto: "diff" calibra so o code-reviewer (tres sessoes); "plano", "spec" e "drift" os demais.
+# Interface: tela com tabela de largura fixa, botao so com icone, data sem contraste e sem estado vazio,
+# capturada de verdade, sai com [B1], [B2], [B3] e [M1]; a tela limpa, aprovado. SPEC de tela sem
+# estados sai com [M10]; a SPEC de tela completa, aprovado. Os casos "tela-ruim" e "tela-limpa" exigem node e um navegador Chromium.
+# Custa uma sessao do Claude Code por caso (quinze), em paralelo. O filtro roda so os casos cujo nome
+# contem o texto: "diff" calibra so o code-reviewer (tres sessoes); "plano", "spec" e "drift" os demais; "tela" roda os quatro casos de interface.
 # Uso: tests/run-reviewers-live-test.sh [--keep] [filtro]
 set -u
 
@@ -22,7 +25,7 @@ for a in "$@"; do
   case "$a" in --keep) KEEP=1 ;; *) FILTER="$a" ;; esac
 done
 
-ALL_CASES="plano-ruim plano-limpo plano-grande plano-grande-decidido diff-ruim diff-limpo diff-qualidade spec-ruim spec-limpa drift-limpo drift-ruim"
+ALL_CASES="plano-ruim plano-limpo plano-grande plano-grande-decidido diff-ruim diff-limpo diff-qualidade spec-ruim spec-limpa spec-tela-ruim spec-tela-limpa drift-limpo drift-ruim tela-ruim tela-limpa"
 CASES=""
 for c in $ALL_CASES; do
   case "$c" in *"$FILTER"*) CASES="$CASES $c" ;; esac
@@ -106,6 +109,40 @@ setup_spec() {
   cp "$FX/specs/$2.md" "$d/docs/specs/apelido/SPEC.md"
   git -C "$d" -c core.autocrlf=false add -A
   git -C "$d" -c core.autocrlf=false -c user.name=kit-test -c user.email=kit@test commit -q --amend -m base
+}
+
+# Uso: setup_ui_spec <nome> [spec]. Projeto com tela (tests/ui/repo), kit.json com "ui" e a SPEC de avisos
+# (ou tests/reviewers/specs/<spec>.md) em docs/specs/avisos.
+setup_ui_spec() {
+  local d="$W/$1"
+  cp -r "$HERE/ui/repo" "$d"
+  mkdir -p "$d/.claude" "$d/docs/specs/avisos"
+  cp "$HERE/ui/kit.json" "$d/.claude/kit.json"
+  if [ -n "${2:-}" ]; then cp "$FX/specs/$2.md" "$d/docs/specs/avisos/SPEC.md"; else cp "$HERE/ui/specs/avisos/SPEC.md" "$d/docs/specs/avisos/SPEC.md"; fi
+  printf '.claude/state/\n' >"$d/.gitignore"
+  git -C "$d" -c init.defaultBranch=main init -q
+  git -C "$d" -c core.autocrlf=false add -A
+  git -C "$d" -c core.autocrlf=false -c user.name=kit-test -c user.email=kit@test commit -qm base
+}
+
+# Uso: setup_ui <nome> <limpa|ruim>. Como setup_ui_spec, mais o plano concluido, a tela implementada
+# por tests/reviewers/ui/<variante> e a captura de verdade em .claude/state/ui/final (ignorada pelo git).
+# Devolve 3 se a maquina nao tem como capturar.
+setup_ui() {
+  local d="$W/$1" code
+  setup_ui_spec "$1"
+  sed 's/^- \[ \]/- [x]/' "$HERE/ui/specs/avisos/PLAN.md" >"$d/docs/specs/avisos/PLAN.md"
+  cp -r "$FX/ui/limpa/." "$d/"
+  if [ "$2" != "limpa" ]; then
+    cp -r "$FX/ui/$2/." "$d/"
+    rm -f "$d/web/avisos.css"
+  fi
+  git -C "$d" -c core.autocrlf=false add -A
+  git -C "$d" -c core.autocrlf=false -c user.name=kit-test -c user.email=kit@test commit -q --amend -m base
+  (cd "$d" && bash "$PLUGIN/scripts/ui.sh" capture --name final --routes "/avisos,/avisos?dados=vazio,/avisos?dados=erro" >"$W/$1.capture" 2>&1)
+  code=$?
+  [ "$code" = "0" ] || [ "$code" = "1" ] || return 3
+  return 0
 }
 
 # Uso: run_review <nome> <prompt>. Grava o transcript em $W/<nome>.jsonl.
@@ -216,10 +253,33 @@ want spec-ruim && setup_spec spec-ruim ruim
 want spec-limpa && setup_case spec-limpa limpo
 want drift-limpo && setup_drift drift-limpo
 want drift-ruim && setup_drift drift-ruim ruim
+want spec-tela-ruim && setup_ui_spec spec-tela-ruim tela-ruim
+want spec-tela-limpa && setup_ui_spec spec-tela-limpa
+UI_SKIP=""
+for c in tela-ruim tela-limpa; do
+  want "$c" || continue
+  if ! setup_ui "$c" "${c#tela-}"; then
+    echo "pulado $c: sem meio de captura nesta máquina ($(tail -n 1 "$W/$c.capture"))"
+    UI_SKIP="$UI_SKIP $c"
+    CASES="$(printf '%s' " $CASES " | sed "s/ $c / /; s/^ //; s/ $//")"
+  fi
+done
 echo "rodando $(set -- $CASES; echo $#) revisões em $W (alguns minutos): $CASES"
 for c in spec-ruim spec-limpa; do
   want "$c" || continue
   run_review "$c" "Chame o subagent kit:spec-reviewer para revisar $SPEC. Não revise você mesmo e não edite nada. Quando ele responder, repita a resposta dele literalmente, sem comentar." &
+done
+UI_SPEC="docs/specs/avisos/SPEC.md"
+UI_PLAN="docs/specs/avisos/PLAN.md"
+for c in spec-tela-ruim spec-tela-limpa; do
+  want "$c" || continue
+  run_review "$c" "Chame o subagent kit:spec-reviewer para revisar $UI_SPEC. Não revise você mesmo e não edite nada. Quando ele responder, repita a resposta dele literalmente, sem comentar." &
+done
+for c in tela-ruim tela-limpa; do
+  want "$c" || continue
+  files="web/avisos.html, web/avisos.js, web/index.html"
+  [ "$c" = "tela-limpa" ] && files="$files, web/avisos.css"
+  run_review "$c" "Chame o subagent kit:ui-reviewer para revisar a tela de avisos. SPEC em $UI_SPEC e plano em $UI_PLAN. Arquivos de interface alterados: $files. Captura em .claude/state/ui/final (report.json e imagens). Não revise você mesmo e não edite nada. Quando ele responder, repita a resposta dele literalmente, sem comentar." &
 done
 for c in drift-limpo drift-ruim; do
   want "$c" || continue
@@ -272,6 +332,22 @@ fi
 if want spec-limpa; then
   echo "spec limpa"
   expect_clean "spec limpa" "$(review_text "$W/spec-limpa.jsonl" kit:spec-reviewer)"
+fi
+if want spec-tela-ruim; then
+  echo "spec de tela sem estados, sem fluxo e sem tela pequena"
+  expect_bad "spec tela ruim" "$(review_text "$W/spec-tela-ruim.jsonl" kit:spec-reviewer)" M10
+fi
+if want spec-tela-limpa; then
+  echo "spec de tela completa"
+  expect_clean "spec tela limpa" "$(review_text "$W/spec-tela-limpa.jsonl" kit:spec-reviewer)"
+fi
+if want tela-ruim; then
+  echo "tela com tabela de largura fixa, botão só com ícone, data sem contraste e sem estado vazio"
+  expect_bad "ui ruim" "$(review_text "$W/tela-ruim.jsonl" kit:ui-reviewer)" B1 B2 B3 M1
+fi
+if want tela-limpa; then
+  echo "tela limpa"
+  expect_clean "ui limpa" "$(review_text "$W/tela-limpa.jsonl" kit:ui-reviewer)"
 fi
 if want drift-limpo; then
   echo "drift: implementação fiel à SPEC"

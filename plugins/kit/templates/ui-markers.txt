@@ -1,0 +1,52 @@
+ext|tsx|
+ext|jsx|
+ext|vue|
+ext|svelte|
+ext|astro|
+ext|html|
+ext|htm|
+ext|cshtml|
+ext|razor|
+ext|erb|
+ext|haml|
+ext|slim|
+ext|blade.php|
+ext|twig|
+ext|hbs|
+ext|ejs|
+ext|pug|
+ext|njk|
+ext|liquid|
+ext|css|
+ext|scss|
+ext|sass|
+ext|less|
+ext|styl|
+ext|xaml|
+ext|axaml|
+arquivo|tailwind.config.*|tailwind
+arquivo|components.json|shadcn
+arquivo|tokens.*|tokens
+arquivo|design-tokens.*|tokens
+arquivo|theme.*|tema
+arquivo|_variables.scss|variáveis
+arquivo|variables.*|variáveis
+dep|tailwindcss|tailwind
+dep|@mui/material|mui
+dep|antd|ant design
+dep|@chakra-ui/react|chakra
+dep|@mantine/core|mantine
+dep|@radix-ui/*|radix
+dep|@headlessui/*|headless ui
+dep|bootstrap|bootstrap
+dep|react-bootstrap|bootstrap
+dep|bulma|bulma
+dep|daisyui|daisyui
+dep|flowbite|flowbite
+dep|vuetify|vuetify
+dep|primevue|primevue
+dep|primereact|primereact
+dep|element-plus|element plus
+dep|quasar|quasar
+dep|@angular/material|angular material
+dep|@storybook/*|storybook

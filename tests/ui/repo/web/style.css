@@ -1,0 +1,17 @@
+@import url("tokens.css");
+
+* { box-sizing: border-box; }
+body { margin: 0; font: var(--fonte); color: var(--cor-texto); background: var(--cor-fundo); }
+.topo { border-bottom: 1px solid var(--cor-borda); padding: var(--espaco-2) var(--espaco-3); }
+.topo a { display: inline-block; padding: var(--espaco-2) var(--espaco-3); color: var(--cor-acao); }
+.topo a[aria-current="page"] { font-weight: 700; }
+.conteudo { max-width: 960px; margin: 0 auto; padding: var(--espaco-3); }
+h1 { font-size: var(--fonte-titulo); margin: 0 0 var(--espaco-3); }
+.cartoes { display: grid; grid-template-columns: 1fr; gap: var(--espaco-3); list-style: none; padding: 0; margin: 0; }
+.cartao { border: 1px solid var(--cor-borda); border-radius: var(--raio); padding: var(--espaco-3); }
+.cartao h2 { font-size: 18px; margin: 0 0 var(--espaco-1); }
+.cartao small { color: var(--cor-suave); font-size: var(--fonte-pequena); }
+.botao { padding: var(--espaco-2) var(--espaco-4); min-height: 44px; border: 0; border-radius: var(--raio); background: var(--cor-acao); color: var(--cor-acao-texto); font: inherit; }
+@media (min-width: 700px) {
+  .cartoes { grid-template-columns: repeat(2, 1fr); }
+}

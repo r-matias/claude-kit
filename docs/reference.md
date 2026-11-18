@@ -51,7 +51,9 @@ Detalhe completo de configuração e comportamento. Para instalar e usar, comece
     "push": { "ntfy_topic_env": "KIT_NTFY_TOPIC", "discord_webhook_env": "KIT_DISCORD_WEBHOOK" } },
   "spec": { "max_scope_items": 8, "max_files": 25 },
   "plan": { "max_tasks": 15, "max_waves": 6 },
-  "map": { "stale_after_commits": 50, "unit_max_files": 150, "unit_max_loc": 20000, "max_agents": 30 }
+  "map": { "stale_after_commits": 50, "unit_max_files": 150, "unit_max_loc": 20000, "max_agents": 30 },
+  "ui": { "globs": ["web/src/**/*.{tsx,css}"], "dev": "npm --prefix web run dev", "url": "http://localhost:5173",
+    "routes": ["/", "/login"], "viewports": ["360x800", "768x1024", "1280x800", "1920x1080"] }
 }
 ```
 
@@ -151,6 +153,21 @@ Limites de tamanho, todos opcionais:
 
 Mais de 2 repositórios tocados também conta como acima do limite no `/kit:spec`. A pergunta é única, com três opções: quebrar em fatias agora (recomendada, com as fatias já sugeridas), manter numa só ou reduzir escopo. Na quebra, você não roda o `/kit:epic`: a própria skill lê o `SKILL.md` dele e segue os passos de gravação (`EPIC.md` e uma SPEC por fatia) na mesma sessão, sem nova entrevista. Manter grava e registra em Decisões `- <data> · usuário · tamanho: manter ... — acima do limite`; o `/kit:plan` e o `kit:plan-reviewer` (regra M8) aceitam essa linha na SPEC.md ou no PLAN.md.
 
+### `ui`
+
+Só em projeto com tela. Ausente, nenhum passo de interface roda; `false` registra que o `/kit:init` propôs e o usuário recusou.
+
+| Chave | Padrão | Efeito |
+| --- | --- | --- |
+| `globs` | obrigatória | Arquivos de tela, componente e estilo. Tarefa, wave ou plano que toca um deles conta como de interface |
+| `dev` | sem | Comando que sobe o app. A captura só o roda se `url` não responde, e derruba o que subiu |
+| `url` | sem | Endereço do app. Sem `dev`, o app precisa já estar rodando |
+| `routes` | `["/"]` | Rotas capturadas quando a SPEC não lista telas |
+| `viewports` | `360x800`, `768x1024`, `1280x800`, `1920x1080` | Tamanhos das imagens, `<largura>x<altura>`. A sondagem percorre mais larguras entre eles |
+| `screenshot` | sem | Comando do projeto que grava a imagem da tela em `{out}` (aceita `{url}`, `{width}` e `{height}`). Com ele a captura é só esse comando, sem navegador e sem sondagem. Para tela que não abre em navegador |
+
+`setup.sh guards` aponta `ui` que não é objeto nem `false`, `ui` sem `globs`, lista ou texto com tipo errado, `viewports` fora de `<largura>x<altura>`, `url` sem `http://` ou `https://`, `dev` sem `url` e `screenshot` sem `{out}`.
+
 ### `map`
 
 Limites do `/kit:map`, todos opcionais, lidos do `kit.json` da pasta da sessão:
@@ -165,7 +182,7 @@ Limites do `/kit:map`, todos opcionais, lidos do `kit.json` da pasta da sessão:
 
 ## Init, setup e map
 
-O kit nunca lê para propor nem grava o settings do usuário (`~/.claude/settings.json` ou o de `CLAUDE_CONFIG_DIR`), em nenhum fluxo. O `/kit:setup` só verifica (`setup.sh check`/`status`: Claude Code mínimo, `git`, `bash`, `jq`, `bwrap`/`socat` no Linux/WSL2, plataforma, aviso de sandbox e o marketplace `claude-kit` registrado). O `/kit:init` é a porta de entrada; em pasta vazia ele primeiro cria o esqueleto do projeto ([Modo do zero](#modo-do-zero)). Ele roda `scripts/setup.sh status` e põe o comando de instalação de cada dependência que falta na confirmação. Depois configura o projeto (novo, adotar ou reparo), detecta o plugin LSP com `setup.sh lsp` (oficial, menos Node/TS, que usa o `ts-lsp@claude-kit` com teto de memória; ver README, seção "LSP de TypeScript com teto de memória") e junta tudo numa confirmação única (`AskUserQuestion` com a gravação, os grupos de permissão em `multiSelect` e as decisões que são do usuário). Habilitar o kit num projeto é o equivalente à instalação `--scope project`: `enabledPlugins` e `extraKnownMarketplaces` no `.claude/settings.json` do projeto.
+O kit nunca grava o settings do usuário (`~/.claude/settings.json` ou o de `CLAUDE_CONFIG_DIR`), em nenhum fluxo, e só lê dele os alertas que já existem (`setup.sh alerts`). O `/kit:setup` só verifica (`setup.sh check`/`status`: Claude Code mínimo, `git`, `bash`, `jq`, `bwrap`/`socat` no Linux/WSL2, plataforma, aviso de sandbox e o marketplace `claude-kit` registrado). O `/kit:init` é a porta de entrada; em pasta vazia ele primeiro cria o esqueleto do projeto ([Modo do zero](#modo-do-zero)). Ele roda `scripts/setup.sh status` e põe o comando de instalação de cada dependência que falta na confirmação. Depois configura o projeto (novo, adotar ou reparo), detecta o plugin LSP com `setup.sh lsp` (oficial, menos Node/TS, que usa o `ts-lsp@claude-kit` com teto de memória; ver README, seção "LSP de TypeScript com teto de memória") em projeto com tela propõe o `ui` e a rule `.claude/rules/kit-ui.md`, que o reparo recria ou atualiza quando o `ui.sh status` diz `rule: ausente` ou `rule: desatualizada` ([Interface](#interface)), e junta tudo numa confirmação única (`AskUserQuestion` com a gravação, os grupos de permissão em `multiSelect` e as decisões que são do usuário). Habilitar o kit num projeto é o equivalente à instalação `--scope project`: `enabledPlugins` e `extraKnownMarketplaces` no `.claude/settings.json` do projeto.
 
 **Grupos de permissão** (`templates/project-permissions.json`). `setup.sh groups` lista os grupos desta plataforma (`<id><TAB><rótulo> — <descrição>`): `segredos` (Read de `.env`, `.env.local`, `.env.*.local`, `.env.test`, `.env.production`, `.env.development`, `.env.staging`, `**/*.pem`, `**/*.key`, `**/secrets/**`, `~/.ssh/**`, `~/.aws/**`, `~/.kube/**`, `~/.git-credentials`, `~/.npmrc`, `~/.config/gh/**`, `~/.docker/config.json`; nomes explícitos, nunca `.env.*`, que bloquearia a leitura de `.env*.example` sem exceção possível em deny), `git-destrutivo` (`push --force`/`-f`, `reset --hard`, `clean -fdx`), `push` (ask de `git push`), `curl-wget` (deny; só oferecido sem uso detectado pelo `inventory.sh --net` nem no `commands.smoke`), `powershell` (só Windows nativo) e `sandbox` (só macOS e Linux/WSL2 com `bwrap` e `socat`: `enabled`, `failIfUnavailable: true`, credenciais negadas e ask de `dangerouslyDisableSandbox`). `setup.sh permissions <id,id,...> <proposta>` acrescenta à proposta só os grupos marcados, pelo mesmo merge aditivo (`-` é nenhum; grupo fora da plataforma vira `fora: <id>`; id desconhecido sai com 2). A escolha fica em `permissions.groups` do `kit.json`; no reparo, `setup.sh permissions --kit .claude/kit.json <proposta>` usa só esses ids, então grupo desmarcado antes não volta (sem a chave, exit 3 e o init pergunta).
 
@@ -189,16 +206,17 @@ O `/kit:plan` não pede revisão do plano. Lacuna técnica (nome de campo, parâ
 
 ### Severidade dos revisores
 
-O `kit:spec-reviewer`, o `kit:plan-reviewer`, o `kit:code-reviewer` e o `kit:security-reviewer` não classificam no julgamento: cada regra tem um id com severidade fixa, todo achado cita o id (`BLOCKER [B1] — tarefa 3, wave 1 — ...`) e herda a severidade dele. É proibido rebaixar; na dúvida entre dois ids vale o mais grave; MINOR (`[-]`) é só o que não casa com nenhum id (redação, organização, melhoria opcional). A última linha da resposta é `aprovado` ou `reprovado` (qualquer BLOCKER ou MAJOR). O `/kit:plan` e o `/kit:execute` corrigem todo BLOCKER e MAJOR e chamam de novo até `aprovado`.
+O `kit:spec-reviewer`, o `kit:plan-reviewer`, o `kit:code-reviewer`, o `kit:security-reviewer` e o `kit:ui-reviewer` não classificam no julgamento: cada regra tem um id com severidade fixa, todo achado cita o id (`BLOCKER [B1] — tarefa 3, wave 1 — ...`) e herda a severidade dele. É proibido rebaixar; na dúvida entre dois ids vale o mais grave; MINOR (`[-]`) é só o que não casa com nenhum id (redação, organização, melhoria opcional). A última linha da resposta é `aprovado` ou `reprovado` (qualquer BLOCKER ou MAJOR). O `/kit:plan` e o `/kit:execute` corrigem todo BLOCKER e MAJOR e chamam de novo até `aprovado`.
 
 | Revisor | BLOCKER | MAJOR |
 | --- | --- | --- |
-| `spec-reviewer` | B1 Objetivo ausente ou sem problema e resultado · B2 item de Escopo ou caso de borda com duas leituras para o usuário · B3 Verificação ponta a ponta ausente ou não observável · B4 contradição interna · B5 contrato que conflita com o código sem dizer que muda | M1 cria o que o código já tem · M2 escopo especulativo · M3 otimização sem gargalo citado · M4 termo do projeto sem definição · M5 pré-requisito não declarado · M6 SPEC trata como existente o que não existe · M7 lógica fora da camada do padrão · M8 caso de borda de uso normal ausente · M9 Objetivo promete o que o Escopo não entrega nem exclui |
-| `plan-reviewer` | B1 tarefa usa algo da mesma wave ou de wave posterior · B2 tarefas de `Paralelo:` com arquivo em comum · B3 Escopo, caso de borda ou Verificação ponta a ponta sem truth · B4 decisão de produto, fora da SPEC ou cara de reverter com origem `kit` · B5 migração ou alteração de dados persistentes sem backup ou rollback na própria tarefa · B6 `verify` com chave fora do `kit.json` · B7 Interfaces divergem da SPEC · B8 caixa `- [ ]` fora de tarefa, checkpoint ou wave final | M1 truth sem teste ou artifact fora de `files` · M2 caso de borda sem behavior/teste · M3 behavior só manual quando dá para automatizar · M4 molde `arquivo:linha` inexistente · M5 tarefa grande demais · M6 tarefa sem um dos campos ou `done` não testável · M7 doc de referência ou `coupled_changes` afetado sem tarefa · M8 plano acima de `plan.max_tasks`/`max_waves` sem Decisão do usuário |
+| `spec-reviewer` | B1 Objetivo ausente ou sem problema e resultado · B2 item de Escopo ou caso de borda com duas leituras para o usuário · B3 Verificação ponta a ponta ausente ou não observável · B4 contradição interna · B5 contrato que conflita com o código sem dizer que muda | M1 cria o que o código já tem · M2 escopo especulativo · M3 otimização sem gargalo citado · M4 termo do projeto sem definição · M5 pré-requisito não declarado · M6 SPEC trata como existente o que não existe · M7 lógica fora da camada do padrão · M8 caso de borda de uso normal ausente · M9 Objetivo promete o que o Escopo não entrega nem exclui · M10 feature com tela sem a seção Telas ou sem vazio, carregando ou erro alcançável · M11 tela sem ação principal ou fluxo, ou sem dizer como fica na tela pequena |
+| `plan-reviewer` | B1 tarefa usa algo da mesma wave ou de wave posterior · B2 tarefas de `Paralelo:` com arquivo em comum · B3 Escopo, caso de borda, estado de tela ou Verificação ponta a ponta sem truth · B4 decisão de produto, fora da SPEC ou cara de reverter com origem `kit` · B5 migração ou alteração de dados persistentes sem backup ou rollback na própria tarefa · B6 `verify` com chave fora do `kit.json` · B7 Interfaces divergem da SPEC · B8 caixa `- [ ]` fora de tarefa, checkpoint ou wave final | M1 truth sem teste ou artifact fora de `files` · M2 caso de borda sem behavior/teste · M3 behavior só manual quando dá para automatizar · M4 molde `arquivo:linha` inexistente · M5 tarefa grande demais · M6 tarefa sem um dos campos ou `done` não testável · M7 doc de referência ou `coupled_changes` afetado sem tarefa · M8 plano acima de `plan.max_tasks`/`max_waves` sem Decisão do usuário · M9 tarefa de tela sem behavior de estado ou sem o molde existente em `action` |
 | `code-reviewer` | B1 requisito da tarefa/SPEC não implementado · B2 segredo exposto ou entrada não validada em fronteira · B3 teste quebrado, removido ou enfraquecido · B4 mudança fora do escopo que altera comportamento · B5 contrato de Interfaces alterado sem registro em Decisões | M1 caso de borda sem teste · M2 erro engolido ou sem tratamento · M3 arquivo acoplado (`coupled_changes`/`key_parity`) não atualizado · M4 `done` marcado sem evidência · M5 duplica o que já existe (com o `arquivo:linha` do original) · M6 supressão nova sem justificativa na mesma linha · M7 teste que não falharia sem a implementação · M8 dependência nova fora do plano e da SPEC |
 | `security-reviewer` | B1 injeção com entrada externa · B2 path traversal ou SSRF · B3 operação sem checagem de permissão ou IDOR · B4 segredo no código | M1 dado sensível em log ou resposta · M2 stack trace exposto · M3 validação de entrada incompleta sem caminho de injeção |
+| `ui-reviewer` | B1 tela, estado ou passo da seção Telas ausente · B2 layout quebrado em algum tamanho · B3 controle sem nome acessível ou só de mouse | M1 contraste · M2 alvo de toque · M3 valor solto onde há token ou componente · M4 tela que destoa das existentes · M5 hierarquia e ação principal · M6 retorno ausente · M7 tela pequena mal resolvida · M8 estrutura (alt, rótulo, títulos, `lang`, viewport, foco) · M9 erro de console, requisição ou rota |
 
-O `tests/run-reviewers-live-test.sh` calibra os revisores com uma SPEC (contradição, módulo reinventado e cache sem gargalo: `B4`, `M1`, `M3`), um plano e um diff com defeitos plantados (precisam sair com o id certo e `reprovado`), um diff com os defeitos de qualidade do `code-reviewer` (utilitário duplicado, supressão sem justificativa, teste sobre o próprio mock e dependência nova: `M5` a `M8`) e um plano e um diff limpos (precisam sair `aprovado`); o plano limpo com `plan.max_tasks` baixo precisa sair com `MAJOR [M8]`, e com a Decisão `tamanho: manter` do usuário, `aprovado`. O mesmo teste confere o `kit:drift-checker`: a feature implementada fiel à SPEC sai `sem divergência`, e com o limite do apelido trocado sai `DIVERGÊNCIA [D2]`.
+O `tests/run-reviewers-live-test.sh` calibra os revisores com uma SPEC (contradição, módulo reinventado e cache sem gargalo: `B4`, `M1`, `M3`), um plano e um diff com defeitos plantados (precisam sair com o id certo e `reprovado`), um diff com os defeitos de qualidade do `code-reviewer` (utilitário duplicado, supressão sem justificativa, teste sobre o próprio mock e dependência nova: `M5` a `M8`) e um plano e um diff limpos (precisam sair `aprovado`); o plano limpo com `plan.max_tasks` baixo precisa sair com `MAJOR [M8]`, e com a Decisão `tamanho: manter` do usuário, `aprovado`. O mesmo teste confere o `kit:drift-checker`: a feature implementada fiel à SPEC sai `sem divergência`, e com o limite do apelido trocado sai `DIVERGÊNCIA [D2]`. E o `kit:ui-reviewer`, com capturas de verdade de uma tela com defeitos plantados (`B2`, `B3`, `M1`) e de uma tela limpa, e a SPEC de tela sem estados (`M10`).
 
 O `kit:spec-reviewer` começa parafraseando o que a SPEC propõe e como o sistema funciona segundo ela; se não consegue parafrasear o Objetivo, é B1. Ele lê o CLAUDE.md e o código (Read, Grep, Glob), mas não a conversa: o leitor sem contexto é da entrevista, não do projeto. M1 e M7 só valem com o `arquivo:linha` do que já existe. Lacuna técnica que o `/kit:plan` decide sozinho (unidade de contagem, trim, formato interno, erro de arquivo local) é no máximo MINOR: o revisor julga se a SPEC basta para planejar sem adivinhar a intenção do usuário, não se é perfeita. Achado cuja correção é escolha de produto sai marcado `(decisão de produto)`, e o `/kit:spec` pergunta ao usuário em vez de decidir.
 
@@ -208,6 +226,80 @@ O `/kit:drift` confere só SPECs com `PLAN.md` sem nenhuma caixa `- [ ]` (ou a S
 O PLAN.md ([template](../plugins/kit/skills/plan/template.md)) é derivado de trás para frente: `must_haves` no topo (truths verificáveis, artifacts com o que cada arquivo provê, tests com o que cada teste cobre), depois `Interfaces` com assinaturas, rotas, schemas e códigos de erro exatos. As tarefas ficam agrupadas em waves por dependência, com a linha `Paralelo:` dizendo quais podem rodar ao mesmo tempo, e cada uma tem `files`, `behavior` (cada linha vira teste), `action` (com o molde `arquivo:linha`), `verify` (chave do `kit.json`) e `done` (assertiva testável). Toda wave termina num checkpoint. A wave final é fixa: revisão pelo `kit:code-reviewer` e pelo `kit:security-reviewer`, correção de BLOCKER/MAJOR com nova revisão, verificação ponta a ponta da SPEC e `smoke` se o `kit.json` tiver. Só tarefas, checkpoints e passos da wave final levam caixa `- [ ]`, que é o que os hooks contam como progresso.
 O `/kit:execute` segue as waves e só marca `[x]` com o `done` comprovado. No início de cada wave grava `Base: <hash>` no PLAN.md (`scripts/wave-base.sh`: uma árvore git do estado da pasta, sem commit e sem mexer no index; cada chamada deixa alguns objetos inalcançáveis no `.git`, que o `git gc` automático recolhe). Antes de disparar as tarefas da linha `Paralelo:`, confere que os `files` são disjuntos: se forem, delega cada uma a um subagent `general-purpose`, todas na mesma mensagem, com o bloco fixo de `skills/execute/subagent-rules.md` no prompt (ler com Read, buscar com Grep/Glob, Bash só para git e comandos do `kit.json`, um comando por chamada sem `&&`, `;` ou `|`, sem `cd <repo>;`, nenhum comando com placeholder); se houver interseção, roda em sequência e registra em Decisões. O checkpoint só começa quando todas voltaram: re-roda os `verify` da wave, confere os `done`, chama o `kit:code-reviewer` sobre o diff da wave (`git diff <base> <agora>`) e corrige BLOCKER/MAJOR com nova revisão, e avalia o contexto: acima de ~70%, para e recomenda `/compact` seguido de `/kit:execute`, que retoma da próxima caixa. Plano no formato antigo (sem waves) roda tarefa a tarefa.
 O `/kit:execute` segue a mesma regra para decisões que surgem na execução e também para antes de ação irreversível (deploy, push, chamada a serviço externo real, migração em banco real).
+
+## Interface
+
+Vale em projeto com `ui.globs` no `kit.json`. O `/kit:init` propõe a chave quando o `ui.sh status` acha arquivo de interface.
+
+### `ui.sh status`
+
+Uma linha por item, só leitura:
+
+- `ui: <N> arquivos de interface (<ext> <n>, ...)`, `ui globs:` e `ui pastas:`, pelas extensões de `templates/ui-markers.txt` (fora `node_modules`, `dist`, `build`, `vendor`, testes e stories);
+- `ui design:` com biblioteca de componentes, tema e tokens achados pelo nome do arquivo (só em arquivo de estilo, de código de tela, JSON ou YAML; teste e story não contam) ou pelas dependências do `package.json`;
+- `node:` e `navegador:`, o que a captura do kit precisa (`node` 16 ou mais novo e Chrome, Edge, Chromium ou o Chromium do Playwright);
+- `captura: comando | kit | nenhuma`;
+- `rule:`, só com `ui.globs` no `kit.json`, o estado da `.claude/rules/kit-ui.md`: `ok`, `ausente`, `desatualizada — <motivo>` (cabeçalho `kit:ui` de versão menor que a do template, bloco de regras diferente do `ui-rules.md` atual, ou `paths:` sem um glob de `ui.globs`) ou `do projeto` (arquivo sem o cabeçalho do kit). É o que o modo reparo do `/kit:init` usa para criar ou atualizar a rule.
+
+O `ui.sh` não lê nem grava settings, do usuário ou do projeto.
+
+### `ui.sh capture`
+
+```text
+ui.sh capture [--kit <kit.json>] [--name <nome>] [--routes <a,b>] [--probe-only] [--tiles N]
+              [--steps <json | arquivo.json>] [--attach <http://host:porta> [--match <trecho da url>]]
+              [--out <pasta>]
+```
+
+`--name` vira a pasta da captura: começa por letra ou número. Rota é um caminho do app ou um endereço `http(s)`.
+
+1. **App.** Se `ui.url` responde, usa como está. Se a porta já está em uso mas demora a responder, espera por ela (até `KIT_UI_WAIT_S`) sem subir outro app. Senão roda `ui.dev` com `bash -c` na raiz do projeto, espera até 120 s pelo endereço (`KIT_UI_WAIT_S`) e, no fim, derruba o que subiu. Comando que termina antes de responder, ou endereço que não responde, sai com 4 e as últimas linhas do log.
+2. **Navegador.** Chromium headless com perfil temporário, controlado por pipe (sem porta aberta). No Linux, se não inicia, tenta de novo com `--no-sandbox`. `KIT_UI_BROWSER` aponta outro executável. Comando sem resposta do navegador em 60 s (`KIT_UI_REPLY_S`) interrompe aquela tela, e a próxima abre em aba nova.
+3. **Tamanhos.** Em cada tamanho de `ui.viewports` a página é recarregada, passa pela sondagem completa e é fotografada; página mais alta que a tela sai em até 3 partes (`--tiles`, no máximo 6), e o que ficou de fora vira aviso. Em app com o corpo fixo, as partes rolam o contêiner que ocupa a maior parte da tela. Abaixo de 768px a emulação é de celular.
+4. **Larguras.** Depois percorre, sem recarregar, as larguras padrão (320, 360, 390, 414, 480, 600, 768, 820, 1024, 1280, 1366, 1440, 1536 e 1920) e, para cada ponto de quebra de largura do CSS da página, um pixel antes, o ponto e um depois. Em cada uma mede rolagem horizontal e alvo de toque. Rolagem horizontal vista no redimensionamento é conferida recarregando a página em cada largura suspeita (até 90s por tela); a que some com a recarga sai do relatório. Com `overflow-x` oculto no `html` ou no `body` a página não rola: elemento que começa dentro da tela e passa da borda sai como `conferir [B2] corte-horizontal`, e o que fica inteiro fora da tela (menu fechado) não conta.
+5. **Tema escuro.** Se o CSS tem `prefers-color-scheme: dark`, o menor e o maior tamanho são abertos de novo no escuro, com imagem e medição de contraste. Sem a media query, a captura procura nos seletores do CSS o tema ligado por classe ou atributo (`.dark`, `.dark-mode`, `.dark-theme`, `.theme-dark`, `[data-theme=dark]`, `[data-bs-theme=dark]`, `[data-mode=dark]` e os de MUI, Mantine e Joy), aplica no `html` e no `body` e mede: como quem ligou o tema foi a captura, o contraste sai como `conferir`, e o resumo diz por onde ligou. `.dark` grudada em outra classe (`.cartao.dark`) é variante de componente e não conta. O resto da captura força o tema claro, para o resultado não depender da máquina.
+6. **Saída.** Imagens e `report.json` em `.claude/state/ui/<nome>/` (pasta que o `/kit:init` põe no `.gitignore`) e um resumo em texto. Exit 0 sem achado, 1 com achado, 2 uso ou `ui` inválido, 3 sem meio de captura (sem `node`, sem navegador), 4 app não respondeu, 5 captura incompleta. Tela que não foi sondada por inteiro (tempo esgotado, sondagem que falhou, erro no meio da captura) sai com `incomplete` no `report.json` e a linha `incompleta:` no resumo, e conta em `totals.incomplete`; o relatório das outras telas sai do mesmo jeito. Rota que redireciona ganha `final_url` e um aviso; diálogo (`alert`, `confirm`) aberto na carga é fechado e vira aviso. Rotas diferentes que dariam o mesmo nome de arquivo ganham sufixo (`-2`). App que já responde em `ui.url`, ou que só ocupa a porta e demora a responder, é usado como está e nunca é derrubado; com `--out`, só saem da pasta os arquivos que o `report.json` anterior lista.
+
+**Passos (`--steps`).** Tela atrás de login, clique ou campo preenchido é capturada com os passos que levam até ela, em JSON na linha de comando ou num arquivo. Uma lista de passos é refeita depois de cada carga da rota (em cada tamanho, na conferência de rolagem e no tema escuro); o objeto `{ "setup": [...], "steps": [...] }` acrescenta o preparo, que roda uma vez antes da primeira rota (login, dado de teste).
+
+| Passo | O que faz |
+| --- | --- |
+| `{"goto": "<rota>"}` | Abre a rota (caminho do app ou endereço `http(s)`) |
+| `{"click": "<seletor>"}` | Clica no centro do elemento, com eventos de mouse de verdade |
+| `{"fill": "<seletor>", "value": "<texto>"}` | Preenche campo, `select` ou `contenteditable` e dispara `input` e `change`; seletor de `<label>` leva ao campo dela |
+| `{"press": "<tecla>"}` | Uma letra ou `Enter`, `Tab`, `Escape`, `Backspace`, `Delete`, `Space`, `Home`, `End`, `PageUp`, `PageDown` e as setas (`ArrowUp`...) |
+| `{"hover": "<seletor>"}` | Leva o mouse até o elemento |
+| `{"wait": "<seletor>"}` ou `{"wait": <ms>}` | Espera o elemento aparecer, ou um tempo |
+| `{"js": "<código>"}` | Roda o código na página (aceita `await`) |
+
+Seletor é CSS ou `text=<texto visível>`: entre os elementos com aquele texto vale primeiro o que serve para a ação (controle clicável em `click`, campo ou rótulo em `fill`). Cada passo espera o elemento por até 10 s (`"timeout": <ms>`, no máximo 60 s) e, depois de agir, espera navegação, rede e desenho assentarem. `${NOME}` em `value` é trocado pela variável de ambiente `NOME`; sem ela a captura sai com 2, o valor só é digitado em página da mesma origem de `ui.url` e nunca aparece no resumo nem no `report.json`. Passo que falha deixa a tela `incompleta` com o número do passo e grava a imagem `<tela>-falha-<tamanho>-1.png` (`preparo-falha-...` se foi no preparo, que deixa todas as telas incompletas). O `report.json` ganha `steps: { setup, steps }`, e a tela, `final_url` quando os passos terminam em outro endereço. `--steps` não combina com `--attach` nem com `ui.screenshot`.
+
+Com `ui.screenshot`, a captura é o comando do projeto, uma vez por rota (e por tamanho, se ele usa `{width}` ou `{height}`), sem sondagem. `{out}`, `{url}` e `{route}` entram no comando já entre aspas simples, com ou sem aspas em volta no `kit.json`; os mesmos valores vão nas variáveis `KIT_UI_OUT`, `KIT_UI_URL`, `KIT_UI_ROUTE`, `KIT_UI_WIDTH` e `KIT_UI_HEIGHT`, para o comando que precisa deles no meio de outro texto. Com `--attach`, o script conecta numa página já aberta de um navegador Chromium com porta de depuração (`--remote-debugging-port`), não recarrega e faz a mesma varredura; pede Node 22 ou mais novo.
+
+Se o projeto tem `axe-core` em `node_modules`, as regras dele rodam no menor e no maior tamanho e entram no relatório como `axe:<regra>`: as de nome acessível e de uso pelo teclado com o id B3, as outras com M8.
+
+### Sondagem
+
+Cada linha é `achado` (medição certa) ou `conferir` (suspeita que o revisor confirma), com o id da regra do `kit:ui-reviewer` e a faixa de larguras em que aparece.
+
+| Regra | Id | Nível | O que mede |
+| --- | --- | --- | --- |
+| `rolagem-horizontal` | B2 | achado | Documento mais largo que a tela (WCAG 1.4.10), com os elementos que passam da borda |
+| `corte-horizontal` | B2 | conferir | `html` ou `body` com `overflow-x` oculto e elemento que começa dentro da tela e passa da borda |
+| `sem-nome` | B3 | achado | Botão, link ou campo sem nome acessível |
+| `sem-teclado` | B3 | achado | `div`, `span`, `li`, `td` ou `img` com `onclick`, sem papel nem `tabindex` |
+| `contraste` | M1 | achado; conferir se o elemento é posicionado ou se há imagem na área do texto | Texto abaixo de 4.5:1, ou 3:1 em texto grande, sobre fundo de cor sólida |
+| `alvo-pequeno` | M2 | achado | Controle menor que 24×24px a menos de 24px de outro (WCAG 2.5.8) |
+| `texto-pequeno` | M7 | conferir | Fonte abaixo de 12px |
+| `so-placeholder`, `sem-alt`, `sem-lang`, `sem-titulo`, `sem-viewport`, `zoom-bloqueado` | M8 | achado | Campo só com placeholder, imagem sem `alt`, `<html>` sem `lang`, `<title>` vazio, `meta viewport` ausente ou que impede zoom |
+| `titulos` | M8 | conferir | Página sem `h1` ou com nível de título pulado |
+| `console`, `requisicao`, `nao-carregou` | M9 | achado | Erro no console, resposta 400 ou mais, rota que não abre |
+
+Fundo com imagem ou gradiente, opacidade e sombra de texto ficam fora da medição de contraste: é o revisor que olha.
+
+### `/kit:execute`
+
+Com `ui.globs`, a skill lê `skills/execute/ui.md`. Tarefa com arquivo de interface segue o bloco de `skills/execute/ui-rules.md`, que também vai no prompt do subagent. No checkpoint de wave com tela, antes do `verify` e da revisão, roda `ui.sh capture --probe-only` e corrige todo `achado`, para os dois verem o código já corrigido. Na wave final faz a captura completa antes de tirar o diff da F1 e chama o `kit:ui-reviewer` com a SPEC, o plano, os arquivos de interface alterados e a pasta de cada captura. Estado atrás de login ou clique é capturado com `--steps`, um `--name` por estado; o que os passos não alcançam fica para a revisão pelo código e o resumo diz qual.
 
 ## Hooks
 

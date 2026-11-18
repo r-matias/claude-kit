@@ -4,6 +4,24 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.6
+
+### Entrou
+
+- **Interface.** Em projeto com tela, o kit passa a cuidar da interface do começo ao fim. A SPEC de feature com tela ganha a seção `## Telas` (ação principal, fluxo, estados de vazio, carregando, erro e sucesso, tela pequena), e o revisor reprova tela sem esses estados. O plano transforma cada estado em verdade a provar e aponta a tela existente que serve de molde.
+- **Captura em todos os tamanhos.** `ui` no `kit.json` (`globs`, `dev`, `url`, `routes`, `viewports`). O `/kit:execute` sobe o app, abre cada tela num navegador headless e percorre de 320 a 1920px, inclusive um pixel antes e um depois de cada ponto de quebra do CSS da página. Mede rolagem horizontal, controle sem nome acessível, contraste, alvo de toque, imagem sem texto alternativo e erro de console; página com tema escuro tem o contraste medido também no escuro. Precisa só de `node` e de um navegador Chromium instalado.
+- **Revisor de interface.** `kit:ui-reviewer` olha as imagens de cada tela em cada tamanho, a medição e o código, com regras de id fixo (B1 a B3, M1 a M9). Roda na wave final de plano com tela.
+- **Regras de tela em toda sessão.** O `/kit:init` grava `.claude/rules/kit-ui.md`, que o Claude recebe ao mexer em arquivo de interface: reuso, tokens, estados, tela pequena primeiro, WCAG 2.2 AA e a documentação da versão instalada da biblioteca de componentes.
+- **Tela atrás de login ou clique.** A captura aceita os passos que levam até o estado (`--steps`, em JSON: `click`, `fill`, `press`, `hover`, `wait`, `goto`, `js`) e os refaz em cada tamanho antes de medir e fotografar; `setup` faz o login uma vez. Senha fica em variável de ambiente (`${NOME}`), nunca no arquivo. Não depende de plugin de terceiro e funciona igual em Windows, macOS e Linux.
+- **Captura que não engana.** Tela que não pôde ser medida por inteiro sai como `incompleta`, com código de saída próprio, em vez de "sem achados". Rota que redireciona (para o login, por exemplo) é avisada. A captura só derruba o app que ela mesma subiu: o que já estava rodando continua rodando, mesmo lento.
+- **Tema escuro por classe.** Além de `prefers-color-scheme`, a captura reconhece o tema ligado por `.dark`, `[data-theme=dark]` e parecidos, e mede o contraste nele.
+- `/kit:fix` reproduz bug visual pela medição quando nenhum teste consegue.
+
+### Mudou
+
+- `setup.sh guards` confere a forma do `ui`.
+- Revisor de SPEC: M10 e M11 (tela sem estados, tela sem ação principal ou sem versão para tela pequena). Revisor de plano: estado de tela entra no B3, e M9 para tarefa de tela sem estado ou sem molde.
+
 ## 0.9.5
 
 ### Entrou

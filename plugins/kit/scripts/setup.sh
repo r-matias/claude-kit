@@ -217,8 +217,8 @@ cmd_permissions() {
 
 # Confere o kit.json: glob largo ou segredo em allow_write, item sem glob, grupo desconhecido, campo
 # com tipo errado, comando que nao e texto nem { run, files }, chave de verify_on_stop sem comando,
-# verify_on_stop sem source_globs, regra de diff_deny sem pattern valido e entrada de repos que nao
-# e repositorio git.
+# verify_on_stop sem source_globs, regra de diff_deny sem pattern valido, "ui" com forma errada e
+# entrada de repos que nao e repositorio git.
 cmd_guards() {
   local kit="${1:-.claude/kit.json}" out="" g
   command -v jq >/dev/null 2>&1 || { echo "setup: jq não encontrado; rode setup.sh check" >&2; return 2; }
@@ -270,7 +270,16 @@ cmd_guards() {
            then "inválido: diff_deny[\($i)] sem pattern"
          elif has("files") and ((.files | strlist) | not) then "inválido: diff_deny[\($i)].files precisa ser lista de globs"
          elif has("level") and ((.level == "block" or .level == "warn") | not) then "inválido: diff_deny[\($i)].level precisa ser block ou warn"
-         else empty end)' "$kit" 2>/dev/null | tr -d '\r')"
+         else empty end),
+      (select(has("ui") and .ui != false and (.ui | type) != "object") | "inválido: ui precisa ser objeto ou false"),
+      ((if (.ui | type) == "object" then .ui else empty end) as $u
+       | (["globs", "routes", "viewports"][] as $k | select($u | has($k)) | select(($u[$k] | strlist) | not) | "inválido: ui.\($k) precisa ser lista de textos"),
+         (["dev", "url", "screenshot"][] as $k | select($u | has($k)) | select(($u[$k] | type) != "string") | "inválido: ui.\($k) precisa ser texto"),
+         (select(($u.globs // []) == []) | "inválido: ui sem globs; nenhum arquivo conta como interface"),
+         (($u.viewports // []) | (if type == "array" then .[] else empty end) | strings | select(test("^[0-9]{2,5}x[0-9]{2,5}$") | not) | "inválido: ui.viewports \(tojson) precisa ser <largura>x<altura>, como 360x800"),
+         (select(($u.url // "") | type == "string" and . != "" and (test("^https?://") | not)) | "inválido: ui.url precisa começar com http:// ou https://"),
+         (select((($u.dev // "") | type == "string" and . != "") and (($u.url // "") | type != "string" or . == "")) | "inválido: ui.dev sem ui.url; a captura não sabe que endereço abrir"),
+         (select(($u.screenshot // "") | type == "string" and . != "" and (contains("{out}") | not)) | "inválido: ui.screenshot sem {out}; o comando precisa gravar a imagem nesse caminho"))' "$kit" 2>/dev/null | tr -d '\r')"
   local kd r i=0
   # O gate casa o pattern com grep -E: o mesmo grep diz se ele e invalido.
   while IFS= read -r r; do

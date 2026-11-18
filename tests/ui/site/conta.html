@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minha conta</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; font: 16px/1.5 system-ui, sans-serif; color: #1f2933; background: #ffffff; }
+  h1 { font-size: 28px; margin: 0 0 16px; }
+  button { padding: 12px 20px; border: 0; border-radius: 6px; background: #0b5cad; color: #ffffff; font: inherit; }
+  label { display: grid; gap: 4px; font-weight: 600; max-width: 360px; }
+  input { width: 100%; padding: 10px; border: 1px solid #7b8794; border-radius: 6px; font: inherit; }
+  #menu, #novo { display: none; }
+  #menu.aberto { display: block; }
+  #novo.aberto { display: block; margin-top: 16px; padding: 16px; border: 1px solid #7b8794; border-radius: 8px; }
+  /* Defeito que so existe com o formulario aberto: largura fixa maior que a tela pequena. */
+  #novo.aberto .linha { width: 520px; }
+  #retorno { margin: 12px 0 0; }
+</style>
+</head>
+<body>
+<h1>Minha conta</h1>
+<button type="button" id="abrir-menu" aria-expanded="false">Mais ações</button>
+<ul id="menu"><li><button type="button" id="abrir-novo">Novo pedido</button></li></ul>
+<form id="novo">
+  <div class="linha"><label>Cliente <input id="cliente" name="cliente"></label></div>
+  <button type="submit">Salvar pedido</button>
+  <p id="retorno" role="status"></p>
+</form>
+<script>
+  // O estado vem dos eventos, como numa biblioteca de componentes: o menu abre no pointerdown e o
+  // valor do campo so existe se o evento input chegar.
+  const estado = { cliente: "" };
+  const menu = document.getElementById("menu");
+  const novo = document.getElementById("novo");
+  document.getElementById("abrir-menu").addEventListener("pointerdown", (e) => {
+    menu.classList.add("aberto");
+    e.currentTarget.setAttribute("aria-expanded", "true");
+  });
+  document.getElementById("abrir-novo").addEventListener("click", () => novo.classList.add("aberto"));
+  document.getElementById("cliente").addEventListener("input", (e) => { estado.cliente = e.target.value; });
+  novo.addEventListener("submit", (e) => {
+    e.preventDefault();
+    document.getElementById("retorno").textContent = estado.cliente ? "Pedido de " + estado.cliente + " salvo" : "Informe o cliente";
+  });
+</script>
+</body>
+</html>

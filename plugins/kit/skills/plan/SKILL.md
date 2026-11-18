@@ -31,7 +31,7 @@ A resposta entra em Decisões como `- <data> · usuário · <decisão> — <perg
 2. Delegue ao `kit:investigator` (que lê o `docs/codemap.md`, se existir) o mapeamento do código afetado: pontos de entrada, padrões a seguir (com `arquivo:linha` do melhor molde para cada tipo de mudança), testes existentes, docs de referência, riscos.
 3. Liste as lacunas e classifique cada uma pela regra acima. Pergunte as de produto, escopo ou caras de reverter; decida as técnicas.
 4. **must_haves, de trás para frente.** Parta do resultado da SPEC (Objetivo, Escopo, Casos de borda, Verificação ponta a ponta):
-   - **truths:** frases que precisam ser verdade quando acabar, cada uma verificável por teste ou comando. Todo item de Escopo e todo caso de borda vira ao menos uma truth.
+   - **truths:** frases que precisam ser verdade quando acabar, cada uma verificável por teste ou comando. Todo item de Escopo e todo caso de borda vira ao menos uma truth. Em SPEC com a seção Telas, cada estado de cada tela (vazio, carregando, erro, sucesso) e o comportamento na tela pequena também.
    - **artifacts:** arquivos que precisam existir ou mudar para as truths valerem, com o que cada um provê.
    - **tests:** arquivos de teste e o que cada um cobre; toda truth é coberta por algum.
 5. **Interfaces:** assinaturas, rotas, schemas e códigos de erro exatos que as tarefas implementam ou consomem. Contrato já definido pela SPEC é copiado, não reinventado.
@@ -41,8 +41,9 @@ A resposta entra em Decisões como `- <data> · usuário · <decisão> — <perg
    - `action`: como fazer, apontando o molde no código com `arquivo:linha` quando houver.
    - `verify`: chave do `kit.json` (prefira `test_related` com os testes da tarefa).
    - `done`: assertiva testável que fecha a tarefa.
+   - Tarefa com arquivo de `ui.globs` (do `.claude/kit.json`): `behavior` tem uma linha por estado da tela que ela implementa, e `action` aponta o molde `arquivo:linha` da tela ou do componente existente mais parecido e o tema ou os tokens a usar (os do Padrão visual da SPEC).
 7. **Waves:** agrupe por dependência. Uma tarefa só usa o que waves anteriores criam. Na linha `Paralelo:` da wave, liste as tarefas que não compartilham arquivo com nenhuma outra da mesma wave. Termine cada wave com a caixa de checkpoint do template.
-8. **Wave final**, fixa, como no template. Remova o passo F4 se o `kit.json` não tiver `smoke`.
+8. **Wave final**, fixa, como no template. Remova o passo F4 se o `kit.json` não tiver `smoke`. Plano com tarefa em `ui.globs`: a F1 cita também o `kit:ui-reviewer`, como no trecho opcional do template; plano sem tela não cita.
 9. **Tamanho**, antes de gravar. Conte as tarefas numeradas e as waves (sem a wave final). Limites: `plan.max_tasks` (padrão 15) e `plan.max_waves` (padrão 6) do `.claude/kit.json`. Dentro dos limites, siga. Acima de qualquer um:
    - Se a seção Decisões da SPEC.md (ou do PLAN.md que você está refazendo) já tem uma linha de origem usuário com `tamanho: manter`, siga sem perguntar e copie essa linha para Decisões do plano.
    - Senão, não grave o PLAN.md. Faça uma pergunta, uma vez só, com `AskUserQuestion` (decisão de escopo é do usuário), citando os números e o limite. Opções: **Quebrar em fatias agora (Recomendado)**, com a descrição dizendo que esta sessão grava `EPIC.md` e uma SPEC por fatia, sem precisar rodar outro comando, e listando as fatias já sugeridas (nome e itens de Escopo da SPEC de cada uma); **Manter num plano só**; **Reduzir escopo**, com o corte proposto (o que fica e o que vai para Fora de escopo). Sem `AskUserQuestion` disponível, faça a pergunta no texto com as três opções e pare sem gravar nada.

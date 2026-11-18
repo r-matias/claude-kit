@@ -10,6 +10,7 @@ allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
 - Não escreva código de produção nesta skill. A saída é só a SPEC.md.
 - Leia o CLAUDE.md e explore o código relevante antes de perguntar; não pergunte o que o código responde.
 - Perguntas só sobre decisões reais: implementação, UX, casos de borda, trade-offs. Nada óbvio, nada genérico.
+- **Feature com tela.** A feature tem tela quando a pessoa vê ou opera o resultado numa interface, ou quando os arquivos afetados casam `ui.globs` do `.claude/kit.json`. Nesse caso a entrevista fecha, para cada tela: a ação principal, o que aparece em vazio, carregando, erro e sucesso, e o que muda na tela pequena. Cor, fonte e espaçamento não viram pergunta quando o projeto já tem padrão visual (tema, tokens, biblioteca de componentes, `.claude/rules/kit-ui.md`): a SPEC manda segui-lo e cita o caminho. Projeto sem padrão: uma pergunta de direção visual com 2 ou 3 opções concretas, registrada em Decisões.
 
 ## Passos
 1. Ideia: $ARGUMENTS. Se vazia, peça a ideia em uma frase.
@@ -42,12 +43,21 @@ allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
 - `caminho` — <o que muda>
 - <contratos: endpoints, eventos, schemas, assinaturas>
 
+## Telas
+- **<tela>** (`<rota, ou como se chega nela>`) — <para que serve>; ação principal: <uma só>
+  - Fluxo: <passos da pessoa até o resultado>
+  - Estados: vazio → <o que aparece>; carregando → <...>; erro → <...>; sucesso → <...>
+  - Tela pequena: <o que empilha, some ou vira menu, e abaixo de que largura>
+- Padrão visual: <tema, tokens, componentes e tela existente a seguir, com caminho; sem padrão no projeto, a direção escolhida>
+
 ## Casos de borda
 - <caso> → <comportamento esperado>
 
 ## Verificação ponta a ponta
 1. <passo executável que prova que a feature funciona, com comando do kit.json ou roteiro manual>
 ```
+
+   A seção `## Telas` só existe em feature com tela; sem tela, tire a seção inteira. Com tela, a Verificação ponta a ponta inclui abrir cada tela no menor e no maior tamanho de `ui.viewports` do `kit.json` (padrão `360x800` e `1920x1080`).
 
 6. **Revisão.** Chame o `kit:spec-reviewer` com o caminho da SPEC.md (na quebra, o passo 5 do `/kit:epic` já revisa cada fatia). Cada achado vem com o id da regra e a severidade fixa dele. Corrija na SPEC.md todo BLOCKER e MAJOR. Se a correção é decisão de produto ou de escopo (o revisor marca `(decisão de produto)`), junte essas numa rodada de `AskUserQuestion` antes de corrigir e registre a resposta em Decisões. Chame de novo até a última linha ser `aprovado` (no máximo 3 rodadas; se sobrar BLOCKER, diga qual, com o id).
 7. Mostre o caminho do arquivo, o resultado da revisão e recomende: `/clear` e então `/kit:plan docs/specs/<slug>/SPEC.md`. Na quebra, mostre o `EPIC.md` e recomende o `/kit:plan` da SPEC da fatia 1.

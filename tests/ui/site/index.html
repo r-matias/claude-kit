@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pedidos</title>
+<style>
+  :root { --espaco: 16px; --texto: #1f2933; --suave: #52606d; --acao: #0b5cad; --borda: #cbd2d9; --fundo: #ffffff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: var(--texto); background: var(--fundo); }
+  header { padding: var(--espaco); border-bottom: 1px solid var(--borda); }
+  nav a { display: inline-block; padding: 10px 12px; color: var(--acao); }
+  main { padding: var(--espaco); max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 28px; margin: 0 0 var(--espaco); }
+  .filtro { display: grid; gap: 8px; margin-bottom: 24px; }
+  label { font-weight: 600; }
+  input { width: 100%; padding: 10px; border: 1px solid var(--borda); border-radius: 6px; font: inherit; }
+  button { padding: 12px 20px; border: 0; border-radius: 6px; background: var(--acao); color: #fff; font: inherit; }
+  .lista { display: grid; gap: var(--espaco); grid-template-columns: 1fr; list-style: none; padding: 0; margin: 0; }
+  .lista li { border: 1px solid var(--borda); border-radius: 8px; padding: var(--espaco); }
+  .lista small { color: var(--suave); }
+  img { max-width: 100%; height: auto; }
+  @media (prefers-color-scheme: dark) {
+    :root { --texto: #e4e7eb; --suave: #9aa5b1; --acao: #62b0f0; --borda: #3e4c59; --fundo: #1f2933; }
+    button { color: #102a43; }
+    input { background: #323f4b; color: var(--texto); }
+  }
+  @media (min-width: 700px) {
+    .filtro { grid-template-columns: auto 1fr auto; align-items: center; }
+    .lista { grid-template-columns: repeat(3, 1fr); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Principal"><a href="/">Pedidos</a><a href="/ruim">Relatório</a></nav>
+</header>
+<main>
+  <h1>Pedidos</h1>
+  <form class="filtro">
+    <label for="busca">Buscar pedido</label>
+    <input id="busca" name="busca" type="search">
+    <button type="submit">Buscar</button>
+  </form>
+  <ul class="lista">
+    <li><strong>Pedido 1041</strong><br><small>Enviado em 12/03</small></li>
+    <li><strong>Pedido 1042</strong><br><small>Aguardando pagamento</small></li>
+    <li><strong>Pedido 1043</strong><br><small>Entregue em 09/03</small></li>
+  </ul>
+  <p><img alt="Gráfico de pedidos por semana" width="300" height="60" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='60'%3E%3Crect width='300' height='60' fill='%230b5cad'/%3E%3C/svg%3E"></p>
+</main>
+</body>
+</html>

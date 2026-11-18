@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Avisos</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/avisos.css">
+</head>
+<body>
+<header class="topo">
+  <nav aria-label="Principal"><a href="/">Painel</a><a href="/avisos" aria-current="page">Avisos</a></nav>
+</header>
+<main class="conteudo">
+  <h1>Avisos</h1>
+  <p id="estado" class="estado" role="status">Carregando avisos…</p>
+  <button id="tentar" class="botao" type="button" hidden>Tentar de novo</button>
+  <ul id="lista" class="cartoes" hidden></ul>
+</main>
+<script type="module" src="/avisos.js"></script>
+</body>
+</html>

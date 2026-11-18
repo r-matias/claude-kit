@@ -1,0 +1,17 @@
+:root {
+  --cor-texto: #1f2933;
+  --cor-suave: #52606d;
+  --cor-acao: #0b5cad;
+  --cor-acao-texto: #ffffff;
+  --cor-borda: #cbd2d9;
+  --cor-fundo: #ffffff;
+  --cor-erro: #b42318;
+  --espaco-1: 4px;
+  --espaco-2: 8px;
+  --espaco-3: 16px;
+  --espaco-4: 24px;
+  --raio: 8px;
+  --fonte: 16px/1.5 system-ui, sans-serif;
+  --fonte-titulo: 28px;
+  --fonte-pequena: 14px;
+}

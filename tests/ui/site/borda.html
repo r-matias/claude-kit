@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Casos de borda</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; overflow-x: hidden; position: relative; font: 16px/1.5 system-ui, sans-serif; color: #1f2933; background: #ffffff; }
+  main { padding: 16px; }
+  h1 { font-size: 28px; margin: 0 0 16px; }
+  .gaveta { position: absolute; top: 0; left: 100%; width: 300px; height: 200px; background: #0b5cad; color: #ffffff; }
+  .capa { position: relative; height: 240px; }
+  .capa img { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .capa h2 { position: relative; margin: 0; padding: 40px 16px; color: #ffffff; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Casos de borda</h1>
+  <p>Menu fechado fora da tela e título sobre imagem.</p>
+  <div class="capa">
+    <img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10'%3E%3Crect width='10' height='10' fill='%23102a43'/%3E%3C/svg%3E">
+    <h2>Título branco sobre imagem escura</h2>
+  </div>
+</main>
+<div class="gaveta">Menu lateral fechado</div>
+<script>alert("sessão expirada");</script>
+</body>
+</html>

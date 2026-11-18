@@ -133,6 +133,23 @@
     "max_agents": 30,
     "primary": "app"
   },
+  "ui": {
+    "globs": [
+      "web/src/**/*.{tsx,css}"
+    ],
+    "dev": "npm --prefix web run dev",
+    "url": "http://localhost:5173",
+    "routes": [
+      "/",
+      "/login"
+    ],
+    "viewports": [
+      "360x800",
+      "768x1024",
+      "1280x800",
+      "1920x1080"
+    ]
+  },
   "guards": {
     "allow_write": [
       "web/src/i18n/generated/README.md"

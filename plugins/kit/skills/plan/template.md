@@ -25,7 +25,7 @@ Paralelo: <números das tarefas com arquivos disjuntos, ou "nenhum">
 - [ ] Checkpoint wave 1: re-rodar os verify da wave, confirmar cada done, revisar o diff da wave, avaliar o contexto
 
 ## Wave final — revisão e verificação
-- [ ] F1. Revisão independente: `kit:code-reviewer` e `kit:security-reviewer` sobre todos os arquivos alterados
+- [ ] F1. Revisão independente: `kit:code-reviewer` e `kit:security-reviewer` sobre todos os arquivos alterados<; em plano com tela: e `kit:ui-reviewer` sobre as telas capturadas em todos os tamanhos>
 - [ ] F2. Corrigir BLOCKER e MAJOR e repetir a revisão até não sobrar nenhum
 - [ ] F3. Verificação ponta a ponta da SPEC: <passos>
 - [ ] F4. Smoke: `smoke` do kit.json

@@ -1,0 +1,4 @@
+.estado { margin: 0 0 var(--espaco-3); color: var(--cor-suave); }
+.estado[data-tipo="erro"] { color: var(--cor-erro); }
+.cartao time { display: block; color: var(--cor-suave); font-size: var(--fonte-pequena); }
+.cartao p { margin: var(--espaco-2) 0 0; }

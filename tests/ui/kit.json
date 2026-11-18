@@ -1,0 +1,14 @@
+{
+  "commands": {
+    "test": "node --test",
+    "test_related": "node --test {files}"
+  },
+  "verify_on_stop": ["test"],
+  "source_globs": ["web/**/*.js", "test/**/*.js", "web/**/*.html", "web/**/*.css"],
+  "ui": {
+    "globs": ["web/**/*.html", "web/**/*.css", "web/**/*.js"],
+    "dev": "node server.mjs",
+    "url": "http://127.0.0.1:41873",
+    "routes": ["/"]
+  }
+}

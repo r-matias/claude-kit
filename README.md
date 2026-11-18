@@ -11,6 +11,7 @@ O que você ganha:
 - **Turno só termina verde.** Quando o Claude mexe em código, build e testes rodam antes de ele dizer que acabou.
 - **Feature com plano conferível.** SPEC → PLAN com tarefas testáveis → execução em etapas, com revisão de código e de segurança no fim.
 - **Bug pela causa raiz.** Primeiro um teste que reproduz, depois a correção.
+- **Tela conferida em todos os tamanhos.** Em projeto com interface, a SPEC define estados e fluxo de cada tela, um script abre as telas de 320 a 1920px e mede o que quebra, e um revisor olha as imagens antes de o plano fechar.
 
 ## Começar
 
@@ -38,6 +39,7 @@ Se o kit consegue fazer, ele faz. Primeiro junta tudo o que vai propor, mostra o
 3. **Liga o LSP da linguagem**: acrescenta o plugin LSP ao `.claude/settings.json` do projeto (`ts-lsp@claude-kit` para Node/TS, e os oficiais `pyright-lsp`, `csharp-lsp`, `gopls-lsp`, ...) e instala o language server se faltar. Veja [LSP de TypeScript com teto de memória](#lsp-de-typescript-com-teto-de-memória).
 4. **Verifica**: roda uma vez cada comando de `verify_on_stop` e mostra `ok` ou `falhou`.
 5. **Pergunta sobre notificações** (desligadas por padrão), avisando se você já tem alertas que seriam duplicados (ver [Notificações](#notificações)).
+   Em projeto com tela, prepara a revisão de interface: propõe o `ui` do `kit.json`, grava as regras de tela em `.claude/rules/kit-ui.md` e diz como as telas serão capturadas (ver [Interface](#interface)). Rodado de novo, recria ou atualiza essas regras se ficaram para trás.
 6. **Mapeia o código**, se o projeto tiver mais de 300 arquivos de código ou mais de um repositório: roda o `/kit:map` ao final, sem perguntar (só pergunta se passar de 30 agents).
 7. **Relatório curto** (até ~10 linhas): o que foi feito (com o caminho de cada backup), o que foi verificado, avisos reais e `Pronto. Próximo: /kit:spec <ideia>`. Ele não lista tarefas para você.
 
@@ -73,7 +75,7 @@ A escolha fica em `permissions.groups` do `.claude/kit.json`; no modo reparo, gr
 - **Nunca altera** skills, agents, commands, rules, hooks, `CLAUDE.md`, `.mcp.json` nem `.claude/settings.local.json`, seus ou do projeto.
 - **No `.claude/settings.json` do projeto só acrescenta**: itens novos em listas (`allow`, `ask`, `deny`, `allowedDomains`, `excludedCommands`) e chaves que não existem. Nunca remove, nunca troca um valor seu e nunca mexe em `hooks`. Antes de gravar, faz backup em `<arquivo>.bak-kit-<data>` e mostra o diff na confirmação. Se uma chave sua tem outro valor, o seu fica e o relatório cita em uma linha. Regra sua em `allow` ou `ask` que um deny do kit cobriria (ex.: `ask` de `Bash(curl *meusite.com*)`) deixa esse deny de fora, porque deny vence e você perderia a chance de autorizar.
 - **Sobreposição:** se uma skill ou agent seu faz o mesmo que um do kit, o do kit sai do caminho (`Skill(kit:fix)` em `permissions.deny`). Um hook seu que o kit cobre fica como está; `docs/claude-adoption.md` registra qual é.
-- Os arquivos do próprio kit podem ser regravados: `.claude/kit.json`, `docs/claude-adoption.md` e os do mapa (`.claude/rules/map-*.md`, `.claude/rules/kit-codemap.md`, `docs/codemap.md`, com o cabeçalho `kit:map`).
+- Os arquivos do próprio kit podem ser regravados: `.claude/kit.json`, `docs/claude-adoption.md`, `.claude/rules/kit-ui.md` (com o cabeçalho `kit:ui`) e os do mapa (`.claude/rules/map-*.md`, `.claude/rules/kit-codemap.md`, `docs/codemap.md`, com o cabeçalho `kit:map`).
 
 Os arquivos criados ficam no git para você commitar junto com o código (o kit nunca commita). Quem clonar o repositório recebe o plugin pelo settings versionado; na própria máquina, basta rodar o `/kit:init`.
 
@@ -86,11 +88,13 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 1. `/kit:spec` entrevista você e grava `docs/specs/<slug>/SPEC.md` (objetivo, escopo, fora de escopo, como verificar). Antes de entregar, um revisor que não viu a entrevista lê só a SPEC e o código: se não consegue resumir o objetivo, se um item admite duas leituras, se a SPEC cria algo que o código já tem ou se falta um caso de borda alcançável, a SPEC é corrigida. Quando a correção é decisão de produto, ele pergunta a você.
    - `/kit:spec exportar o relatório de vendas em CSV`
    - `/kit:spec usuário pode trocar o e-mail com confirmação por link`
+
+   Feature com tela ganha na SPEC a seção `## Telas`, com a ação principal, o fluxo, os estados (vazio, carregando, erro, sucesso) e o comportamento na tela pequena.
 2. `/clear` limpa o contexto antes de planejar.
 3. `/kit:plan` transforma a SPEC num `PLAN.md` com tarefas testáveis agrupadas em etapas (waves). Decide sozinho os detalhes técnicos e registra cada decisão no plano; só pergunta o que é decisão de produto. Um revisor confere o plano contra a SPEC antes de entregar: cada achado cita uma regra com id e severidade fixa (por exemplo `BLOCKER [B1]`, tarefa que usa algo da mesma wave), e o plano só sai quando o revisor diz `aprovado`.
    - `/kit:plan docs/specs/export-csv/SPEC.md`
    - `/kit:plan` (sem argumento: usa a SPEC mais recente)
-4. `/kit:execute` implementa wave a wave, escreve os testes de cada tarefa e só marca uma tarefa como feita com evidência. Ao fim de cada wave revisa o diff; no fim do plano passa por revisão de código e de segurança. Para antes de qualquer ação irreversível (deploy, push, migração em banco real) e nunca commita sem você pedir.
+4. `/kit:execute` implementa wave a wave, escreve os testes de cada tarefa e só marca uma tarefa como feita com evidência. Ao fim de cada wave revisa o diff; no fim do plano passa por revisão de código e de segurança. Em plano com tela, captura a interface em todos os tamanhos e passa pelo revisor de interface (ver [Interface](#interface)). Para antes de qualquer ação irreversível (deploy, push, migração em banco real) e nunca commita sem você pedir.
    - `/kit:execute docs/specs/export-csv/PLAN.md`
    - `/kit:execute` (retoma o plano mais recente da primeira tarefa pendente; útil depois de um `/compact`)
 
@@ -193,6 +197,44 @@ Sem você chamar nada, em todo projeto com o kit ligado:
 - **Gate de fim de turno.** Se o Claude mexeu em código, os comandos de verificação do projeto (build, testes relacionados, lint) rodam antes de ele encerrar. Rodam todos, mesmo depois de uma falha, e as falhas chegam juntas numa mensagem só: ele recebe os erros e continua corrigindo. O gate também confere regras do projeto, como "mudou a tela, atualize o manual", "todo texto existe nas 3 línguas" e "nenhuma supressão de lint nem teste pulado em linha nova" (`diff_deny`, que olha só o que foi adicionado no turno).
 - **Avisos.** Regras leves viram um lembrete para o Claude na hora da edição, sem bloquear nada: acoplamentos ("se mudou a API, confira o site"), código de produção alterado sem teste e padrões de `diff_deny` com `level: "warn"`.
 - **Contexto da sessão.** No início de cada sessão o Claude recebe a branch, os arquivos alterados e as tarefas pendentes do plano ativo. Antes de uma compactação, o kit salva esse estado e o devolve depois. Se faltar `jq` ou `git`, ou se o Claude Code estiver desatualizado, o aviso aparece aqui, com o comando para corrigir. O mesmo vale para um `docs/codemap.md` muito atrás do código (o aviso sugere `/kit:map --update`) e para um `kit.json` com problema: JSON inválido, verificação que cita comando inexistente, ou comando `lint` que ficou fora do gate, caso em que nenhum passo do kit roda o lint.
+
+## Interface
+
+Em projeto com tela, o kit trata interface como trata código: o que dá para medir é medido por script, e o que precisa de olho passa por um revisor que não viu a implementação.
+
+- **Na SPEC.** Feature com tela ganha a seção `## Telas`: ação principal de cada tela, fluxo, o que aparece em vazio, carregando, erro e sucesso, e o que muda na tela pequena. O revisor da SPEC reprova tela sem esses estados. Cor, fonte e espaçamento não viram pergunta quando o projeto já tem padrão visual: a SPEC manda segui-lo.
+- **No plano.** Cada estado de tela vira uma verdade a provar, e a tarefa de tela aponta a tela ou o componente existente que serve de molde.
+- **Ao escrever a tela.** O `/kit:init` grava `.claude/rules/kit-ui.md`, que o Claude recebe sempre que mexe em arquivo de interface, dentro ou fora do `/kit:execute`: reuso antes de criar, token no lugar de valor solto, estados, tela pequena primeiro, acessibilidade (WCAG 2.2 AA) e a documentação da versão instalada da biblioteca de componentes.
+- **Captura em todos os tamanhos.** Um script sobe o app, abre cada tela num navegador headless e percorre de 320 a 1920px: larguras padrão, os tamanhos de `ui.viewports` e os pontos de quebra do CSS da própria página (um antes, um depois). Em cada largura ele mede rolagem horizontal e alvo de toque pequeno; em cada tamanho de `ui.viewports`, também controle sem nome acessível, contraste de texto, imagem sem texto alternativo e erro de console ou de requisição. Página com tema escuro tem o contraste medido também no escuro. O resultado sai em texto, com a faixa de larguras de cada problema (`rolagem-horizontal em 320–600px: table.pedidos (600px)`), e em imagens.
+- **Revisão.** No fim de cada wave com tela, o `/kit:execute` roda só a medição e corrige o que ela acusa. Na wave final, o `kit:ui-reviewer` abre as imagens de cada tela em cada tamanho, lê a medição e o código e julga por regras de id fixo: estado da SPEC que falta, layout quebrado, valor solto onde há token, tela que destoa das outras, hierarquia, retorno das ações. Gosto pessoal não é achado.
+
+A captura precisa de `node` 16 ou mais novo e de um navegador Chromium instalado (Chrome, Edge, Chromium ou o que o Playwright baixa). Nada do stack do projeto é usado. Sem um dos dois, a revisão de interface segue só pelo código, e o `/kit:init` avisa.
+
+**Tela atrás de login ou clique.** Uma rota só mostra o que abre por URL. Pessoa logada, modal aberto ou erro de formulário são capturados com os passos que levam até lá. O `/kit:execute` escreve os passos a partir do código da tela, e a captura os refaz em cada tamanho antes de medir e fotografar:
+
+```json
+[{"click": "text=Novo pedido"}, {"fill": "text=Cliente", "value": "Ana"}, {"press": "Enter"}]
+```
+
+Os passos são `click`, `fill`, `press`, `hover`, `wait`, `goto` e `js`, com seletor CSS ou `text=<texto visível>`; `{"setup": [...], "steps": [...]}` faz o login uma vez antes das rotas. Senha não vai no JSON: `${NOME}` em `value` lê a variável de ambiente. Nada disso depende de plugin de terceiro nem de ferramenta do stack, e funciona igual em Windows, macOS e Linux. O que os passos não alcançam fica para a revisão pelo código, e o resumo do `/kit:execute` diz quais telas.
+
+Configuração, no `.claude/kit.json` (o `/kit:init` propõe):
+
+```json
+{
+  "ui": {
+    "globs": ["src/**/*.{tsx,css}"],
+    "dev": "npm run dev",
+    "url": "http://localhost:5173",
+    "routes": ["/", "/login"],
+    "viewports": ["360x800", "768x1024", "1280x800", "1920x1080"]
+  }
+}
+```
+
+Só `globs` é obrigatório. Sem `dev`, o app precisa estar rodando em `url`. Tela que não abre em navegador (app móvel ou desktop) usa `screenshot` no lugar de `dev` e `url`, com o comando do projeto que grava a imagem da tela em `{out}` (`"screenshot": "xcrun simctl io booted screenshot {out}"`): as imagens vão para o revisor, sem a medição. `"ui": false` registra que o projeto não quer revisão de interface.
+
+**Custo.** A medição roda sem modelo. As imagens só são lidas pelo `kit:ui-reviewer`, na wave final de plano com tela: de cada tela ele abre o menor e o maior tamanho por inteiro (até três partes em página longa), a primeira parte dos tamanhos do meio e o tema escuro, e só busca as outras quando a medição aponta para elas.
 
 ## LSP de TypeScript com teto de memória
 
@@ -334,7 +376,7 @@ claude plugin list
 
 Reinicie a sessão do Claude Code para a nova versão valer e confira o `Version` de `kit@claude-kit` no `claude plugin list` (em todos os escopos listados). Se ele estiver em mais de um escopo, veja [O kit bloqueou, e agora?](#o-kit-bloqueou-e-agora).
 
-Depois de atualizar, rode `/kit:init` de novo em cada projeto (modo reparo): é ele que propõe o que a versão nova trouxe para o `kit.json`. Num projeto configurado antes da 0.9.3, isso inclui o `lint` no gate, os padrões de `diff_deny` e a regra de código sem teste. O revisor de código deixou de rodar lint e teste nessa versão, então sem o reparo um projeto com comando `lint` fora do `verify_on_stop` fica sem lint; o início da sessão avisa. O que mudou em cada versão está no [CHANGELOG.md](CHANGELOG.md).
+Depois de atualizar, rode `/kit:init` de novo em cada projeto (modo reparo): é ele que propõe o que a versão nova trouxe para o `kit.json`. Num projeto configurado antes da 0.9.3, isso inclui o `lint` no gate, os padrões de `diff_deny` e a regra de código sem teste. O revisor de código deixou de rodar lint e teste nessa versão, então sem o reparo um projeto com comando `lint` fora do `verify_on_stop` fica sem lint; o início da sessão avisa. Num projeto com tela configurado antes da 0.9.6, o reparo propõe o `ui` e as regras de interface; sem o `ui`, nenhum passo de interface roda. O que mudou em cada versão está no [CHANGELOG.md](CHANGELOG.md).
 
 Desinstalar:
 
@@ -369,6 +411,7 @@ O `/kit:init` gera este arquivo. Todas as chaves são opcionais; chave ausente �
 | `repos` | Na pasta-mãe de vários repositórios, quais filhos considerar | `["app", "web"]` |
 | `spec` | Limites de tamanho do `/kit:spec`: `max_scope_items` (8), `max_files` (25) | `{ "max_scope_items": 12 }` |
 | `plan` | Limites de tamanho do `/kit:plan`: `max_tasks` (15), `max_waves` (6) | `{ "max_tasks": 20 }` |
+| `ui` | Revisão de interface: `globs` (arquivos de tela), `dev` e `url` (como subir o app e onde abrir), `routes`, `viewports`, `screenshot`; `false` = sem revisão de interface (ver [Interface](#interface)) | `{ "globs": ["src/**/*.tsx"], "dev": "npm run dev", "url": "http://localhost:5173" }` |
 | `map` | Limites do `/kit:map`: `stale_after_commits` (50), `unit_max_files` (150), `unit_max_loc` (20000), `max_agents` (30), `primary` (repositório do codemap) | `{ "stale_after_commits": 100 }` |
 
 Exemplo completo em [`plugins/kit/templates/kit.example.json`](plugins/kit/templates/kit.example.json); todas as regras (globs, monorepo, vários repositórios, `kit-skip`) em [docs/reference.md](docs/reference.md).
@@ -387,6 +430,7 @@ Exemplo completo em [`plugins/kit/templates/kit.example.json`](plugins/kit/templ
 
   Fonte: [changelog oficial](https://code.claude.com/docs/en/changelog) e [referência de hooks](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails).
 - **`bash` 3.2 ou mais novo, `git` e `jq`.** Os scripts são escritos para o `/bin/bash` 3.2 do macOS, sem `realpath` nem `readlink -f`, e o CI roda a suíte em Linux, Windows e macOS (com o `/bin/bash` do sistema). No Windows, Git for Windows (traz Git Bash) e `jq` no PATH.
+- **Captura de interface (opcional): `node` 16 ou mais novo e um navegador Chromium** (Chrome, Edge, Chromium ou o do Playwright). Só em projeto com `ui` no `kit.json`; sem eles a revisão de interface segue pelo código.
 - **Linux e WSL2: `bwrap` e `socat`** para o sandbox (`sudo apt install bubblewrap socat`). Sem eles, o `/kit:init` propõe instalar na confirmação; até lá o grupo `sandbox` não é oferecido. No Ubuntu 24.04 ou mais novo, o AppArmor pode restringir os user namespaces que o `bwrap` usa; o `/kit:init` avisa quando isso acontece.
 - **Plataformas:**
 

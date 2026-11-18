@@ -690,7 +690,7 @@ if [ -z "$FILTER" ] || [[ "merge-json inventory" == *"$FILTER"* ]]; then
   else ko "inventory: regras em subpasta e settings do usuário em CLAUDE_CONFIG_DIR" "net='$out' $(grep -n 'rules\|deny' "$IV/out" | head -5)"; fi
   NR="$U/netrules"
   mkdir -p "$NR/.claude" "$U/home/.claude"
-  printf '%s' '{"permissions":{"ask":["Bash(curl *rubinot.com.br*)"]}}' >"$NR/.claude/settings.json"
+  printf '%s' '{"permissions":{"ask":["Bash(curl *example.com*)"]}}' >"$NR/.claude/settings.json"
   printf '%s' '{"permissions":{"allow":["Bash(wget -q *)"]}}' >"$NR/.claude/settings.local.json"
   printf '%s' '{"permissions":{"allow":["Bash(curl https://api.x/*)"]}}' >"$U/home/.claude/settings.json"
   out="$(HOME="$U/home" "$TBASH" "$SCRIPTS/inventory.sh" --net "$NR" 2>&1 | paste -sd' ' -)"
@@ -1093,6 +1093,26 @@ if [ -z "$FILTER" ] || [[ "setup" == *"$FILTER"* ]]; then
   if [ "$code" = "1" ] && [ "$out" = 'inválido: verify_on_stop sem source_globs; o gate não roda os comandos sem "files": build' ]; then
     ok "setup guards: sem source_globs, só os comandos sem files ficam de fora"
   else ko "setup guards: sem source_globs, só os comandos sem files ficam de fora" "exit $code, $out"; fi
+  printf '%s\n' '{"ui":{"globs":["src/**/*.tsx"],"dev":"x","url":"http://localhost:3000","routes":["/"],"viewports":["360x800"]}}' >"$PP/ui-ok.json"
+  printf '%s\n' '{"ui":false}' >"$PP/ui-nao.json"
+  o1="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/ui-ok.json" 2>&1)"
+  o2="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/ui-nao.json" 2>&1)"
+  printf '%s\n' '{"ui":{"globs":"x","dev":5,"url":"localhost:3000","viewports":["360","1280x800"],"screenshot":"tira foto"}}' >"$PP/ui-ruim.json"
+  out="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/ui-ruim.json" 2>&1)"; code=$?
+  printf '%s\n' '{"ui":{"dev":"sobe"}}' >"$PP/ui-ruim2.json"
+  o3="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/ui-ruim2.json" 2>&1)"
+  printf '%s\n' '{"ui":"sim"}' >"$PP/ui-ruim3.json"
+  o4="$(run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/ui-ruim3.json" 2>&1)"
+  if [ "$o1" = "ok guards" ] && [ "$o2" = "ok guards" ] && [ "$code" = "1" ] && [ "$(grep -c . <<<"$out")" = "5" ] &&
+    grep -qxF 'inválido: ui.globs precisa ser lista de textos' <<<"$out" && grep -qxF 'inválido: ui.dev precisa ser texto' <<<"$out" &&
+    grep -qxF 'inválido: ui.viewports "360" precisa ser <largura>x<altura>, como 360x800' <<<"$out" &&
+    grep -qxF 'inválido: ui.url precisa começar com http:// ou https://' <<<"$out" &&
+    grep -qxF 'inválido: ui.screenshot sem {out}; o comando precisa gravar a imagem nesse caminho' <<<"$out" &&
+    grep -qxF 'inválido: ui sem globs; nenhum arquivo conta como interface' <<<"$o3" &&
+    grep -qxF 'inválido: ui.dev sem ui.url; a captura não sabe que endereço abrir' <<<"$o3" &&
+    [ "$o4" = "inválido: ui precisa ser objeto ou false" ]; then
+    ok "setup guards: ui válido e false passam; tipo errado, viewport, url, dev sem url, screenshot sem {out} e ui sem globs"
+  else ko "setup guards: ui válido e false passam; tipo errado, viewport, url, dev sem url, screenshot sem {out} e ui sem globs" "1='$o1' 2='$o2' exit $code: $out | $o3 | $o4"; fi
   printf '%s\n' '{"protected_paths":["gen/**"],}' >"$PP/invalido.json"
   run_setup "$CS" "$LINUX_BIN:$NOCLAUDE_PATH" guards "$PP/invalido.json" >/dev/null 2>&1
   code=$?
@@ -1346,6 +1366,445 @@ EOF
   out="$(run_alerts TERM_PROGRAM=iTerm.app)"
   if [ "$out" = "alerta: terminal iTerm2: aviso nativo do Claude Code (preferredNotifChannel auto)" ]; then ok "setup alerts: iTerm2 sem canal configurado já tem aviso nativo"
   else ko "setup alerts: iTerm2 sem canal configurado já tem aviso nativo" "$out"; fi
+fi
+}
+
+g_interface() {
+echo "interface"
+if [ -z "$FILTER" ] || [[ "interface ui" == *"$FILTER"* ]]; then
+  UIS="$SCRIPTS/ui.sh"
+  UT="$(mktemp -d "$TMP_ALL/ui.XXXXXX")"
+  unset KIT_UI_BROWSER KIT_UI_WAIT_S KIT_UI_LOAD_MS KIT_UI_BUDGET_S
+  ui_commit() { git_q init "$1"; git_q -C "$1" add -A; git_q -C "$1" commit -m init; }
+  mixed_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+  # Uso: ui_status <config> <PATH> [pasta]. Roda na pasta $P.
+  ui_status() {
+    local cfg="$1" path="$2"
+    shift 2
+    (cd "$P" && CLAUDE_CONFIG_DIR="$cfg" PATH="$path" "$TBASH" "$UIS" status "$@" 2>&1)
+  }
+  ui_line() { grep "^$1" <<<"$2" | head -n 1; }
+
+  # status: contagem por extensao, globs, pastas e marcadores; testes, stories, minificados e dist de fora.
+  P="$UT/proj"
+  mkdir -p "$P/src/components" "$P/src/pages" "$P/src/styles" "$P/dist" "$P/infra" "$P/scripts"
+  for f in src/components/Botao.tsx src/components/Card.tsx src/pages/Home.tsx src/styles/app.css src/styles/tokens.css \
+    src/components/Botao.test.tsx src/components/Card.stories.tsx dist/saida.html src/styles/lib.min.css src/api.ts \
+    infra/variables.tf scripts/tokens.py src/theme.test.ts; do printf 'x\n' >"$P/$f"; done
+  printf 'export default {}\n' >"$P/tailwind.config.ts"
+  printf '%s\n' '{"dependencies":{"@mui/material":"1","@radix-ui/react-dialog":"1","left-pad":"1"},"devDependencies":{"tailwindcss":"1"}}' >"$P/package.json"
+  ui_commit "$P"
+  CFG0="$(mktemp -d "$TMP_ALL/uicfg.XXXXXX")"
+  out="$(ui_status "$CFG0" "$PATH")"; code=$?
+  if [ "$code" = "0" ] && [ "$(ui_line 'ui: ' "$out")" = "ui: 5 arquivos de interface (tsx 3, css 2)" ] &&
+    [ "$(ui_line 'ui globs: ' "$out")" = "ui globs: **/*.tsx **/*.css" ] &&
+    [ "$(ui_line 'ui pastas: ' "$out")" = "ui pastas: src/components (2), src/styles (2), src/pages (1)" ]; then
+    ok "ui status: conta por extensão, propõe globs e pastas; teste, story, minificado e dist ficam de fora"
+  else ko "ui status: conta por extensão, propõe globs e pastas; teste, story, minificado e dist ficam de fora" "exit $code, $out"; fi
+  design="$(ui_line 'ui design: ' "$out")"
+  d_bad=""
+  for want in 'tailwind (tailwind.config.ts)' 'tokens (src/styles/tokens.css)' 'mui (package.json)' 'radix (package.json)'; do
+    grep -qF -- "$want" <<<"$design" || d_bad+="[$want] "
+  done
+  [ "$(grep -o 'tailwind' <<<"$design" | wc -l | tr -d ' ')" = "2" ] || d_bad+="tailwind repetido "
+  ! grep -qF 'left-pad' <<<"$design" || d_bad+="left-pad "
+  if [ -z "$d_bad" ]; then ok "ui status: biblioteca, tema e tokens pelo nome do arquivo e pelas dependências"
+  else ko "ui status: biblioteca, tema e tokens pelo nome do arquivo e pelas dependências" "$d_bad: $design"; fi
+  if ! grep -qE 'variáveis|tema|tokens\.py' <<<"$design"; then ok "ui status: variables.tf, tokens.py e theme.test.ts não contam como tema nem como tokens"
+  else ko "ui status: variables.tf, tokens.py e theme.test.ts não contam como tema nem como tokens" "$design"; fi
+  if ! grep -q '^rule: ' <<<"$out" && [ -z "$(ls -A "$CFG0")" ]; then ok "ui status: sem ui no kit.json não há linha rule, e nada é criado na config do usuário"
+  else ko "ui status: sem ui no kit.json não há linha rule, e nada é criado na config do usuário" "$out"; fi
+  N="$UT/semtela"
+  mkdir -p "$N/src"
+  printf 'x\n' >"$N/src/api.ts"
+  ui_commit "$N"
+  out="$(P="$N" ui_status "$CFG0" "$PATH")"
+  if [ "$(ui_line 'ui' "$out")" = "ui: nenhum arquivo de interface" ] && ! grep -q '^ui globs' <<<"$out" && grep -q '^captura: ' <<<"$out"; then
+    ok "ui status: projeto sem tela diz nenhum arquivo de interface"
+  else ko "ui status: projeto sem tela diz nenhum arquivo de interface" "$out"; fi
+  "$TBASH" "$UIS" >/dev/null 2>&1; c1=$?
+  "$TBASH" "$UIS" status "$UT/nao-existe" >/dev/null 2>&1; c2=$?
+  if [ "$c1" = "2" ] && [ "$c2" = "2" ]; then ok "ui: sem subcomando ou com pasta inexistente sai com 2"; else ko "ui: sem subcomando ou com pasta inexistente sai com 2" "$c1 $c2"; fi
+
+  # Linha rule: estado da .claude/rules/kit-ui.md frente ao template, ao bloco de regras e a ui.globs.
+  # E o que o modo reparo do init usa para criar ou atualizar a rule.
+  mkdir -p "$P/.claude/rules"
+  RK="$P/.claude/kit.json"
+  RR="$P/.claude/rules/kit-ui.md"
+  rule_line() { ui_line 'rule: ' "$(ui_status "$CFG0" "$PATH")"; }
+  # Uso: write_rule <versao> <glob>... Grava a rule como o init grava: paths, cabecalho e o bloco de regras.
+  write_rule() {
+    local v="$1" g
+    shift
+    { printf '%s\n' '---' 'paths:'; for g in "$@"; do printf '  - "%s"\n' "$g"; done
+      printf '%s\n' '---' "<!-- kit:ui v$v -->" '# Interface deste projeto' '' '- Tema e tokens: `src/styles/tokens.css`' ''
+      cat "$REPO/plugins/kit/skills/execute/ui-rules.md"; } >"$RR"
+  }
+  printf '%s\n' '{"ui":{"globs":["**/*.tsx","**/*.css"]}}' >"$RK"
+  r1="$(rule_line)"
+  write_rule 1 '**/*.tsx' '**/*.css'
+  r2="$(rule_line)"
+  grep -v '^3\. ' "$RR" >"$RR.tmp" && mv "$RR.tmp" "$RR"
+  r3="$(rule_line)"
+  write_rule 1 '**/*.tsx'
+  r4="$(rule_line)"
+  write_rule 0 '**/*.tsx' '**/*.css'
+  r5="$(rule_line)"
+  printf '%s\n' '# Regras de tela escritas pelo projeto' >"$RR"
+  r6="$(rule_line)"
+  printf '%s\n' '{"ui":false}' >"$RK"
+  r7="$(rule_line)"
+  rm -rf "$RK" "$P/.claude/rules"
+  if [ "$r1" = "rule: ausente" ] && [ "$r2" = "rule: ok" ] && [ "$r3" = "rule: desatualizada — 1 linhas do bloco de regras diferentes das do kit" ] &&
+    [ "$r4" = "rule: desatualizada — paths sem o glob **/*.css de ui.globs" ] && [ "$r5" = "rule: desatualizada — versão 0, a do kit é 1" ] &&
+    [ "$r6" = "rule: do projeto (sem o cabeçalho kit:ui)" ] && [ -z "$r7" ] && [ -z "$(ls -A "$CFG0")" ]; then
+    ok "ui status: rule ausente, em dia, com regra, glob ou versão para trás, e do projeto; ui false não tem a linha"
+  else ko "ui status: rule ausente, em dia, com regra, glob ou versão para trás, e do projeto; ui false não tem a linha" "1='$r1' 2='$r2' 3='$r3' 4='$r4' 5='$r5' 6='$r6' 7='$r7'"; fi
+
+  # Sem node: status diz ausente e a captura sai com 3.
+  NONODE_PATH="$(path_without node)"
+  if found_in_path "$NONODE_PATH" node >/dev/null; then
+    ko "PATH de teste sem node" "node ainda encontrado em $(found_in_path "$NONODE_PATH" node)"
+  else
+    out="$(ui_status "$CFG0" "$NONODE_PATH")"
+    if grep -qx 'node: ausente' <<<"$out" && grep -qx 'navegador: ausente' <<<"$out" && grep -qx 'captura: nenhuma — revisão de interface só pelo código' <<<"$out"; then
+      ok "ui status: sem node não há captura"
+    else ko "ui status: sem node não há captura" "$out"; fi
+    out="$(cd "$P" && PATH="$NONODE_PATH" "$TBASH" "$UIS" capture 2>&1)"; code=$?
+    if [ "$code" = "3" ] && grep -qF 'node não encontrado; sem captura' <<<"$out"; then ok "ui capture: sem node sai com 3 e diz que a revisão segue pelo código"
+    else ko "ui capture: sem node sai com 3 e diz que a revisão segue pelo código" "exit $code, $out"; fi
+  fi
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "  pulado modos de captura e captura no navegador (sem node)"
+  else
+    # Linha captura: pelo que existe. KIT_UI_BROWSER troca o navegador por um arquivo que existe ou nao.
+    ws="$(node -e 'process.stdout.write(typeof WebSocket === "undefined" ? "0" : "1")')"
+    exists="$(mixed_path "$(command -v git)")"
+    m1="$(ui_line 'captura: ' "$(KIT_UI_BROWSER="$exists" ui_status "$CFG0" "$PATH")")"
+    m2="$(ui_line 'captura: ' "$(KIT_UI_BROWSER="$UT/nao-existe" ui_status "$CFG0" "$PATH")")"
+    mkdir -p "$P/.claude"
+    printf '%s\n' '{"ui":{"globs":["lib/**"],"screenshot":"tira {out}"}}' >"$P/.claude/kit.json"
+    m3="$(ui_line 'captura: ' "$(KIT_UI_BROWSER="$UT/nao-existe" ui_status "$CFG0" "$PATH")")"
+    rm -f "$P/.claude/kit.json"
+    if [ "$m1" = "captura: kit" ] && [ "$m2" = "captura: nenhuma — revisão de interface só pelo código" ] &&
+      [ "$m3" = "captura: comando (ui.screenshot do kit.json)" ]; then
+      ok "ui status: captura pelo kit, nenhuma e pelo comando do projeto"
+    else ko "ui status: captura pelo kit, nenhuma e pelo comando do projeto" "1='$m1' 2='$m2' 3='$m3'"; fi
+
+    doc="$(node "$SCRIPTS/ui-capture.mjs" --doctor 2>/dev/null | tr -d '\r')"
+    if ! grep -q '^navegador: ok' <<<"$doc"; then
+      echo "  pulado captura no navegador (nenhum Chromium instalado)"
+    else
+      free_port() { node -e 'const s = require("net").createServer(); s.listen(0, "127.0.0.1", () => { process.stdout.write(String(s.address().port)); s.close(); });'; }
+      url_up() { node -e 'const q = require("http").get(process.argv[1], { timeout: 1500 }, (r) => { r.resume(); process.exit(0); }); q.on("error", () => process.exit(1)); q.on("timeout", () => { q.destroy(); process.exit(1); });' "$1"; }
+      stop_pid() {
+        local w
+        if [ "$TEST_PLATFORM" = "windows" ]; then
+          w="$(cat "/proc/$1/winpid" 2>/dev/null)"
+          [ -z "$w" ] || taskkill //T //F //PID "$w" >/dev/null 2>&1
+        fi
+        kill "$1" 2>/dev/null
+        wait "$1" 2>/dev/null
+      }
+      PORT="$(free_port)"
+      BASE="http://127.0.0.1:$PORT"
+      SRV="$(mixed_path "$HERE/ui/server.mjs")"
+      C="$UT/cap"
+      mkdir -p "$C/.claude"
+      jq -n --arg dev "node '$SRV' $PORT" --arg url "$BASE" '{ui: {globs: ["**/*.html"], dev: $dev, url: $url, routes: ["/"]}}' >"$C/.claude/kit.json"
+      cap() { (cd "$1" && shift && "$TBASH" "$UIS" capture "$@"); }
+
+      out="$(cap "$C" --name t --routes /,/ruim,/escuro,/longa,/nao-existe 2>"$UT/cap.err")"; code=$?
+      R="$C/.claude/state/ui/t/report.json"
+      if [ "$code" = "3" ] && grep -qF 'navegador não iniciou' "$UT/cap.err"; then
+        echo "  pulado captura no navegador (o navegador não inicia nesta máquina: $(head -c 200 "$UT/cap.err" | tr '\n' ' '))"
+      else
+        s_bad=""
+        for want in 'captura: navegador (' 'app iniciado por ui.dev' '5 telas' 'imagens em 360x800, 768x1024, 1280x800, 1920x1080' \
+          'achado [B2] rolagem-horizontal em 320–600px' 'conferir [M7] texto-pequeno' 'tema claro e escuro' 'resultado: 13 achados, 2 a conferir'; do
+          grep -qF -- "$want" <<<"$out" || s_bad+="[$want] "
+        done
+        if [ "$code" = "1" ] && [ -z "$s_bad" ]; then ok "ui capture: sobe o app, percorre as larguras e resume os achados (exit 1)"
+        else ko "ui capture: sobe o app, percorre as larguras e resume os achados (exit 1)" "exit $code, faltou $s_bad; $(tail -n 5 <<<"$out") $(head -c 300 "$UT/cap.err")"; fi
+        [ -f "$R" ] || printf '{}\n' >"$R"
+        if jq -e '.screens[0] | .route == "/" and .findings == [] and .dark == true and .breakpoints == [700] and (.images | length) == 6
+            and ([.images[] | select(.theme == "escuro")] | length) == 2' "$R" >/dev/null 2>&1; then
+          ok "ui capture: página limpa sem achado, uma imagem por tamanho e duas no tema escuro"
+        else ko "ui capture: página limpa sem achado, uma imagem por tamanho e duas no tema escuro" "$(jq -c '.screens[0]' "$R" 2>&1 | head -c 500)"; fi
+        if jq -e '.widths as $w | all((320, 360, 600, 699, 700, 701, 768, 899, 900, 901, 1280, 1920); . as $x | $w | index($x) != null)
+            and .viewports == ["360x800", "768x1024", "1280x800", "1920x1080"] and .mode == "navegador" and .server == "iniciado"' "$R" >/dev/null 2>&1; then
+          ok "ui capture: larguras padrão mais um pixel antes e depois de cada ponto de quebra do CSS"
+        else ko "ui capture: larguras padrão mais um pixel antes e depois de cada ponto de quebra do CSS" "$(jq -c '{widths, viewports, mode, server}' "$R" 2>&1)"; fi
+        if jq -e '.screens[1].findings as $f | def f3($r; $i; $l): any($f[]; .rule == $r and .id == $i and .level == $l);
+            f3("rolagem-horizontal"; "B2"; "achado") and f3("sem-nome"; "B3"; "achado") and f3("sem-teclado"; "B3"; "achado")
+            and f3("contraste"; "M1"; "achado") and f3("alvo-pequeno"; "M2"; "achado") and f3("so-placeholder"; "M8"; "achado")
+            and f3("sem-alt"; "M8"; "achado") and f3("sem-lang"; "M8"; "achado") and f3("texto-pequeno"; "M7"; "conferir")
+            and f3("titulos"; "M8"; "conferir") and f3("console"; "M9"; "achado") and f3("requisicao"; "M9"; "achado")' "$R" >/dev/null 2>&1; then
+          ok "ui capture: página com defeitos sai com cada regra, id e nível"
+        else ko "ui capture: página com defeitos sai com cada regra, id e nível" "$(jq -c '[.screens[1].findings[] | "\(.level) \(.id) \(.rule)"]' "$R" 2>&1)"; fi
+        if jq -e 'any(.screens[1].findings[]; .rule == "rolagem-horizontal" and .widths == "320–600" and (.detail | contains("table (600px)")))
+            and any(.screens[1].findings[]; .rule == "contraste" and (.detail | contains("2.32:1")) and (.detail | contains("#aaaaaa sobre #ffffff")))
+            and any(.screens[1].findings[]; .rule == "alvo-pequeno" and .count == 3 and .widths == "")
+            and .screens[1].breakpoints == [900]' "$R" >/dev/null 2>&1; then
+          ok "ui capture: rolagem horizontal com a faixa de larguras e o elemento, contraste com a razão e as cores"
+        else ko "ui capture: rolagem horizontal com a faixa de larguras e o elemento, contraste com a razão e as cores" "$(jq -c '[.screens[1].findings[] | select(.rule == "rolagem-horizontal" or .rule == "contraste" or .rule == "alvo-pequeno")]' "$R" 2>&1 | head -c 700)"; fi
+        if jq -e '.screens[2] | (.findings | length) == 1 and .findings[0].rule == "contraste (tema escuro)" and .findings[0].id == "M1" and .dark == true' "$R" >/dev/null 2>&1; then
+          ok "ui capture: contraste ruim só no tema escuro é achado"
+        else ko "ui capture: contraste ruim só no tema escuro é achado" "$(jq -c '.screens[2].findings' "$R" 2>&1 | head -c 400)"; fi
+        if jq -e '.screens[3] | .findings == [] and (.images | length) == 12 and ([.images[] | .parts] | unique) == [3]' "$R" >/dev/null 2>&1; then
+          ok "ui capture: página longa sai em três partes por tamanho"
+        else ko "ui capture: página longa sai em três partes por tamanho" "$(jq -c '.screens[3].images' "$R" 2>&1 | head -c 400)"; fi
+        if jq -e '.screens[4] | (.findings | length) == 1 and .findings[0].rule == "nao-carregou" and .findings[0].id == "M9" and (.images | length) == 1' "$R" >/dev/null 2>&1; then
+          ok "ui capture: rota 404 vira um achado, sem sondar a página de erro"
+        else ko "ui capture: rota 404 vira um achado, sem sondar a página de erro" "$(jq -c '.screens[4]' "$R" 2>&1 | head -c 400)"; fi
+        i_bad=""
+        while IFS= read -r f; do
+          [ -n "$f" ] || continue
+          [ -s "$C/.claude/state/ui/t/$f" ] || i_bad+="$f "
+        done < <(jq -r '.screens[].images[].file' "$R" 2>/dev/null | tr -d '\r')
+        dims="$(node -e 'const b = require("fs").readFileSync(process.argv[1]); process.stdout.write(b.toString("latin1", 1, 4) + " " + b.readUInt32BE(16) + "x" + b.readUInt32BE(20));' "$C/.claude/state/ui/t/raiz-360x800-1.png" 2>&1)"
+        if [ -z "$i_bad" ] && [ "$dims" = "PNG 360x800" ] && jq -e '.totals == {findings: 13, check: 2, images: 29, incomplete: 0}' "$R" >/dev/null 2>&1; then
+          ok "ui capture: toda imagem do relatório existe, PNG no tamanho pedido"
+        else ko "ui capture: toda imagem do relatório existe, PNG no tamanho pedido" "faltam: $i_bad; $dims; $(jq -c '.totals' "$R" 2>&1)"; fi
+        if ! url_up "$BASE/"; then ok "ui capture: o app que a captura subiu foi derrubado"; else ko "ui capture: o app que a captura subiu foi derrubado" "$BASE ainda responde"; fi
+
+        # App ja rodando: nao e derrubado. --probe-only nao grava imagem e sai 0 em pagina limpa.
+        (cd "$HERE/ui" && exec node server.mjs "$PORT") >/dev/null 2>&1 &
+        srv=$!
+        for _ in $(seq 1 40); do url_up "$BASE/" && break; sleep 0.25; done
+        out="$(cap "$C" --name p --probe-only --routes / 2>&1)"; code=$?
+        if [ "$code" = "0" ] && grep -qF 'app já estava rodando' <<<"$out" && grep -qF 'sem achados na sondagem' <<<"$out" &&
+          [ -f "$C/.claude/state/ui/p/report.json" ] && ! ls "$C/.claude/state/ui/p/"*.png >/dev/null 2>&1 && url_up "$BASE/"; then
+          ok "ui capture --probe-only: sem imagem, exit 0 em página limpa, app que já rodava continua rodando"
+        else ko "ui capture --probe-only: sem imagem, exit 0 em página limpa, app que já rodava continua rodando" "exit $code, $out"; fi
+
+        # axe-core do projeto: as regras dele entram; as que a sondagem ja mede ficam de fora.
+        A="$UT/axe"
+        mkdir -p "$A/.claude" "$A/node_modules/axe-core"
+        cp "$C/.claude/kit.json" "$A/.claude/kit.json"
+        printf '%s\n' 'window.axe = { run: async () => ({ violations: [{ id: "landmark-one-main", impact: "serious", help: "Documento precisa de um landmark main", helpUrl: "https://regras.test/landmark", nodes: [{ target: ["html"] }] }, { id: "color-contrast", impact: "serious", help: "x", helpUrl: "y", nodes: [{ target: ["p"] }] }, { id: "select-name", impact: "critical", help: "Select precisa de nome", helpUrl: "https://regras.test/select", nodes: [{ target: ["select"] }] }, { id: "aria-required-attr", impact: "critical", help: "Atributo ARIA obrigatório", helpUrl: "https://regras.test/aria", nodes: [{ target: ["div"] }] }] }) };' >"$A/node_modules/axe-core/axe.min.js"
+        out="$(cap "$A" --name a --probe-only --routes / 2>&1)"; code=$?
+        RX="$A/.claude/state/ui/a/report.json"
+        if [ "$code" = "1" ] && jq -e '.screens[0].findings as $f | ($f | length) == 3
+            and any($f[]; .rule == "axe:landmark-one-main" and .id == "M8" and .level == "achado" and (.detail | contains("https://regras.test/landmark")))' "$RX" >/dev/null 2>&1; then
+          ok "ui capture: axe-core do projeto entra no relatório, sem repetir o que a sondagem mede"
+        else ko "ui capture: axe-core do projeto entra no relatório, sem repetir o que a sondagem mede" "exit $code, $out"; fi
+        if jq -e '.screens[0].findings as $f | any($f[]; .rule == "axe:select-name" and .id == "B3") and any($f[]; .rule == "axe:aria-required-attr" and .id == "M8" and .level == "achado")
+            and all($f[]; .widths == "")' "$RX" >/dev/null 2>&1; then
+          ok "ui capture: regra do axe de nome acessível sai como B3 e as outras como M8, sem faixa de larguras enganosa"
+        else ko "ui capture: regra do axe de nome acessível sai como B3 e as outras como M8, sem faixa de larguras enganosa" "$(jq -c '[.screens[0].findings[] | {rule, id, level, widths}]' "$RX" 2>&1 | head -c 500)"; fi
+
+        # Casos de borda numa rodada so: dialogo na carga, overflow-x oculto, texto sobre imagem, elemento
+        # dimensionado por script, redirecionamento e rota que so muda a ancora.
+        E="$UT/borda"
+        mkdir -p "$E/.claude"
+        jq -n --arg url "$BASE" '{ui: {globs: ["**/*.html"], url: $url, viewports: ["360x800", "1280x800"]}}' >"$E/.claude/kit.json"
+        out="$(KIT_UI_LOAD_MS=4000 cap "$E" --name b --probe-only --routes '/borda,/grafico,/cortada,/vai/longa,/#topo' 2>&1)"; code=$?
+        RB="$E/.claude/state/ui/b/report.json"
+        if [ "$code" = "0" ] && jq -e '.screens[0] | any(.warnings[]; contains("alert: sessão expirada")) and .title == "Casos de borda"' "$RB" >/dev/null 2>&1; then
+          ok "ui capture: diálogo aberto na carga é fechado e vira aviso, sem travar a captura"
+        else ko "ui capture: diálogo aberto na carga é fechado e vira aviso, sem travar a captura" "exit $code, $(tail -n 8 <<<"$out")"; fi
+        if jq -e '.screens[0].findings | length == 1 and .[0].rule == "contraste" and .[0].level == "conferir" and (.[0].detail | contains("há imagem na área do texto"))' "$RB" >/dev/null 2>&1; then
+          ok "ui capture: menu fechado fora da tela não é rolagem horizontal; texto sobre imagem é conferir, não achado"
+        else ko "ui capture: menu fechado fora da tela não é rolagem horizontal; texto sobre imagem é conferir, não achado" "$(jq -c '.screens[0].findings' "$RB" 2>&1 | head -c 500)"; fi
+        if jq -e '.screens[1].findings == []' "$RB" >/dev/null 2>&1; then ok "ui capture: rolagem horizontal que some ao recarregar na largura sai do relatório"
+        else ko "ui capture: rolagem horizontal que some ao recarregar na largura sai do relatório" "$(jq -c '.screens[1].findings' "$RB" 2>&1 | head -c 400)"; fi
+        if jq -e '.screens[2].findings | length == 1 and .[0].rule == "corte-horizontal" and .[0].id == "B2" and .[0].level == "conferir"
+            and .[0].widths == "320–820" and (.[0].detail | contains("div.larga (900px)"))' "$RB" >/dev/null 2>&1; then
+          ok "ui capture: conteúdo cortado por overflow-x oculto é conferir, com a faixa de larguras"
+        else ko "ui capture: conteúdo cortado por overflow-x oculto é conferir, com a faixa de larguras" "$(jq -c '.screens[2].findings' "$RB" 2>&1 | head -c 400)"; fi
+        if jq -e '.screens[3] | (.final_url | endswith("/longa")) and any(.warnings[]; contains("redirecionou para"))' "$RB" >/dev/null 2>&1 &&
+          grep -qF "/vai/longa → $BASE/longa" <<<"$out"; then
+          ok "ui capture: rota redirecionada sai com o destino e um aviso"
+        else ko "ui capture: rota redirecionada sai com o destino e um aviso" "$(jq -c '.screens[3] | {final_url, warnings}' "$RB" 2>&1 | head -c 400)"; fi
+        if jq -e '.screens[4] | .warnings == [] and .findings == [] and .title == "Pedidos"' "$RB" >/dev/null 2>&1; then
+          ok "ui capture: rota que só muda a âncora recarrega a página em vez de esperar o tempo de carga"
+        else ko "ui capture: rota que só muda a âncora recarrega a página em vez de esperar o tempo de carga" "$(jq -c '.screens[4] | {warnings, findings}' "$RB" 2>&1 | head -c 400)"; fi
+
+        # Tela sem sondagem nao sai como limpa: exit 5, linha incompleta e contagem no relatorio.
+        out="$(KIT_UI_BUDGET_S=0 cap "$E" --name tempo --probe-only --routes / 2>&1)"; code=$?
+        if [ "$code" = "5" ] && grep -qF 'incompleta: tempo esgotado' <<<"$out" && grep -qF '1 tela sem sondagem completa' <<<"$out" &&
+          ! grep -qF 'sem achados na sondagem' <<<"$out" &&
+          jq -e '.totals.incomplete == 1 and (.screens[0].incomplete | startswith("tempo esgotado"))' "$E/.claude/state/ui/tempo/report.json" >/dev/null 2>&1; then
+          ok "ui capture: tela que não foi sondada sai como incompleta, com exit 5"
+        else ko "ui capture: tela que não foi sondada sai como incompleta, com exit 5" "exit $code, $out"; fi
+
+        # Rotas de mesmo slug nao gravam por cima uma da outra. --out so apaga o que a captura anterior gravou.
+        FORA="$UT/fora"
+        mkdir -p "$FORA"
+        printf 'x\n' >"$FORA/minha.png"
+        cap "$E" --name s --out "$(mixed_path "$FORA")" --routes '/grafico?a=1,/grafico?a-1' >/dev/null 2>&1; c1=$?
+        RS="$FORA/report.json"
+        s_ok=0
+        jq -e '([.screens[].images[].file] | length) == 4 and ([.screens[].images[].file] | unique | length) == 4
+            and any(.screens[1].images[]; .file == "grafico-a-1-2-360x800-1.png")' "$RS" >/dev/null 2>&1 && [ -s "$FORA/grafico-a-1-360x800-1.png" ] && s_ok=1
+        cap "$E" --name s --out "$(mixed_path "$FORA")" --probe-only --routes /grafico >/dev/null 2>&1; c2=$?
+        if [ "$c1" = "0" ] && [ "$s_ok" = "1" ]; then ok "ui capture: rotas com o mesmo nome de arquivo ganham sufixo e não se sobrescrevem"
+        else ko "ui capture: rotas com o mesmo nome de arquivo ganham sufixo e não se sobrescrevem" "exit $c1, $(jq -c '[.screens[].images[].file]' "$RS" 2>&1 | head -c 400)"; fi
+        if [ "$c2" = "0" ] && [ -s "$FORA/minha.png" ] && ! ls "$FORA"/grafico-*.png >/dev/null 2>&1; then
+          ok "ui capture --out: apaga só as imagens da captura anterior; arquivo de outra origem fica"
+        else ko "ui capture --out: apaga só as imagens da captura anterior; arquivo de outra origem fica" "exit $c2, $(ls "$FORA" | tr '\n' ' ')"; fi
+
+        # App que ja ocupa a porta e demora a responder: a captura espera, nao sobe ui.dev e nao o derruba.
+        LPORT="$(free_port)"
+        LURL="http://127.0.0.1:$LPORT"
+        L="$UT/lento"
+        mkdir -p "$L/.claude"
+        jq -n --arg url "$LURL" '{ui: {globs: ["**/*.html"], dev: "echo subiu > dev-rodou.txt; sleep 30", url: $url, viewports: ["360x800"]}}' >"$L/.claude/kit.json"
+        (cd "$HERE/ui" && FIXTURE_HOLD_MS=6000 exec node server.mjs "$LPORT") >/dev/null 2>&1 &
+        lsrv=$!
+        for _ in $(seq 1 40); do node -e 'const s = require("net").connect(Number(process.argv[1]), "127.0.0.1"); s.on("connect", () => process.exit(0)); s.on("error", () => process.exit(1));' "$LPORT" && break; sleep 0.1; done
+        out="$(cap "$L" --name l --probe-only --routes /grafico 2>&1)"; code=$?
+        if [ "$code" = "0" ] && grep -qF 'app já estava rodando' <<<"$out" && [ ! -e "$L/dev-rodou.txt" ] && url_up "$LURL/"; then
+          ok "ui capture: app lento que já ocupa a porta é esperado, sem subir ui.dev e sem ser derrubado"
+        else ko "ui capture: app lento que já ocupa a porta é esperado, sem subir ui.dev e sem ser derrubado" "exit $code, dev rodou: $([ -e "$L/dev-rodou.txt" ] && echo sim || echo não), $(tail -n 4 <<<"$out")"; fi
+        stop_pid "$lsrv"
+
+        # Passos: preparo com login (senha por variavel de ambiente), menu que abre no pointerdown, campo cujo
+        # valor so existe com o evento input e Enter que envia. O defeito so existe com o formulario aberto.
+        STEPS='{"setup":[{"goto":"/entrar"},{"fill":"text=E-mail","value":"ana@exemplo.test"},{"fill":"text=Senha","value":"${KIT_UI_TESTE_SENHA}"},{"click":"text=Entrar"},{"wait":"text=Minha conta"}],"steps":[{"click":"#abrir-menu"},{"click":"text=Novo pedido"},{"fill":"#cliente","value":"Ana"},{"press":"Enter"},{"wait":"text=Pedido de Ana salvo"}]}'
+        out="$(KIT_UI_TESTE_SENHA=abre-te-sesamo cap "$E" --name passos --routes /conta --steps "$STEPS" 2>&1)"; code=$?
+        RP="$E/.claude/state/ui/passos/report.json"
+        if [ "$code" = "1" ] && grep -qF 'passos: 5 de preparo, 5 por carga' <<<"$out" &&
+          jq -e '.steps == {setup: 5, steps: 5} and (.screens[0] | .title == "Minha conta" and (has("final_url") | not) and (has("incomplete") | not)
+            and any(.findings[]; .rule == "rolagem-horizontal" and .level == "achado" and (.detail | contains("div.linha (520px)"))))' "$RP" >/dev/null 2>&1; then
+          ok "ui capture --steps: login no preparo, menu, campo e Enter levam ao estado, e o defeito que só existe nele é medido"
+        else ko "ui capture --steps: login no preparo, menu, campo e Enter levam ao estado, e o defeito que só existe nele é medido" "exit $code, $(tail -n 6 <<<"$out")"; fi
+        if [ -s "$E/.claude/state/ui/passos/conta-360x800-1.png" ] && ! grep -qF 'abre-te-sesamo' "$RP" && ! grep -qF 'abre-te-sesamo' <<<"$out"; then
+          ok "ui capture --steps: o valor da variável de ambiente não aparece no resumo nem no relatório"
+        else ko "ui capture --steps: o valor da variável de ambiente não aparece no resumo nem no relatório" "$(grep -c 'abre-te-sesamo' "$RP" 2>&1)"; fi
+        out="$(cap "$E" --name semlogin --probe-only --routes /conta 2>&1)"
+        if grep -qF "/conta → $BASE/entrar" <<<"$out" && grep -qF 'redirecionou para' <<<"$out"; then ok "ui capture: a mesma tela sem os passos cai no login e a captura avisa"
+        else ko "ui capture: a mesma tela sem os passos cai no login e a captura avisa" "$(tail -n 5 <<<"$out")"; fi
+        printf '%s\n' '[{"click": "text=Botão que não existe", "timeout": 1200}]' >"$UT/passos-ruins.json"
+        out="$(cap "$E" --name falha --routes /entrar --steps "$UT/passos-ruins.json" 2>&1)"; code=$?
+        if [ "$code" = "5" ] && grep -qF 'incompleta: passo 1 (click "text=Botão que não existe") falhou' <<<"$out" &&
+          [ -s "$E/.claude/state/ui/falha/entrar-falha-360x800-1.png" ]; then
+          ok "ui capture --steps: passo que falha deixa a tela incompleta (exit 5), com o passo e a imagem de onde parou"
+        else ko "ui capture --steps: passo que falha deixa a tela incompleta (exit 5), com o passo e a imagem de onde parou" "exit $code, $(tail -n 5 <<<"$out")"; fi
+        o1="$(cap "$E" --routes /entrar --steps '[{"fill":"#a","value":"${KIT_UI_VARIAVEL_QUE_NAO_EXISTE}"}]' 2>&1)"; c1=$?
+        o2="$(cap "$E" --routes /entrar --steps '[{"clica":"#a"}]' 2>&1)"; c2=$?
+        o3="$(cap "$E" --routes /entrar --steps '[{"click":"#a"}]' --attach http://127.0.0.1:9 2>&1)"; c3=$?
+        o4="$(cap "$E" --name .. --routes /entrar 2>&1)"; c4=$?
+        o5="$(cap "$E" --routes 'file:///etc/passwd' 2>&1)"; c5=$?
+        if [ "$c1$c2$c3$c4$c5" = "22222" ] && grep -qF 'KIT_UI_VARIAVEL_QUE_NAO_EXISTE não está definida' <<<"$o1" && grep -qF 'precisa de uma ação só' <<<"$o2" &&
+          grep -qF 'não combina com --attach' <<<"$o3" && grep -qF 'começa por letra ou número' <<<"$o4" && grep -qF 'precisa ser um caminho do app' <<<"$o5" &&
+          [ ! -e "$E/.claude/state/report.json" ]; then
+          ok "ui capture: variável ausente, ação desconhecida, --steps com --attach, nome que sobe de pasta e rota que não é http saem com 2"
+        else ko "ui capture: variável ausente, ação desconhecida, --steps com --attach, nome que sobe de pasta e rota que não é http saem com 2" "$c1 $o1 | $c2 $o2 | $c3 $o3 | $c4 $o4 | $c5 $o5"; fi
+
+        # Tema escuro ligado por classe (sem media query), app com o corpo fixo e rolagem num conteiner, e
+        # classe .dark que e variante de componente.
+        out="$(cap "$E" --name tema --tiles 2 --routes /classe,/painel 2>&1)"; code=$?
+        RT="$E/.claude/state/ui/tema/report.json"
+        if [ "$code" = "0" ] && grep -qF 'tema claro e escuro (ligado por .dark)' <<<"$out" &&
+          jq -e '.screens[0] | .dark == true and .dark_by == ".dark" and (.findings | length) == 2
+            and all(.findings[]; .rule == "contraste (tema escuro)" and .level == "conferir")
+            and ([.images[] | select(.theme == "escuro")] | length) == 2' "$RT" >/dev/null 2>&1; then
+          ok "ui capture: tema escuro ligado por classe é medido, e o contraste dele sai como conferir"
+        else ko "ui capture: tema escuro ligado por classe é medido, e o contraste dele sai como conferir" "exit $code, $(jq -c '.screens[0] | {dark, dark_by, findings}' "$RT" 2>&1 | head -c 500)"; fi
+        if jq -e '.screens[1] | (has("dark") | not) and .findings == [] and ([.images[] | .parts] | unique) == [2]
+            and any(.warnings[]; contains("só as 2 primeiras foram fotografadas"))' "$RT" >/dev/null 2>&1 &&
+          ! cmp -s "$E/.claude/state/ui/tema/painel-360x800-1.png" "$E/.claude/state/ui/tema/painel-360x800-2.png"; then
+          ok "ui capture: app com o corpo fixo é fotografado rolando o contêiner; .dark de componente não é tema; parte que ficou de fora vira aviso"
+        else ko "ui capture: app com o corpo fixo é fotografado rolando o contêiner; .dark de componente não é tema; parte que ficou de fora vira aviso" "$(jq -c '.screens[1] | {dark, findings, warnings, images}' "$RT" 2>&1 | head -c 600)"; fi
+
+        # Pagina que trava a aba: aquela tela fica incompleta e a seguinte abre numa aba nova.
+        out="$(KIT_UI_REPLY_S=3 cap "$E" --name trava --probe-only --routes /trava,/grafico 2>&1)"; code=$?
+        if [ "$code" = "5" ] && jq -e '(.screens[0].incomplete | startswith("captura interrompida")) and .totals.incomplete == 1
+            and (.screens[1] | (has("incomplete") | not) and .findings == [] and .title == "Gráfico")' "$E/.claude/state/ui/trava/report.json" >/dev/null 2>&1; then
+          ok "ui capture: página que trava a aba fica incompleta, e a tela seguinte é capturada numa aba nova"
+        else ko "ui capture: página que trava a aba fica incompleta, e a tela seguinte é capturada numa aba nova" "exit $code, $(tail -n 8 <<<"$out")"; fi
+
+        # --attach: pagina ja aberta num navegador com porta de depuracao; nao recarrega.
+        if [ "$ws" = "1" ]; then
+          bpath="$(sed -n 's/^navegador: ok [^(]*(\(.*\))$/\1/p' <<<"$doc")"
+          DPORT="$(free_port)"
+          sandbox_flag=""
+          [ "$TEST_PLATFORM" = "linux" ] && sandbox_flag="--no-sandbox"
+          # shellcheck disable=SC2086
+          "$bpath" --headless=new "--remote-debugging-port=$DPORT" "--user-data-dir=$(mixed_path "$UT/perfil")" --no-first-run --disable-gpu $sandbox_flag "$BASE/ruim" >/dev/null 2>&1 &
+          bpid=$!
+          page_open() { node -e 'require("http").get(process.argv[1], (r) => { let b = ""; r.on("data", (c) => (b += c)); r.on("end", () => { try { process.exit(JSON.parse(b).some((t) => t.type === "page" && (t.url || "").endsWith(process.argv[2])) ? 0 : 1); } catch { process.exit(1); } }); }).on("error", () => process.exit(1));' "http://127.0.0.1:$DPORT/json/list" "ruim"; }
+          for _ in $(seq 1 60); do page_open && break; sleep 0.3; done
+          out="$(cap "$C" --attach "http://127.0.0.1:$DPORT" --match /ruim --name anexo 2>&1)"; code=$?
+          RA="$C/.claude/state/ui/anexo/report.json"
+          if [ "$code" = "1" ] && grep -qF 'captura: navegador aberto' <<<"$out" && page_open &&
+            jq -e '.mode == "navegador aberto" and (.screens[0].images | length) == 4
+              and any(.screens[0].findings[]; .rule == "rolagem-horizontal" and .widths == "320–600")
+              and any(.screens[0].findings[]; .rule == "sem-nome")' "$RA" >/dev/null 2>&1; then
+            ok "ui capture --attach: mesma varredura numa página já aberta, sem recarregar"
+          else ko "ui capture --attach: mesma varredura numa página já aberta, sem recarregar" "exit $code, $(tail -n 6 <<<"$out")"; fi
+          out="$(cap "$C" --attach "http://127.0.0.1:$DPORT" --match nenhuma-pagina --name anexo2 2>&1)"; code=$?
+          if [ "$code" = "3" ] && grep -qF 'nenhuma página com "nenhuma-pagina"' <<<"$out"; then ok "ui capture --attach: sem página que casa sai com 3 e lista as abertas"
+          else ko "ui capture --attach: sem página que casa sai com 3 e lista as abertas" "exit $code, $out"; fi
+          stop_pid "$bpid"
+        else
+          echo "  pulado ui capture --attach (node sem WebSocket nativo)"
+        fi
+
+        # Sem navegador: exit 3. Config invalida: exit 2.
+        out="$(KIT_UI_BROWSER="$UT/nao-existe" cap "$C" 2>&1)"; code=$?
+        if [ "$code" = "3" ] && grep -qF 'nenhum navegador Chromium encontrado' <<<"$out"; then ok "ui capture: sem navegador sai com 3"; else ko "ui capture: sem navegador sai com 3" "exit $code, $out"; fi
+        stop_pid "$srv"
+        V="$UT/inval"
+        mkdir -p "$V/.claude"
+        printf '%s\n' '{"ui":{"globs":["x"],"url":"http://127.0.0.1:9","viewports":["360"]}}' >"$V/.claude/kit.json"
+        o1="$(cap "$V" 2>&1)"; c1=$?
+        printf '%s\n' '{"commands":{}}' >"$V/.claude/kit.json"
+        o2="$(cap "$V" 2>&1)"; c2=$?
+        o3="$(cap "$V" --routes 2>&1)"; c3=$?
+        if [ "$c1" = "2" ] && grep -qF 'precisa ser <largura>x<altura>' <<<"$o1" && [ "$c2" = "2" ] && grep -qF 'não tem a chave "ui"' <<<"$o2" &&
+          [ "$c3" = "2" ] && grep -qF -- '--routes precisa de um valor' <<<"$o3"; then
+          ok "ui capture: viewport inválido, kit.json sem ui e opção sem valor saem com 2"
+        else ko "ui capture: viewport inválido, kit.json sem ui e opção sem valor saem com 2" "$c1 $o1 | $c2 $o2 | $c3 $o3"; fi
+
+        # App que nao sobe: exit 4 com o fim do log, e o processo de ui.dev nao fica para tras.
+        F="$UT/falha"
+        mkdir -p "$F/.claude"
+        FURL="http://127.0.0.1:$(free_port)"
+        jq -n --arg url "$FURL" '{ui: {globs: ["x"], dev: "echo quebrou a subida; exit 7", url: $url}}' >"$F/.claude/kit.json"
+        o1="$(cap "$F" 2>&1)"; c1=$?
+        jq -n --arg url "$FURL" '{ui: {globs: ["x"], dev: "echo $$ > dev.pid; sleep 60", url: $url}}' >"$F/.claude/kit.json"
+        o2="$(KIT_UI_WAIT_S=2 cap "$F" 2>&1)"; c2=$?
+        sleep 1
+        alive=0
+        kill -0 "$(cat "$F/dev.pid" 2>/dev/null)" 2>/dev/null && alive=1
+        jq -n --arg url "$FURL" '{ui: {globs: ["x"], url: $url}}' >"$F/.claude/kit.json"
+        o3="$(cap "$F" 2>&1)"; c3=$?
+        if [ "$c1" = "4" ] && grep -qF 'terminou (código 7)' <<<"$o1" && grep -qF 'quebrou a subida' <<<"$o1" &&
+          [ "$c2" = "4" ] && grep -qF 'não respondeu em 2s' <<<"$o2" && [ "$alive" = "0" ] &&
+          [ "$c3" = "4" ] && grep -qF 'não tem ui.dev' <<<"$o3"; then
+          ok "ui capture: app que falha, não responde ou não tem ui.dev sai com 4, sem processo para trás"
+        else ko "ui capture: app que falha, não responde ou não tem ui.dev sai com 4, sem processo para trás" "$c1 $o1 | $c2 $o2 vivo=$alive | $c3 $o3"; fi
+
+        # ui.screenshot: a captura e o comando do projeto, sem sondagem.
+        K="$UT/cmd"
+        mkdir -p "$K/.claude"
+        png="$(mixed_path "$C/.claude/state/ui/t/raiz-360x800-1.png")"
+        jq -n --arg c "cp '$png' {out}" '{ui: {globs: ["lib/**"], screenshot: $c, routes: ["inicio", "perfil"]}}' >"$K/.claude/kit.json"
+        o1="$(cap "$K" --name c 2>&1)"; c1=$?
+        o2="$(cap "$K" --name c2 --probe-only 2>&1)"; c2=$?
+        jq -n '{ui: {globs: ["lib/**"], screenshot: "echo sem simulador >&2; exit 1 # {out}", routes: ["inicio"]}}' >"$K/.claude/kit.json"
+        o3="$(cap "$K" --name c3 2>&1)"; c3=$?
+        if [ "$c1" = "0" ] && grep -qF 'captura: comando' <<<"$o1" && grep -qF 'sem sondagem' <<<"$o1" &&
+          [ -s "$K/.claude/state/ui/c/inicio-1.png" ] && [ -s "$K/.claude/state/ui/c/perfil-1.png" ] &&
+          [ "$c2" = "3" ] && [ "$c3" = "3" ] && grep -qF 'ui.screenshot não gravou inicio-1.png: sem simulador' <<<"$o3"; then
+          ok "ui capture: ui.screenshot grava uma imagem por tela, sem sondagem; comando que falha sai com 3"
+        else ko "ui capture: ui.screenshot grava uma imagem por tela, sem sondagem; comando que falha sai com 3" "$c1 $o1 | $c2 $o2 | $c3 $o3"; fi
+        # {out} com aspas em volta, {route} com espaco e os mesmos valores nas variaveis KIT_UI_*.
+        jq -n --arg c "cp '$png' \"{out}\" && printf '%s' {route} >rota.txt && printf '%s' \"\$KIT_UI_ROUTE\" >rota-env.txt" \
+          '{ui: {globs: ["lib/**"], screenshot: $c, routes: ["a b"]}}' >"$K/.claude/kit.json"
+        o4="$(cap "$K" --name c4 2>&1)"; c4=$?
+        o5="$(cap "$K" --name c5 --steps '[{"click":"#a"}]' 2>&1)"; c5=$?
+        if [ "$c4" = "0" ] && [ -s "$K/.claude/state/ui/c4/a-b-1.png" ] && [ "$(cat "$K/rota.txt" 2>/dev/null)" = "a b" ] && [ "$(cat "$K/rota-env.txt" 2>/dev/null)" = "a b" ] &&
+          [ "$c5" = "2" ] && grep -qF 'não para o comando ui.screenshot' <<<"$o5"; then
+          ok "ui capture: ui.screenshot com {out} entre aspas, {route} e as variáveis KIT_UI_*; --steps não vale para o comando"
+        else ko "ui capture: ui.screenshot com {out} entre aspas, {route} e as variáveis KIT_UI_*; --steps não vale para o comando" "$c4 $o4 | $c5 $o5 | rota='$(cat "$K/rota.txt" 2>&1)'"; fi
+      fi
+    fi
+  fi
 fi
 }
 
@@ -1749,6 +2208,76 @@ if [ -z "$FILTER" ]; then
   if [ -z "$sd_bad" ]; then ok "spec-reviewer e drift-checker: ids, saída, somente leitura, chamados pelas skills e documentados"
   else ko "spec-reviewer e drift-checker: ids, saída, somente leitura, chamados pelas skills e documentados" "$sd_bad"; fi
 
+  # Interface: revisor com ids fixos e somente leitura, regras nas skills, script liberado, sem variavel
+  # de skill em arquivo lido com Read, e todo id que a sondagem usa existe no revisor.
+  UR="$REPO/plugins/kit/agents/ui-reviewer.md"
+  EXE_DIR="$REPO/plugins/kit/skills/execute"
+  ui_bad=""
+  for id in B1 B2 B3 M1 M2 M3 M4 M5 M6 M7 M8 M9; do grep -qE "^- \*\*$id\*\* " "$UR" || ui_bad+="ui-reviewer:$id "; done
+  tr -d '\r' <"$UR" | grep -qx 'tools: Read, Grep, Glob' || ui_bad+="ui-reviewer:tools "
+  grep -qF '`reprovado`' "$UR" && grep -qF '`aprovado`' "$UR" && grep -qF '## Calibração' "$UR" && grep -qF 'report.json' "$UR" &&
+    grep -qF 'revisão só pelo código (sem captura)' "$UR" || ui_bad+="ui-reviewer:saída "
+  for id in $(grep -ohE '"[BM][0-9]+"' "$SCRIPTS/ui-probe.js" "$SCRIPTS/ui-capture.mjs" | tr -d '"' | sort -u); do
+    grep -qE "^- \*\*$id\*\* " "$UR" || ui_bad+="id da sondagem sem regra no revisor:$id "
+  done
+  for rule in $(grep -oE 'add\("[a-z-]+"' "$SCRIPTS/ui-probe.js" | sed -E 's/add\("//; s/"//' | sort -u) console requisicao nao-carregou; do
+    grep -qF "\`$rule\`" "$REPO/docs/reference.md" || ui_bad+="reference sem a regra $rule "
+  done
+  for id in M10 M11; do grep -qE "^- \*\*$id\*\* " "$SR" || ui_bad+="spec-reviewer:$id "; done
+  grep -qE '^- \*\*M9\*\* .*ui\.globs' "$REPO/plugins/kit/agents/plan-reviewer.md" && grep -qE '^- \*\*B3\*\* .*estado de tela' "$REPO/plugins/kit/agents/plan-reviewer.md" || ui_bad+="plan-reviewer "
+  for want in '## Telas' '**Feature com tela.**' 'ui.globs' 'Estados: vazio' 'Tela pequena:' 'Padrão visual:'; do
+    grep -qF -- "$want" "$SPEC_MD" || ui_bad+="spec:'$want' "
+  done
+  grep -qF 'ui.globs' "$PLAN_MD" && grep -qF 'kit:ui-reviewer' "$PLAN_MD" && grep -qF 'seção Telas' "$PLAN_MD" || ui_bad+="plan "
+  grep -qE '^- \[ \] F1\. .*<; em plano com tela: e `kit:ui-reviewer`[^>]*>$' "$TPL" || ui_bad+="template:F1 "
+  EXE_MD="$EXE_DIR/SKILL.md"
+  tr -d '\r' <"$EXE_MD" | grep -q '^allowed-tools:.* Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ui.sh" \*)' || ui_bad+="execute:allowed-tools "
+  for want in '${CLAUDE_SKILL_DIR}/ui.md' '${CLAUDE_SKILL_DIR}/ui-rules.md' 'kit:ui-reviewer' 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/ui.sh"' '"ui": false'; do
+    grep -qF -- "$want" "$EXE_MD" || ui_bad+="execute:'$want' "
+  done
+  for want in '--probe-only' '--steps' '"setup"' 'text=<texto visível>' '${NOME}' '--attach' 'incompleta' 'kit:ui-reviewer' 'sem captura' 'timeout: 600000' \
+    '## No checkpoint da wave' '## Na wave final (F1)'; do
+    grep -qF -- "$want" "$EXE_DIR/ui.md" || ui_bad+="ui.md:'$want' "
+  done
+  # A sondagem e a captura vem antes do verify e dos revisores, para as correcoes delas passarem por eles.
+  grep -qE '^   1\. Interface: .*sondagem do checkpoint' "$EXE_MD" && grep -qE '^   2\. Re-rode os `verify`' "$EXE_MD" &&
+    grep -qE '^   1\. F1: em plano com tela .*comece pela captura completa' "$EXE_MD" || ui_bad+="execute:ordem da sondagem "
+  # Toda acao de passo que o script aceita esta descrita para quem vai usa-la, e a captura nao depende de plugin de terceiro.
+  for act in $(sed -n 's/^const STEP_ACTIONS = \[\(.*\)\];$/\1/p' "$SCRIPTS/ui-capture.mjs" | tr -d '",'); do
+    grep -qF "{\"$act\":" "$EXE_DIR/ui.md" || ui_bad+="ui.md sem o passo $act "
+    grep -qF "{\"$act\":" "$REPO/docs/reference.md" || ui_bad+="reference sem o passo $act "
+  done
+  ! grep -rqiE 'dev-browser|9223' "$REPO/plugins/kit" || ui_bad+="plugin ainda cita dev-browser: $(grep -rliE 'dev-browser|9223' "$REPO/plugins/kit" | tr '\n' ' ')"
+  ! grep -qF '${CLAUDE_' "$EXE_DIR/ui.md" "$EXE_DIR/ui-rules.md" || ui_bad+="variável de skill em arquivo lido com Read "
+  [ "$(head -n 1 "$EXE_DIR/ui-rules.md" | tr -d '\r')" = "Interface: vale para todo arquivo de tela, componente ou estilo." ] &&
+    [ "$(grep -cE '^[0-9]+\. ' "$EXE_DIR/ui-rules.md")" = "10" ] && ! grep -q '^#' "$EXE_DIR/ui-rules.md" || ui_bad+="ui-rules.md "
+  tr -d '\r' <"$INIT_MD" | grep -q '^allowed-tools:.* Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ui.sh" status) ' || ui_bad+="init:allowed-tools "
+  for want in 'ui.sh" status' '.claude/rules/kit-ui.md' 'templates/kit-ui.rule.md' 'skills/execute/ui-rules.md' 'já foi respondido: não proponha de novo' \
+    '`rule: ausente`' '`rule: desatualizada`' '`rule: do projeto`' 'não acrescenta plugin nem marketplace'; do
+    grep -qF -- "$want" "$INIT_MD" || ui_bad+="init:'$want' "
+  done
+  # Cada estado que o ui.sh imprime na linha rule tem instrucao no init.
+  for st in ausente desatualizada 'do projeto' ok; do
+    grep -qF "echo \"$st" "$SCRIPTS/ui.sh" || ui_bad+="ui.sh sem o estado de rule '$st' "
+  done
+  grep -qF '## Interface (`ui`)' "$REPO/plugins/kit/skills/init/stacks.md" || ui_bad+="stacks "
+  jq -e '(.ui.globs | length) > 0 and .ui.viewports == ["360x800", "768x1024", "1280x800", "1920x1080"] and (.ui.dev | length) > 0 and (.ui.url | test("^http://"))' \
+    "$REPO/plugins/kit/templates/kit.example.json" >/dev/null 2>&1 || ui_bad+="kit.example.json "
+  grep -qx 'paths:' "$REPO/plugins/kit/templates/kit-ui.rule.md" && grep -qxF '<!-- kit:ui v1 -->' "$REPO/plugins/kit/templates/kit-ui.rule.md" || ui_bad+="kit-ui.rule.md "
+  grep -qE '^ext\|tsx\|' "$REPO/plugins/kit/templates/ui-markers.txt" && grep -qE '^arquivo\|' "$REPO/plugins/kit/templates/ui-markers.txt" &&
+    grep -qE '^dep\|' "$REPO/plugins/kit/templates/ui-markers.txt" || ui_bad+="ui-markers.txt "
+  for a in adopt.md; do grep -qF 'ui-reviewer' "$REPO/plugins/kit/skills/init/$a" || ui_bad+="adopt:ui-reviewer "; done
+  grep -qF 'ui-reviewer' "$REPO/CONTRIBUTING.md" && grep -qF '| `ui-reviewer` |' "$REPO/docs/reference.md" || ui_bad+="docs:ui-reviewer "
+  grep -qxF '## Interface' "$REPO/README.md" && grep -qF 'Tela atrás de login ou clique' "$REPO/README.md" && grep -qF '| `ui` |' "$REPO/README.md" &&
+    grep -qxF '## Interface' "$REPO/docs/reference.md" && grep -qxF '### `ui`' "$REPO/docs/reference.md" || ui_bad+="README/reference "
+  grep -qF 'ui.sh" capture --probe-only' "$REPO/plugins/kit/skills/fix/SKILL.md" || ui_bad+="fix "
+  if command -v node >/dev/null 2>&1; then
+    node --check "$SCRIPTS/ui-capture.mjs" >/dev/null 2>&1 || ui_bad+="ui-capture.mjs não compila "
+    node -e 'new Function("return " + require("fs").readFileSync(process.argv[1], "utf8"))' "$SCRIPTS/ui-probe.js" >/dev/null 2>&1 || ui_bad+="ui-probe.js não compila "
+  fi
+  if [ -z "$ui_bad" ]; then ok "interface: revisor, regras nas skills, script liberado, sondagem e docs coerentes"
+  else ko "interface: revisor, regras nas skills, script liberado, sondagem e docs coerentes" "$ui_bad"; fi
+
   # Notificacoes: opcionais, perguntadas uma vez, sem duplicar alertas existentes nem guardar segredo.
   nt_bad=""
   for want in 'setup.sh" alerts' 'vai duplicar' 'nenhuma com `(Recomendado)`' '"notify": false' 'já foi respondido: não pergunte de novo' \
@@ -1803,7 +2332,7 @@ for fx in "$HERE"/fixtures/*.json; do
   n="$(jq '.cases | length' "$fx" | tr -d '\r')"
   for ((i = 0; i < n; i += FX_SHARD)); do ALL_GROUPS+=("fx:${fx##*/}:$i:$((i + FX_SHARD))"); done
 done
-ALL_GROUPS+=(semjq forma_shell apoio_init wave_base map_partition setup notify guardas estaticas)
+ALL_GROUPS+=(semjq forma_shell apoio_init wave_base map_partition setup notify interface guardas estaticas)
 
 # Grupos afetados por um arquivo alterado (padroes casados contra "fx:<fixture>" ou o nome do grupo).
 # "*" e a suite inteira; arquivo sem script nem fixture (docs, skills, agents) so roda as estaticas.
@@ -1817,6 +2346,7 @@ groups_for_file() {
     plugins/kit/scripts/notify.sh) echo "fx:notify.json fx:verify-gate-notify.json notify $hooks" ;;
     plugins/kit/scripts/format.sh | plugins/kit/scripts/advise.sh | plugins/kit/scripts/pre-compact.sh | plugins/kit/scripts/session-context.sh)
       local b="${1##*/}"; echo "fx:${b%.sh}.json $hooks" ;;
+    plugins/kit/scripts/ui.sh | plugins/kit/scripts/ui-capture.mjs | plugins/kit/scripts/ui-probe.js | plugins/kit/templates/ui-markers.txt | tests/ui/*) echo "interface" ;;
     plugins/kit/scripts/merge-json.sh) echo "apoio_init setup" ;;
     plugins/kit/scripts/inventory.sh) echo "apoio_init" ;;
     plugins/kit/scripts/map-partition.sh) echo "map_partition" ;;

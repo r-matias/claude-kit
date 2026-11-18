@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Avisos</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  .tabela { width: 640px; border-collapse: collapse; }
+  .tabela td, .tabela th { border: 1px solid #d9d9d9; padding: 9px 13px; text-align: left; }
+  .quando { color: #b8c0c8; }
+  .falha { color: #d92d20; margin-bottom: 11px; }
+  .de-novo { width: 36px; height: 36px; border: 0; border-radius: 5px; background: #1570ef; }
+</style>
+</head>
+<body>
+<header class="topo">
+  <nav aria-label="Principal"><a href="/">Painel</a><a href="/avisos" aria-current="page">Avisos</a></nav>
+</header>
+<main class="conteudo">
+  <h1>Avisos</h1>
+  <p id="estado">Carregando avisos…</p>
+  <div id="erro" hidden>
+    <p class="falha">Não foi possível carregar os avisos.</p>
+    <button id="tentar" class="de-novo" type="button"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><path d="M8 2a6 6 0 1 0 6 6h-2a4 4 0 1 1-4-4V2z" fill="#ffffff"/></svg></button>
+  </div>
+  <table id="lista" class="tabela" hidden>
+    <thead><tr><th>Aviso</th><th>Data</th><th>Texto</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</main>
+<script type="module" src="/avisos.js"></script>
+</body>
+</html>

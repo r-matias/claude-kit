@@ -60,6 +60,27 @@ Na tabela, `\|` é o `|` do padrão (escapado só por causa da tabela). No JSON,
 
 Anotação de teste com homônimo no código de produção (o `@Ignore` do Room, em Android): na regra de teste pulado, troque `files` pelas pastas de teste do projeto (`**/src/test/**`, `**/src/androidTest/**`).
 
+## Interface (`ui`)
+
+Só em projeto com tela. `dev` é o comando que o projeto já usa para subir o app em desenvolvimento e `url` é o endereço em que ele responde; confira a porta na configuração do projeto antes de propor. Framework fora da tabela: leia o script de desenvolvimento do manifesto.
+
+| Framework | `dev` | `url` de partida |
+| --- | --- | --- |
+| Vite (React, Vue, Svelte, SvelteKit) | `npm run dev` | `http://localhost:5173` |
+| Next.js, Nuxt, Remix, Create React App | `npm run dev` (CRA: `npm start`) | `http://localhost:3000` |
+| Angular | `npm start` | `http://localhost:4200` |
+| Astro | `npm run dev` | `http://localhost:4321` |
+| ASP.NET (Razor, Blazor) | `dotnet run --project <projeto web>` | o `applicationUrl` de `Properties/launchSettings.json` |
+| Django | `python manage.py runserver` | `http://127.0.0.1:8000` |
+| Rails | `bin/rails server` | `http://localhost:3000` |
+| Laravel | `php artisan serve` | `http://127.0.0.1:8000` |
+| HTML estático | o servidor estático que o projeto já usa | o endereço dele |
+
+- `globs`: os arquivos de tela, componente e estilo. O `ui.sh status` propõe pelas extensões; tela escrita em arquivo de código (`.js`, `.py`, `.dart`, `.kt`, `.swift`) entra pela pasta, como `src/views/**/*.js`.
+- `routes`: rotas que abrem sem login. Tela atrás de login ou clique não entra aqui: o `/kit:execute` a captura com os passos que levam até ela (`--steps`).
+- `screenshot`: só para tela que não abre em navegador. É o comando do projeto que grava a imagem da tela em `{out}` (também aceita `{url}`, `{route}`, `{width}` e `{height}`), como o do simulador ou do emulador. `{out}`, `{url}` e `{route}` já entram entre aspas; comando que precisa deles no meio de outro texto usa `$KIT_UI_OUT`, `$KIT_UI_URL` e `$KIT_UI_ROUTE`.
+- A captura do kit não usa nenhuma ferramenta do stack: precisa de `node` 16 ou mais novo e de um navegador Chromium instalado (Chrome, Edge, Chromium ou o do Playwright). Se o projeto tem `axe-core` em `node_modules`, a sondagem roda as regras dele junto.
+
 ## Ask (instalação e migração)
 
 | Stack | ask |

@@ -2,7 +2,7 @@
 name: fix
 description: Corrige um bug ou issue pela causa raiz, começando por um teste que reproduz a falha. Use quando algo quebrou, deu erro, regrediu ou um teste falha.
 argument-hint: "[issue-ou-descricao]"
-allowed-tools: Bash(git status *) Bash(git log *)
+allowed-tools: Bash(git status *) Bash(git log *) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ui.sh" *)
 ---
 
 ## Estado atual
@@ -15,6 +15,7 @@ allowed-tools: Bash(git status *) Bash(git log *)
 - Corrija a causa, nunca silencie o erro (sem try/catch vazio, sem skip de teste, sem afrouxar asserção).
 - Comandos vêm de `.claude/kit.json`; não invente comandos do stack. Valor na forma objeto `{ "run", "files" }`: o comando é o `run`. Chave ausente: diga qual faltou e siga com o que existe.
 - Diff mínimo: não refatore nem "melhore" código fora do caminho do bug.
+- Bug visual (layout quebrado num tamanho de tela, texto sem contraste, controle que some ou fica cortado) em projeto com `ui` no `kit.json`: quando nenhum teste do projeto consegue reproduzir, a reprodução é a sondagem `bash "${CLAUDE_PLUGIN_ROOT}/scripts/ui.sh" capture --probe-only --routes <rota da tela>`, rodada na raiz do projeto (a pasta que tem `.claude/kit.json`) com `timeout: 600000`. O `achado` precisa aparecer antes da correção e sumir depois. Bug que só aparece depois de um clique ou com um campo preenchido: acrescente `--steps '[{"click": "<seletor>"}, {"fill": "<seletor>", "value": "<texto>"}]'` com os passos até ele (ações `click`, `fill`, `press`, `hover`, `wait`, `goto` e `js`; seletor CSS ou `text=<texto visível>`), que a sondagem refaz a cada carga. Saída 3 (sem meio de captura): diga isso e corrija pelo código. Saída 5 (tela `incompleta`): a sondagem não mediu a tela inteira; não conte como bug corrigido.
 
 ## Passos
 1. Entenda o problema: $ARGUMENTS. Se for número de issue, use `gh issue view <n>`.
