@@ -38,6 +38,7 @@
     { "name": ".env com espaco no fim negado (Windows)", "platforms": ["windows"], "tool": "Write", "file": ".env ", "expect": "deny" },
     { "name": ".env com ponto no fim negado (Windows)", "platforms": ["windows"], "tool": "Write", "file": ".env.", "expect": "deny" },
     { "name": ".env::$DATA negado (Windows)", "platforms": ["windows"], "tool": "Write", "file": ".env::$DATA", "expect": "deny" },
-    { "name": "Migrations/x.cs:fluxo negado (Windows)", "platforms": ["windows"], "tool": "Edit", "file": "Migrations/001_Init.cs:zone", "expect": "deny" }
+    { "name": "Migrations/x.cs:fluxo negado (Windows)", "platforms": ["windows"], "tool": "Edit", "file": "Migrations/001_Init.cs:zone", "expect": "deny" },
+    { "name": "deny de escrita traz a frase contra contorno", "tool": "Write", "file": ".env", "expect": "deny", "reason": "peca que ele rode manualmente se for intencional" }
   ]
 }

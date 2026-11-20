@@ -158,6 +158,7 @@
     { "name": "git checkout --pathspec-from-file pede confirmacao", "command": "git checkout --pathspec-from-file=lista.txt", "expect": "ask" },
     { "name": "git checkout HEAD -- sem caminho liberado", "command": "git checkout HEAD --", "expect": "allow" },
     { "name": "git restore --source --staged liberado", "command": "git restore --source HEAD~1 --staged x", "expect": "allow" },
-    { "name": "git branch --sort com valor separado liberado", "command": "git branch --sort -refname -d feat/velha", "expect": "allow" }
+    { "name": "git branch --sort com valor separado liberado", "command": "git branch --sort -refname -d feat/velha", "expect": "allow" },
+    { "name": "deny traz a frase contra contorno", "command": "git reset --hard", "expect": "deny", "reason": "Nao tente outro comando, interpretador ou ferramenta para o mesmo efeito" }
   ]
 }

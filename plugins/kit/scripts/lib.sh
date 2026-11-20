@@ -612,9 +612,13 @@ kit_run() {
   (cd "$KIT_ROOT" && "${BASH:-bash}" -c "$1") >"$2" 2>&1
 }
 
+# Frase fixa de todo deny: o contorno mais provavel e o proprio agente trocar de comando ou ferramenta.
+KIT_DENY_NO_WORKAROUND="Nao tente outro comando, interpretador ou ferramenta para o mesmo efeito: explique ao usuario o que queria fazer e peca que ele rode manualmente se for intencional."
+
 kit_deny_pretool() {
-  jq -cn --arg r "$1" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}' ||
-    { echo "$1" >&2; exit 2; }
+  local r="$1 $KIT_DENY_NO_WORKAROUND"
+  jq -cn --arg r "$r" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}' ||
+    { echo "$r" >&2; exit 2; }
   exit 0
 }
 

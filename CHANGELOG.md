@@ -4,6 +4,12 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.8
+
+### Mudou
+
+- **Bloqueio sem contorno.** Toda negação dos guardas termina com a mesma instrução ao Claude: não tentar outro comando, interpretador ou ferramenta para o mesmo efeito, e sim explicar o que queria fazer e pedir que você rode manualmente se for intencional. Evita, por exemplo, um `Edit` negado em `.env` virar `echo > .env`, ou um `rm -rf` negado virar `python -c "shutil.rmtree(...)"`.
+
 ## 0.9.7
 
 ### Entrou
