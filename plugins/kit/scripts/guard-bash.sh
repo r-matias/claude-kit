@@ -32,17 +32,24 @@ DQ='"'
 SQ="'"
 TAB=$'\t'
 CR=$'\r'
-FLAT=${CMD//"$BS$NL"/ }
-for c in "$DQ" "$SQ" '$' '`' ' '; do
-  FLAT=${FLAT//"$BS$c"/$c}
-done
-while [[ "$FLAT" == *"$BS$BS"* ]]; do FLAT=${FLAT//"$BS$BS"/$BS}; done
-FLAT=${FLAT//"$BS"/$SL}
-FLAT=${FLAT//"$DQ"/}
-FLAT=${FLAT//"$SQ"/}
-FLAT=${FLAT//"$TAB"/ }
-FLAT=${FLAT//"$CR"/ }
-while [ "${FLAT%"$NL"}" != "$FLAT" ]; do FLAT="${FLAT%"$NL"}"; done
+FLAT_OUT=""
+flatten() {
+  local f c
+  f=${1//"$BS$NL"/ }
+  for c in "$DQ" "$SQ" '$' '`' ' '; do
+    f=${f//"$BS$c"/$c}
+  done
+  while [[ "$f" == *"$BS$BS"* ]]; do f=${f//"$BS$BS"/$BS}; done
+  f=${f//"$BS"/$SL}
+  f=${f//"$DQ"/}
+  f=${f//"$SQ"/}
+  f=${f//"$TAB"/ }
+  f=${f//"$CR"/ }
+  while [ "${f%"$NL"}" != "$f" ]; do f="${f%"$NL"}"; done
+  FLAT_OUT="$f"
+}
+flatten "$CMD"
+FLAT="$FLAT_OUT"
 
 # Minusculas em bash puro (o 3.2 nao tem ${x,,}), em LC_OUT. So ASCII: os padroes sao ASCII.
 LC_OUT=""
@@ -58,10 +65,17 @@ to_lower "$FLAT"
 FLAT_LC="$LC_OUT"
 
 # Caminho rapido: tudo o que o guarda nega ou confirma depende de uma destas palavras no texto.
-# Regra nova acrescenta a sua aqui.
-case "$FLAT_LC" in
+# Regra nova acrescenta a sua aqui. Os redirecionamentos que nao escrevem em arquivo (2>&1,
+# >/dev/null) nao contam como ">".
+FAST="$FLAT_LC "
+case "$FAST" in
+  *'>'*)
+    for c in '>&1 ' '>&2 ' '>/dev/null ' '> /dev/null '; do FAST=${FAST//"$c"/ }; done ;;
+esac
+case "$FAST" in
   *rm* | *find* | *git* | *sh* | *curl* | *wget* | *mkfs* | *dd* | *drop* | *truncate* | *chmod* | \
-    *xargs* | *'$'* | *'`'* | *eval* | *source*) ;;
+    *xargs* | *'$'* | *'`'* | *eval* | *source* | \
+    *'>'* | *tee* | *sed* | *perl* | *cp* | *mv* | *install* | *ln*) ;;
   *) exit 0 ;;
 esac
 
@@ -94,6 +108,7 @@ PROJECT_REAL="$(kit_path_norm "$PROJECT" /)"
 START_DIR="$(kit_path_norm "$CWD" "$PROJECT_REAL")"
 PROJECT_CMP="$(kit_fold "$PROJECT_REAL")"
 PLATFORM="$(kit_platform)"
+KIT_CEILING="$CWD"
 
 # No Git Bash, /c/pasta e C:/pasta sao o mesmo caminho, e /tmp e outras montagens tem um caminho
 # Windows. cygpath resolve pela tabela de montagem, sem tocar no disco; sem ele, so a letra do drive.
@@ -556,16 +571,286 @@ check_sql() {
   return 0
 }
 
+# Escrita pelo shell: alvos de redirecionamento, tee, sed -i, perl -i, cp, mv, install, ln, dd of=
+# e truncate passam pelas regras do guard-files (kit_check_write no lib.sh). O kit.json so e lido
+# quando aparece um alvo, e cada caminho e conferido uma vez.
+WRITE_SEEN="$NL"
+RW_PATH=""
+
+# Caminho absoluto do alvo em RW_PATH. 1 se nao der para resolver (variavel, ~, glob, C:x, alvo
+# relativo depois de cd nao resolvivel).
+resolve_write() {
+  local t="$1"
+  case "$t" in
+    '~'* | *'$'* | *'`'* | *[*?[]* | [A-Za-z]: | [A-Za-z]:[!/]*) return 1 ;;
+    /*) [ "$PLATFORM" = "windows" ] && t="$(msys_drive "$t")" ;;
+    [A-Za-z]:/*) ;;
+    *) [ "$CUR_OK" -eq 1 ] || return 1 ;;
+  esac
+  if [ "$PLATFORM" = "windows" ]; then
+    case "${t#[A-Za-z]:}" in *:* | *[.\ ]/* | *[.\ ]) t="$(kit_win_clean "$t")" ;; esac
+  fi
+  kit_path_norm_to "$t" "$CUR"
+  RW_PATH="$KIT_NORMED"
+}
+
+write_target() {
+  local t="$1"
+  case "$t" in
+    '' | -) return 0 ;;
+    //*) ;;
+    /*) kit_path_norm_to "$t" /; t="$KIT_NORMED" ;;
+    *[!0-9]*) ;;
+    *) return 0 ;;
+  esac
+  case "$t" in /dev | /dev/*) return 0 ;; esac
+  if ! resolve_write "$t"; then
+    kit_check_write_name "$t"
+    return 0
+  fi
+  case "$WRITE_SEEN" in *"$NL$RW_PATH$NL"*) return 0 ;; esac
+  WRITE_SEEN+="$RW_PATH$NL"
+  KIT_NEW_FILE=0
+  [ -e "$RW_PATH" ] || KIT_NEW_FILE=1
+  kit_check_write_path "$RW_PATH"
+}
+
+# Redirecionamentos de saida (>, >>, N>, >arq colado; o analyze ja trocou >|, >& e &> por >). Com
+# $1 = 1 confere cada alvo; sempre deixa em ARGS_NR os argumentos sem os redirecionamentos. Alvo so
+# com digitos e o que sobra de 2>&1 e >&2.
+ARGS_NR=()
+scan_redirects() {
+  local check="$1" tok rest
+  shift
+  ARGS_NR=()
+  while [ "$#" -gt 0 ]; do
+    tok="$1"
+    shift
+    case "$tok" in
+      *'>'*) ;;
+      *) ARGS_NR+=("$tok"); continue ;;
+    esac
+    rest="${tok#*>}"
+    rest="${rest#>}"
+    if [ -z "$rest" ] && [ "$#" -gt 0 ]; then
+      rest="$1"
+      shift
+    fi
+    [ "$check" -eq 1 ] && write_target "$rest"
+  done
+  return 0
+}
+
+# Destino de cp, mv, install e ln: o -t ou o ultimo argumento; destino que e pasta recebe o nome de
+# cada origem. No mv as origens tambem contam (somem do lugar). install -d: todos sao pastas criadas.
+check_copy() {
+  local name="$1" tok tdir="" opts_done=0 k ch v argc="tS" mkdirs=0 n dest src todir=0
+  local -a pos=()
+  shift
+  [ "$name" = "install" ] && argc="tSmog"
+  while [ "$#" -gt 0 ]; do
+    tok="$1"
+    shift
+    if [ "$opts_done" -eq 0 ]; then
+      case "$tok" in
+        --) opts_done=1; continue ;;
+        --target-directory=*) tdir="${tok#*=}"; continue ;;
+        --target-directory) tdir="${1:-}"; [ "$#" -gt 0 ] && shift; continue ;;
+        --directory) mkdirs=1; continue ;;
+        --suffix | --mode | --owner | --group) [ "$#" -gt 0 ] && shift; continue ;;
+        --*) continue ;;
+        -?*)
+          k=1
+          while [ "$k" -lt "${#tok}" ]; do
+            ch="${tok:$k:1}"
+            case "$argc" in
+              *"$ch"*)
+                v="${tok:$((k + 1))}"
+                if [ -z "$v" ] && [ "$#" -gt 0 ]; then v="$1"; shift; fi
+                [ "$ch" = "t" ] && tdir="$v"
+                break ;;
+            esac
+            [ "$ch" = "d" ] && [ "$name" = "install" ] && mkdirs=1
+            k=$((k + 1))
+          done
+          continue ;;
+      esac
+    fi
+    pos+=("$tok")
+  done
+  n=${#pos[@]}
+  [ "$n" -gt 0 ] || return 0
+  if [ "$mkdirs" -eq 1 ]; then
+    for tok in ${pos[@]+"${pos[@]}"}; do write_target "$tok"; done
+    return 0
+  fi
+  if [ -n "$tdir" ]; then
+    dest="$tdir"
+    todir=1
+  elif [ "$n" -eq 1 ]; then
+    # ln -s alvo: o link nasce na pasta corrente com o nome do alvo.
+    [ "$name" = "ln" ] || return 0
+    dest="."
+    todir=1
+  else
+    dest="${pos[$((n - 1))]}"
+    unset "pos[$((n - 1))]"
+    case "$dest" in */) todir=1 ;; esac
+    [ "$n" -gt 2 ] && todir=1
+    if [ "$todir" -eq 0 ] && resolve_write "$dest" && [ -d "$RW_PATH" ]; then todir=1; fi
+  fi
+  for src in ${pos[@]+"${pos[@]}"}; do
+    [ "$name" = "mv" ] && write_target "$src"
+    if [ "$todir" -eq 1 ]; then
+      src="${src%/}"
+      write_target "${dest%/}/${src##*/}"
+    fi
+  done
+  [ "$todir" -eq 0 ] && write_target "$dest"
+  return 0
+}
+
+# sed -i / --in-place: os arquivos depois do script (o script e o primeiro argumento, salvo com -e ou -f).
+check_sed() {
+  local tok inplace=0 script=0 opts_done=0 k ch
+  local -a pos=()
+  while [ "$#" -gt 0 ]; do
+    tok="$1"
+    shift
+    if [ "$opts_done" -eq 0 ]; then
+      case "$tok" in
+        --) opts_done=1; continue ;;
+        --in-place | --in-place=*) inplace=1; continue ;;
+        --expression=* | --file=*) script=1; continue ;;
+        --expression | --file) script=1; [ "$#" -gt 0 ] && shift; continue ;;
+        --line-length) [ "$#" -gt 0 ] && shift; continue ;;
+        --*) continue ;;
+        -?*)
+          k=1
+          while [ "$k" -lt "${#tok}" ]; do
+            ch="${tok:$k:1}"
+            case "$ch" in
+              i | I) inplace=1; break ;;
+              e | f | l)
+                [ "$ch" = "l" ] || script=1
+                [ -z "${tok:$((k + 1))}" ] && [ "$#" -gt 0 ] && shift
+                break ;;
+            esac
+            k=$((k + 1))
+          done
+          continue ;;
+      esac
+    fi
+    pos+=("$tok")
+  done
+  [ "$inplace" -eq 1 ] || return 0
+  [ "$script" -eq 1 ] || pos=(${pos[@]+"${pos[@]:1}"})
+  for tok in ${pos[@]+"${pos[@]}"}; do write_target "$tok"; done
+  return 0
+}
+
+# perl -i: os arquivos depois do programa (-e/-E ou o primeiro argumento). As opcoes acabam no
+# primeiro argumento que nao e opcao.
+check_perl() {
+  local tok inplace=0 script=0 k ch
+  local -a pos=()
+  while [ "$#" -gt 0 ]; do
+    tok="$1"
+    case "$tok" in
+      --) shift; break ;;
+      -?*) shift ;;
+      *) break ;;
+    esac
+    k=1
+    while [ "$k" -lt "${#tok}" ]; do
+      ch="${tok:$k:1}"
+      case "$ch" in
+        i) inplace=1; break ;;
+        e | E)
+          script=1
+          [ -z "${tok:$((k + 1))}" ] && [ "$#" -gt 0 ] && shift
+          break ;;
+        I | M | m | x | d | D | C | 0 | l | F | V) break ;;
+      esac
+      k=$((k + 1))
+    done
+  done
+  [ "$inplace" -eq 1 ] || return 0
+  pos=("$@")
+  [ "$script" -eq 1 ] || pos=(${pos[@]+"${pos[@]:1}"})
+  for tok in ${pos[@]+"${pos[@]}"}; do write_target "$tok"; done
+  return 0
+}
+
+# truncate: todos os arquivos; -s e -r levam valor.
+check_truncate() {
+  local tok opts_done=0
+  while [ "$#" -gt 0 ]; do
+    tok="$1"
+    shift
+    if [ "$opts_done" -eq 0 ]; then
+      case "$tok" in
+        --) opts_done=1; continue ;;
+        -s | -r | --size | --reference) [ "$#" -gt 0 ] && shift; continue ;;
+        -?*) continue ;;
+      esac
+    fi
+    write_target "$tok"
+  done
+  return 0
+}
+
+# Comando que escreve nos arquivos dos argumentos. Recebe o comando ja sem prefixos.
+check_write_cmd() {
+  local name="${1##*/}" tok
+  name="${name%.exe}"
+  case "$name" in
+    tee | sed | gsed | perl | cp | mv | install | ln | dd | truncate) ;;
+    *) return 0 ;;
+  esac
+  scan_redirects 0 "$@"
+  set -- ${ARGS_NR[@]+"${ARGS_NR[@]}"}
+  shift
+  case "$name" in
+    tee)
+      for tok in "$@"; do
+        case "$tok" in -*) ;; *) write_target "$tok" ;; esac
+      done ;;
+    sed | gsed) check_sed "$@" ;;
+    perl) check_perl "$@" ;;
+    cp | mv | install | ln) check_copy "$name" "$@" ;;
+    dd)
+      for tok in "$@"; do
+        case "$tok" in of=*) write_target "${tok#of=}" ;; esac
+      done ;;
+    truncate) check_truncate "$@" ;;
+  esac
+  return 0
+}
+
 # Um comando simples (ja separado de ;, &&, |...). sh -c/bash -c analisa o resto como comando.
+WRITE_ONLY=0
 check_segment() {
   [ "$#" -gt 0 ] || return 0
-  check_chmod "$@"
+  scan_redirects 1 "$@"
+  [ "$WRITE_ONLY" -eq 1 ] || check_chmod "$@"
   skip_prefix "$@"
   local -a w=("$@")
-  if [ "$CMD_I" -ge "$#" ]; then check_sql "" "$@"; return 0; fi
+  if [ "$CMD_I" -ge "$#" ]; then
+    [ "$WRITE_ONLY" -eq 1 ] || check_sql "" "$@"
+    return 0
+  fi
   local -a c=("${w[@]:$CMD_I}")
   local j=1 found=0
-  check_sql "${c[@]}"
+  [ "$WRITE_ONLY" -eq 1 ] || check_sql "${c[@]}"
+  check_write_cmd "${c[@]}"
+  if [ "$WRITE_ONLY" -eq 1 ]; then
+    case "${c[0]}" in
+      sh | bash | zsh | dash | ksh | */sh | */bash | */zsh | */dash | */ksh) ;;
+      cd | pushd | popd) do_cd "${c[@]}"; return 0 ;;
+      *) return 0 ;;
+    esac
+  fi
   case "${c[0]}" in
     cd | pushd | popd) do_cd "${c[@]}" ;;
     rm | */rm | rm.exe | */rm.exe) check_rm "${c[@]}" ;;
@@ -591,9 +876,13 @@ analyze() {
   local -a words
   CUR="$START_DIR"
   CUR_OK=1
+  # >|, >& e &> sao redirecionamento, nao pipe nem fundo: viram > antes da separacao.
+  segs=${1//">|"/">"}
+  segs=${segs//">&"/">"}
+  segs=${segs//"&>"/">"}
   # ||, &&, $( e ;|&`(){} separam trechos. Separador repetido so gera linha vazia, que e pulada.
   seg='$('
-  segs=${1//"$seg"/$NL}
+  segs=${segs//"$seg"/$NL}
   for seg in ';' '|' '&' '`' '(' ')' '{' '}'; do
     segs=${segs//"$seg"/$NL}
   done
@@ -622,6 +911,34 @@ case "$FLAT" in
     done
     OUTER="$(printf '%s' "$OUTER" | sed -E 's/`[^`]*`/$KITSUB/g; s/[$<>]\(/ $KITSUB /g; s/`/ $KITSUB /g')"
     [ "$OUTER" != "$FLAT" ] && analyze "$OUTER" ;;
+esac
+
+# Script de sed ou perl entre aspas com ;, |, &, (), {}, crase ou > se partiria em trechos e o
+# arquivo ficaria longe do comando. Mais uma leitura, so de escrita, com esses caracteres trocados
+# por _ dentro das aspas. A leitura de cima continua valendo para sh -c "echo > .env".
+case "$CMD" in
+  *"$DQ"* | *"$SQ"*)
+    if has '(^|[^a-z0-9_])(g?sed|perl)(\.exe)?([[:space:]]|$)'; then
+      MASKED="$(printf '%s' "$CMD" | awk '
+        { s = (NR > 1 ? "\n" : "") $0; o = ""; n = length(s)
+          for (i = 1; i <= n; i++) {
+            ch = substr(s, i, 1)
+            if (ch == "\\" && q != "\047") {
+              nx = substr(s, i + 1, 1)
+              if (q != "" && index(";|&(){}`>", nx)) nx = "_"
+              o = o ch nx; i++; continue
+            }
+            if (q == "") { if (ch == "\047" || ch == "\"") q = ch; o = o ch; continue }
+            if (ch == q) { q = ""; o = o ch; continue }
+            if (index(";|&(){}`>", ch)) ch = "_"
+            o = o ch
+          }
+          printf "%s", o }')"
+      flatten "$MASKED"
+      WRITE_ONLY=1
+      analyze "$FLAT_OUT"
+      WRITE_ONLY=0
+    fi ;;
 esac
 
 # Nenhum trecho negado: pede a confirmacao guardada. Em bypassPermissions a documentacao nao garante

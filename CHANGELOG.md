@@ -4,6 +4,12 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.10
+
+### Entrou
+
+- **Escrita pelo shell nos guardas.** `echo X=1 > .env`, `tee -a .env`, `sed -i` numa migração, `cat > arquivo-gerado <<EOF`, `cp a .env`, `mv` de arquivo protegido e afins passam pelas mesmas regras do `Edit`: segredos, `guards.deny_write` e `protected_paths` do `kit.json`, com as mesmas mensagens. Arquivo de exemplo (`.env.example`), `/dev/null`, `2>&1` e arquivos comuns (`> build.log`, `> /tmp/x`) continuam liberados. Texto entre aspas que cita `> .env` também é negado.
+
 ## 0.9.9
 
 ### Mudou

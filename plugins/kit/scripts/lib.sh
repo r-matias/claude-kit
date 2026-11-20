@@ -131,6 +131,13 @@ kit_norm_path() {
 # resolvidos (mesmo por pasta inexistente). Relativo e resolvido contra $2. Aceita /x, C:/x e C:.
 # Uso: kit_path_norm <caminho> [base]
 kit_path_norm() {
+  kit_path_norm_to "$@"
+  printf '%s' "$KIT_NORMED"
+}
+
+# Igual ao kit_path_norm, com o resultado em KIT_NORMED (sem subshell).
+KIT_NORMED=""
+kit_path_norm_to() {
   local p="${1//\\//}" base="${2:-/}" prefix="" part IFS=/
   local -a parts=() stack=()
   case "$p" in [A-Za-z]:) p="$p/" ;; esac
@@ -147,7 +154,7 @@ kit_path_norm() {
       *) stack+=("$part") ;;
     esac
   done
-  printf '%s/%s' "$prefix" "${stack[@]+"${stack[*]}"}"
+  KIT_NORMED="$prefix/${stack[@]+"${stack[*]}"}"
 }
 
 # Os hooks rodam a cada chamada de ferramenta e, no Git Bash, criar um processo custa dezenas de
@@ -244,7 +251,7 @@ KIT_CEILING=""
 # Para no primeiro .git, exceto quando ele esta dentro de KIT_CEILING; nesse caso para no KIT_CEILING.
 kit_kit_roots() {
   local start dir parent extended=0
-  start="$(kit_norm_path "$1")"
+  start="${1//\\//}"
   [ -n "$start" ] || return 0
   if [ -d "$start" ]; then dir="$start"; else kit_parent_to "$start"; dir="$KIT_PARENT"; fi
   while [ -n "$dir" ] && [ ! -d "$dir" ]; do
@@ -509,6 +516,210 @@ kit_glob_secret() {
   kit_is_example_name "$base" && return 1
   case "$base" in .env | .env.* | *.pem | *.key) return 0 ;; esac
   return 1
+}
+
+# Regras de escrita comuns ao guard-files (Edit, Write) e ao guard-bash (>, tee, sed -i, cp...):
+# segredos, guards.deny_write e protected_paths, este com excecao por guards.allow_write. Quem
+# chama define KIT_CEILING e KIT_NEW_FILE (1: o arquivo ainda nao existe). Bloqueio sai pelo
+# kit_deny_pretool.
+KIT_NEW_FILE=0
+KIT_EXAMPLE_HINT="Arquivo de exemplo: use o sufixo .example, .sample, .template ou .dist."
+
+# Windows ignora espaco e ponto no fim de cada nome e trata "nome:fluxo" (ADS) como o proprio nome.
+# O sed so roda quando o caminho tem um desses casos.
+kit_win_clean() {
+  case "${1#[A-Za-z]:}" in
+    *:* | *[.\ ]/* | *[.\ ]) ;;
+    *) printf '%s' "$1"; return 0 ;;
+  esac
+  printf '%s' "$1" | sed -E 's#^([A-Za-z]):#\1|#; s#:[^/]*##g; s#^([A-Za-z])\|#\1:#; s#([^/.])[. ]+(/|$)#\1\2#g'
+}
+
+# Alvo final de um symlink (encadeado ate 20 niveis) e pasta real do primeiro ancestral existente,
+# em KIT_REAL. A pasta real sai de um cd -P no proprio shell (volta para a pasta de antes); no
+# Windows, /c/x vira C:/x sem o cygpath, que so roda para as outras montagens.
+KIT_REAL=""
+kit_real_path_to() {
+  local p="$1" t n=0 dir rest="" real="" here="$PWD" d i
+  while [ -L "$p" ] && [ "$n" -lt 20 ]; do
+    t="$(readlink "$p" 2>/dev/null)" || break
+    kit_parent_to "$p"
+    kit_path_norm_to "$t" "$KIT_PARENT"
+    p="$KIT_NORMED"
+    n=$((n + 1))
+  done
+  kit_parent_to "$p"
+  dir="$KIT_PARENT"
+  while [ ! -d "$dir" ]; do
+    rest="/${dir##*/}$rest"
+    kit_parent_to "$dir"
+    [ "$KIT_PARENT" = "$dir" ] && break
+    dir="$KIT_PARENT"
+  done
+  # Muda a pasta do shell e volta: quem chama nao pode depender de caminho relativo.
+  if CDPATH='' cd -P -- "$dir" 2>/dev/null; then
+    real="$PWD"
+    CDPATH='' cd -- "$here" 2>/dev/null || cd / || true
+  fi
+  if [ -n "$real" ]; then
+    kit_uname_init
+    case "$KIT_UNAME" in
+      MINGW* | MSYS* | CYGWIN*)
+        case "$real" in
+          /[A-Za-z] | /[A-Za-z]/*)
+            d="${real:1:1}"
+            for ((i = 0; i < 26; i++)); do
+              [ "$d" = "${KIT_ASCII_LOWER:$i:1}" ] && d="${KIT_ASCII_UPPER:$i:1}" && break
+            done
+            real="$d:${real:2}"
+            [ "${#real}" -eq 2 ] && real="$real/" ;;
+          /*) command -v cygpath >/dev/null 2>&1 && real="$(cygpath -m "$real" 2>/dev/null)" ;;
+        esac ;;
+    esac
+  fi
+  [ -n "$real" ] || real="$dir"
+  kit_path_norm_to "${real%/}$rest/${p##*/}" /
+  KIT_REAL="$KIT_NORMED"
+}
+
+# Raizes de kit.json que valem para o caminho (a mais proxima e as de cima, ate a pasta-mae) e as
+# regras de cada uma (kit_guard_rules). Cada kit.json e lido uma vez por chamada do hook.
+KIT_ROOTS=()
+KIT_RULES=()
+KIT_RC_ROOTS=()
+KIT_RC_RULES=()
+kit_load_rules() {
+  local root r i
+  KIT_ROOTS=()
+  KIT_RULES=()
+  while IFS= read -r root; do
+    [ -n "$root" ] || continue
+    for ((i = 0; i < ${#KIT_RC_ROOTS[@]}; i++)); do
+      [ "${KIT_RC_ROOTS[$i]}" = "$root" ] && break
+    done
+    if [ "$i" -lt "${#KIT_RC_ROOTS[@]}" ]; then
+      r="${KIT_RC_RULES[$i]}"
+    else
+      r="$(kit_guard_rules "$root/.claude/kit.json")"
+      # O CR sai numa atribuicao simples: dentro de ( ) de array o bash nao expande o $'\r' do padrao.
+      r="${r//$'\r'/}"
+      KIT_RC_ROOTS+=("$root")
+      KIT_RC_RULES+=("$r")
+    fi
+    KIT_ROOTS+=("$root")
+    KIT_RULES+=("$r")
+  done < <(kit_kit_roots "$1")
+}
+
+# Caminho relativo a KIT_ROOT em KIT_REL (o proprio caminho se estiver fora) e em minusculas em KIT_CMP.
+KIT_REL=""
+KIT_CMP=""
+kit_rel_of() {
+  KIT_REL="$1"
+  if [ -n "$KIT_ROOT" ] && [ "${1#"$KIT_ROOT"/}" != "$1" ]; then KIT_REL="${1#"$KIT_ROOT"/}"; fi
+  kit_fold_to "$KIT_REL"
+  KIT_CMP="$KIT_FOLDED"
+}
+
+# So o que se decide pelo nome: arquivo de segredo e pastas secrets/ e keys/. Vale tambem para
+# alvo que nao da para resolver (variavel, ~, glob).
+kit_check_write_name() {
+  local file="$1" base
+  kit_fold_to "${file##*/}"
+  base="$KIT_FOLDED"
+  if ! kit_is_example_name "$base"; then
+    case "$base" in
+      .env | .env.*) kit_deny_pretool "kit: escrita em arquivo de segredo (${file##*/}) bloqueada. $KIT_EXAMPLE_HINT" ;;
+      *.pem | *.key) kit_deny_pretool "kit: escrita em chave/certificado (${file##*/}) bloqueada." ;;
+    esac
+  fi
+  kit_fold_to "$file"
+  case "/$KIT_FOLDED" in
+    */secrets/*) kit_deny_pretool "kit: escrita em diretorio secrets/ bloqueada." ;;
+    */keys/*) kit_deny_pretool "kit: escrita em diretorio keys/ bloqueada." ;;
+  esac
+  return 0
+}
+
+# Caminho absoluto ja normalizado.
+kit_check_write() {
+  local file="$1" rules tag glob a b allowed=0 broad="" i
+  local hint="Se este arquivo não é segredo, adicione o caminho em guards.allow_write no .claude/kit.json."
+  kit_check_write_name "$file"
+
+  # Valem os guards e o protected_paths do kit.json mais proximo e dos kit.json acima dele (pasta-mae).
+  # guards.deny_write bloqueia sempre; guards.allow_write (sem glob largo nem segredo) libera o protected_paths.
+  kit_load_rules "$file"
+  for ((i = 0; i < ${#KIT_ROOTS[@]}; i++)); do
+    kit_use_root "${KIT_ROOTS[$i]}"
+    rules="${KIT_RULES[$i]}"
+    kit_rel_of "$file"
+    # kit.json ilegivel: as regras nao podem ser conferidas. So o proprio kit.json pode ser escrito.
+    if [ "$KIT_CMP" != ".claude/kit.json" ]; then
+      case "$rules" in
+        OK | OK$'\n'*) ;;
+        X | X$'\n'*)
+          kit_deny_pretool "kit: $KIT_JSON tem protected_paths ou guards com tipo errado (precisam ser lista); as regras não podem ser conferidas. Corrija o kit.json e tente de novo." ;;
+        *)
+          kit_deny_pretool "kit: $KIT_JSON não é JSON válido; protected_paths e guards não podem ser conferidos. Corrija o kit.json (jq . mostra o erro) e tente de novo." ;;
+      esac
+    fi
+    case "$rules" in OK$'\n'*) ;; *) continue ;; esac
+    # As linhas D (deny_write) vem antes das A (allow_write), como no kit_guard_rules.
+    while IFS=$'\t' read -r tag glob a b; do
+      case "$tag" in
+        D)
+          kit_fold_to "$glob"
+          glob_match "$KIT_FOLDED" "$KIT_CMP" || continue
+          [ -n "$a" ] && kit_deny_pretool "kit: $KIT_REL é bloqueado. $a"
+          kit_deny_pretool "kit: $KIT_REL casa guards.deny_write ($glob) do kit.json." ;;
+        A)
+          kit_glob_secret "$glob" && continue
+          kit_fold_to "$glob"
+          glob_match "$KIT_FOLDED" "$KIT_CMP" || continue
+          if kit_glob_broad "$glob"; then broad="$glob"; continue; fi
+          allowed=1 ;;
+      esac
+    done <<<"$rules"
+  done
+  [ "$allowed" -eq 1 ] && return 0
+  if [ -n "$broad" ]; then
+    hint="guards.allow_write ignora \"$broad\": glob largo demais; liste o caminho exato."
+  fi
+
+  for ((i = 0; i < ${#KIT_ROOTS[@]}; i++)); do
+    kit_use_root "${KIT_ROOTS[$i]}"
+    rules="${KIT_RULES[$i]}"
+    case "$rules" in OK$'\n'*) ;; *) continue ;; esac
+    kit_rel_of "$file"
+    while IFS=$'\t' read -r tag glob a b; do
+      [ "$tag" = "P" ] || continue
+      kit_fold_to "$glob"
+      glob_match "$KIT_FOLDED" "$KIT_CMP" || continue
+      [ "$KIT_NEW_FILE" -eq 1 ] && [ "$a" != "deny" ] && continue
+      if [ -n "$b" ]; then
+        kit_deny_pretool "kit: $KIT_REL é protegido. $b $hint"
+      fi
+      if [ "$KIT_NEW_FILE" -eq 1 ]; then
+        kit_deny_pretool "kit: $KIT_REL casa protected_paths ($glob) com write: deny no kit.json. Nem arquivo novo pode ser criado aqui. $hint"
+      fi
+      kit_deny_pretool "kit: $KIT_REL casa protected_paths ($glob) do kit.json. Gere um arquivo novo ou edite manualmente. $hint"
+    done <<<"$rules"
+  done
+  return 0
+}
+
+# kit_check_write no caminho e, se for symlink ou estiver sob um, no alvo final.
+kit_check_write_path() {
+  local real real_cmp
+  kit_check_write "$1"
+  kit_real_path_to "$1"
+  real="$KIT_REAL"
+  kit_fold_to "$real"
+  real_cmp="$KIT_FOLDED"
+  kit_fold_to "$1"
+  if [ "$real_cmp" != "$KIT_FOLDED" ]; then kit_check_write "$real"; fi
+  return 0
 }
 
 # Chaves folha de um JSON achatadas com ".", uma por linha, ordenadas. Retorna 1 se o JSON for invalido.
