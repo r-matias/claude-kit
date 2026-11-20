@@ -21,6 +21,7 @@ allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**) Bash(git status *) Bash(git branch
 - **Interface.** Se o `.claude/kit.json` tem `ui.globs`, leia [ui.md](ui.md) (`${CLAUDE_SKILL_DIR}/ui.md`) antes da primeira tarefa com arquivo que casa com eles: regras de tela, captura em todos os tamanhos e revisão pelo `kit:ui-reviewer`. Script de interface: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/ui.sh"`, rodado na raiz do projeto (a pasta que tem `.claude/kit.json`). Sem a chave `ui`, ou com `"ui": false`, nada de interface se aplica.
 - Após duas tentativas falhas na mesma tarefa, pare, resuma o que tentou e recomende `/clear` com um prompt melhor.
 - Plano no formato antigo (sem waves): cada tarefa é uma wave sequencial e a verificação final do plano faz o papel da wave final.
+- **Custo.** A cada subagent que volta, anote o tipo dele e o `subagent_tokens` do bloco `<usage>` da notificação de fim (sem `<usage>`, conte o subagent e marque os tokens como desconhecidos). Conte também as rodadas de cada revisor: toda chamada a um revisor é uma rodada, e o total dele soma checkpoints e wave final.
 
 ## Passos
 1. Plano: $ARGUMENTS. Sem argumento, use o PLAN.md mais recente em `docs/specs/`. Leia o PLAN.md e a SPEC.md ao lado. Retome da primeira caixa `- [ ]`.
@@ -49,4 +50,4 @@ allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**) Bash(git status *) Bash(git branch
    3. F3: rode a verificação ponta a ponta da SPEC.
    4. F4 (se existir): rode `smoke` do `kit.json`.
    Marque cada passo com a evidência.
-7. Resuma: waves e tarefas concluídas, evidências, decisões novas, achados MINOR pendentes, o que o security-reviewer apontou e, em plano com tela, o resultado da captura e do `kit:ui-reviewer` (com as telas que ficaram sem captura). Não commite sem pedido explícito.
+7. Resuma: waves e tarefas concluídas, evidências, decisões novas, achados MINOR pendentes, o que o security-reviewer apontou e, em plano com tela, o resultado da captura e do `kit:ui-reviewer` (com as telas que ficaram sem captura). Termine com a linha de custo: `Custo: <N> subagents (<tipo> ×<n>, ...) · revisão: <revisor> <n> rodadas, ... · <total> mil tokens nos subagents`, com `(+<k> sem usage)` quando faltou `<usage>` em algum. O total soma só os subagents, não a conversa principal. Se o PLAN.md já tinha caixa `[x]` quando você começou, ou se houve `/compact` no meio, some só o que foi anotado desde então e acrescente `(desde a retomada)`. Não commite sem pedido explícito.

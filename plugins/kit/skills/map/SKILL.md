@@ -20,6 +20,7 @@ allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/map-partition.sh" *) Bas
 - Nunca altere `CLAUDE.md`, settings, skills, agents, commands, hooks nem rules que o kit não criou.
 - Formato dos arquivos gerados, cabeçalho, blocos manuais e conflitos: [output.md](output.md). Leia antes da fase 4.
 - Script: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/map-partition.sh"`, rodado na pasta da sessão.
+- **Custo.** A cada subagent que volta, anote o tipo dele e o `subagent_tokens` do bloco `<usage>` da notificação de fim (sem `<usage>`, conte o subagent e marque os tokens como desconhecidos). Remapeamento e resumo refeito contam como chamadas novas.
 
 ## Fase 0 — Particionar
 1. Monte os argumentos do script:
@@ -51,4 +52,5 @@ allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/map-partition.sh" *) Bas
     - verificação: aprovadas/removidas por unidade e unidades remapeadas;
     - divergências de contrato encontradas;
     - unidades com confiança baixa;
+    - custo: `<N> subagents (kit:mapper ×<n>, kit:map-verifier ×<n>) · <total> mil tokens nos subagents`, com `(+<k> sem usage)` quando faltou `<usage>` em algum, somando só os subagents, não a conversa principal;
     - próximo passo: revisar e commitar `.claude/rules/map-*.md`, `.claude/rules/kit-codemap.md` e `docs/codemap.md`.

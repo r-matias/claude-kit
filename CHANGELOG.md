@@ -4,6 +4,12 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.16
+
+### Entrou
+
+- **Custo no resumo.** O resumo final do `/kit:execute` e do `/kit:map` traz uma linha de custo: quantos subagents foram chamados, de que tipo, quantas rodadas cada revisor fez (no `/kit:execute`) e quantos tokens os subagents somaram. A conversa principal não entra na soma; execução retomada depois de `/compact` ou `/clear` conta só desde a retomada.
+
 ## 0.9.15
 
 ### Mudou
