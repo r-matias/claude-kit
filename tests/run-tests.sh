@@ -258,7 +258,7 @@ resolve_token() {
 run_case() {
   local script="$1" case_json="$2" ws base input out err code cwd file sid
   local name skip c_cwd c_command c_tool has_raw c_raw c_file c_stop c_source c_args c_fake repeat expect exp_exit \
-    c_message c_env l_stderr l_stderr_not l_stderr_order l_absent l_exists l_contains l_stdout l_stdout_not stdout_empty has_out_expect reason json_check
+    c_message c_mode c_env l_stderr l_stderr_not l_stderr_order l_absent l_exists l_contains l_stdout l_stdout_not stdout_empty has_out_expect reason json_check
   # Uma chamada de jq le todos os campos do caso; listas viram linhas.
   eval "$(jq -r --arg p "$TEST_PLATFORM" '
     def lines(f): [f | if type == "array" then .[] else . end | tostring] | join("\n");
@@ -275,6 +275,7 @@ run_case() {
     @sh "c_args=\(lines((.args // [])[]))",
     @sh "c_fake=\(.fake_claude // "")",
     @sh "c_message=\(.message // "")",
+    @sh "c_mode=\(.permission_mode // "")",
     @sh "c_env=\([(.env // {}) | to_entries[] | .key + "=" + (.value | tostring)] | join("\n"))",
     @sh "repeat=\(.repeat_empty // false)",
     @sh "expect=\(.expect // "")",
@@ -312,8 +313,8 @@ run_case() {
     guard-bash.sh)
       local gcmd="$c_command"
       gcmd="${gcmd//__PROJ__/$(native_path "$base")}"
-      input="$(jq -cn --arg c "$gcmd" --arg d "$cwd" \
-        '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: $c}, cwd: $d}')" ;;
+      input="$(jq -cn --arg c "$gcmd" --arg d "$cwd" --arg m "$c_mode" \
+        '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: $c}, cwd: $d} + (if $m == "" then {} else {permission_mode: $m} end)')" ;;
     guard-files.sh | format.sh | advise.sh)
       # raw_file vai como esta (relativo, com .., //); file e juntado ao caminho do projeto.
       if [ "$has_raw" = "true" ]; then
@@ -358,6 +359,8 @@ run_case() {
   case "$expect" in
     deny)
       [ "$(jq -r '.hookSpecificOutput.permissionDecision // empty' "$out" 2>/dev/null)" = "deny" ] || why="${why:+$why; }esperava deny, stdout='$(head -c 200 "$out")'" ;;
+    ask)
+      [ "$(jq -r '.hookSpecificOutput.permissionDecision // empty' "$out" 2>/dev/null)" = "ask" ] || why="${why:+$why; }esperava ask, stdout='$(head -c 200 "$out")'" ;;
     allow)
       [ ! -s "$out" ] || why="${why:+$why; }esperava liberar, stdout='$(head -c 200 "$out")'" ;;
   esac
@@ -401,7 +404,7 @@ run_case() {
   if [ "$stdout_empty" = "true" ] && [ -s "$out" ]; then
     why="${why:+$why; }stdout deveria ser vazio"
   fi
-  if [ "$expect" != "deny" ] && [ "$script" != "session-context.sh" ] && [ "$has_out_expect" != "true" ] && [ -s "$out" ]; then
+  if [ "$expect" != "deny" ] && [ "$expect" != "ask" ] && [ "$script" != "session-context.sh" ] && [ "$has_out_expect" != "true" ] && [ -s "$out" ]; then
     why="${why:+$why; }stdout deveria ser vazio"
   fi
   if [ -n "$reason" ] && ! jq -r '.hookSpecificOutput.permissionDecisionReason // empty' "$out" 2>/dev/null | grep -qF -- "$reason"; then
@@ -1953,7 +1956,7 @@ if [ -z "$FILTER" ] || [[ "guardas" == *"$FILTER"* ]]; then
     mkdir -p "$G/p/build"
     np="$(native_path "$G/p")"
     msys="/$(printf '%s' "${np:0:1}" | tr 'A-Z' 'a-z')${np:2}"
-    gb() { jq -cn --arg c "$1" --arg d "$np" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' | "$TBASH" "$SCRIPTS/guard-bash.sh" 2>/dev/null; }
+    gb() { jq -cn --arg c "$1" --arg d "$np" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' | env -u CLAUDE_PROJECT_DIR "$TBASH" "$SCRIPTS/guard-bash.sh" 2>/dev/null; }
     o1="$(gb "rm -rf $msys/build")"
     o2="$(gb "cd $msys/build && rm -rf ../build")"
     o3="$(gb "rm -rf /c/Windows/Temp/kit-x")"

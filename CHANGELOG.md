@@ -4,6 +4,13 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.7
+
+### Entrou
+
+- **Git destrutivo local.** O guarda de comando passa a negar `git clean -f` (antes só com `-d` ou `-x`), `git stash drop` e `clear`, `git branch -D`, `git reflog expire` e `git gc --prune=now`.
+- **Descartar alteração pede confirmação.** `git checkout -- <caminho>`, `git checkout .`, `git checkout -f`, `git restore` (fora o `--staged`), `git switch -f` e `git switch --discard-changes` não rodam direto: você vê o motivo e confirma. Em `claude -p`, sem ninguém para confirmar, e em `bypassPermissions` viram negação. Se o mesmo comando tiver um trecho negado, a negação ganha.
+
 ## 0.9.6
 
 ### Entrou

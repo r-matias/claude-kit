@@ -12,7 +12,8 @@ kit_read_input
 # Entrada lida num jq so: o guarda roda a cada comando, com limite de tempo.
 CMD=""
 CWD=""
-if ! kit_fields CMD '.tool_input.command' CWD '.cwd'; then
+MODE=""
+if ! kit_fields CMD '.tool_input.command' CWD '.cwd' MODE '.permission_mode'; then
   echo "kit: entrada do hook vazia ou ilegível; chamada bloqueada" >&2
   exit 2
 fi
@@ -286,6 +287,14 @@ do_cd() {
   return 0
 }
 
+# Descarta alteracoes nao commitadas do working tree, sem volta. Desfazer a propria edicao e legitimo,
+# entao o usuario confirma em vez de o guarda negar. So guarda o motivo: o pedido sai depois da analise
+# inteira, para que um trecho negado no mesmo comando ganhe.
+ASK_OP=""
+git_discard() {
+  [ -n "$ASK_OP" ] || ASK_OP="$1"
+}
+
 check_git() {
   local -a w=("$@")
   local i=1 n=$# sub="" tok
@@ -330,9 +339,79 @@ check_git() {
         esac
       done
       case "$flags" in *f*) ;; *) return 0 ;; esac
-      case "$flags" in *[dxX]*) ;; *) return 0 ;; esac
       case "$flags" in *n*) return 0 ;; esac
-      kit_deny_pretool "kit: git clean -fdx bloqueado. Rode git clean -n para ver o que seria apagado." ;;
+      kit_deny_pretool "kit: git clean -f bloqueado (apaga arquivos nao rastreados sem volta). Rode git clean -n para ver o que seria apagado." ;;
+    checkout)
+      local dd=0
+      for tok in ${rest[@]+"${rest[@]}"}; do
+        if [ "$dd" -eq 1 ]; then
+          git_discard "git checkout -- <caminho>"
+          break
+        fi
+        case "$tok" in
+          --) dd=1 ;;
+          --pathspec-from-file*) git_discard "git checkout --pathspec-from-file" ;;
+          --force) git_discard "git checkout --force" ;;
+          --*) ;;
+          -*f*) git_discard "git checkout -f" ;;
+          . | ./ | :/ | '*') git_discard "git checkout $tok" ;;
+        esac
+      done ;;
+    restore)
+      local staged=0 wt=0
+      for tok in ${rest[@]+"${rest[@]}"}; do
+        case "$tok" in
+          --staged) staged=1 ;;
+          --worktree) wt=1 ;;
+          --) break ;;
+          --*) ;;
+          -*)
+            case "$tok" in *S*) staged=1 ;; esac
+            case "$tok" in *W*) wt=1 ;; esac ;;
+        esac
+      done
+      [ "$staged" -eq 1 ] && [ "$wt" -eq 0 ] && return 0
+      git_discard "git restore" ;;
+    switch)
+      for tok in ${rest[@]+"${rest[@]}"}; do
+        case "$tok" in
+          --force | --discard-changes) git_discard "git switch $tok" ;;
+          --*) ;;
+          -*f*) git_discard "git switch -f" ;;
+        esac
+      done ;;
+    stash)
+      case "${rest[0]:-}" in
+        drop | clear) kit_deny_pretool "kit: git stash ${rest[0]} bloqueado (apaga stash sem volta). Rode manualmente se for intencional." ;;
+      esac ;;
+    branch)
+      local del=0 force=0 skip=0
+      for tok in ${rest[@]+"${rest[@]}"}; do
+        if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+        case "$tok" in
+          --sort | --format | --contains | --no-contains | --merged | --no-merged | --points-at) skip=1 ;;
+          --delete) del=1 ;;
+          --force) force=1 ;;
+          --*) ;;
+          -*D*) del=1; force=1 ;;
+          -*)
+            case "$tok" in *d*) del=1 ;; esac
+            case "$tok" in *f*) force=1 ;; esac ;;
+        esac
+      done
+      if [ "$del" -eq 1 ] && [ "$force" -eq 1 ]; then
+        kit_deny_pretool "kit: git branch -D bloqueado (apaga branch nao mesclada). Use git branch -d ou rode manualmente."
+      fi ;;
+    reflog)
+      case "${rest[0]:-}" in
+        expire | delete) kit_deny_pretool "kit: git reflog ${rest[0]} bloqueado (apaga o historico de recuperacao). Rode manualmente se for intencional." ;;
+      esac ;;
+    gc)
+      for tok in ${rest[@]+"${rest[@]}"}; do
+        case "$tok" in
+          --prune=now | --prune=all) kit_deny_pretool "kit: git gc $tok bloqueado (apaga objetos sem referencia, inclusive os recuperaveis pelo reflog). Rode manualmente se for intencional." ;;
+        esac
+      done ;;
   esac
   return 0
 }
@@ -478,5 +557,12 @@ while [ "$prev" != "$OUTER" ] && [ "$n" -lt 20 ]; do
 done
 OUTER="$(printf '%s' "$OUTER" | sed -E 's/`[^`]*`/$KITSUB/g; s/[$<>]\(/ $KITSUB /g; s/`/ $KITSUB /g')"
 [ "$OUTER" != "$FLAT" ] && analyze "$OUTER"
+
+# Nenhum trecho negado: pede a confirmacao guardada. Em bypassPermissions a documentacao nao garante
+# que o ask de hook vire pergunta, entao nega.
+if [ -n "$ASK_OP" ]; then
+  [ "$MODE" = "bypassPermissions" ] && kit_deny_pretool "kit: $ASK_OP bloqueado em bypassPermissions (descarta alteracoes nao commitadas sem volta e nao ha como confirmar). Use git stash ou rode manualmente."
+  kit_ask_pretool "kit: $ASK_OP descarta alteracoes nao commitadas sem volta, inclusive as que voce nao fez nesta sessao. Confirme so se nada ali precisa ser mantido; senao, use git stash."
+fi
 
 exit 0

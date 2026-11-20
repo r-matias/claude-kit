@@ -618,6 +618,13 @@ kit_deny_pretool() {
   exit 0
 }
 
+# Pede confirmacao ao usuario. Sem ninguem para responder (claude -p), o Claude Code nega.
+kit_ask_pretool() {
+  jq -cn --arg r "$1" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $r}}' ||
+    { echo "$1" >&2; exit 2; }
+  exit 0
+}
+
 # Versao minima do Claude Code para onFailure: "block" nos guardas.
 KIT_MIN_CLAUDE="2.1.295"
 
