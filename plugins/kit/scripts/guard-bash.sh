@@ -45,6 +45,8 @@ flatten() {
   f=${f//"$SQ"/}
   f=${f//"$TAB"/ }
   f=${f//"$CR"/ }
+  # As chaves separariam o trecho: ${HOME} vira $HOME.
+  f=${f//'${HOME}'/'$HOME'}
   while [ "${f%"$NL"}" != "$f" ]; do f="${f%"$NL"}"; done
   FLAT_OUT="$f"
 }
@@ -75,8 +77,17 @@ esac
 case "$FAST" in
   *rm* | *find* | *git* | *sh* | *curl* | *wget* | *mkfs* | *dd* | *drop* | *truncate* | *chmod* | \
     *xargs* | *'$'* | *'`'* | *eval* | *source* | \
-    *'>'* | *tee* | *sed* | *perl* | *cp* | *mv* | *install* | *ln*) ;;
+    *'>'* | *tee* | *sed* | *perl* | *cp* | *mv* | *install* | *ln* | \
+    *.env* | *.pem* | *.key* | *secrets* | *.ssh* | *.aws* | *.kube* | *.git-credentials* | *.npmrc* | \
+    *.config/gh* | *.docker/config.json*) ;;
   *) exit 0 ;;
+esac
+
+# Leitura de segredo pelo shell so e conferida quando o texto cita um dos nomes do grupo segredos.
+SECRET_HINT=0
+case "$FLAT_LC" in
+  *.env* | *.pem* | *.key* | *secrets* | *.ssh* | *.aws* | *.kube* | *.git-credentials* | *.npmrc* | \
+    *.config/gh* | *.docker/config.json*) SECRET_HINT=1 ;;
 esac
 
 # Regex estendida linha a linha, como o grep -Ei: o texto vai para minusculas, entao o padrao tem
@@ -828,11 +839,332 @@ check_write_cmd() {
   return 0
 }
 
+# Leitura de segredo pelo shell: so com o grupo segredos em permissions.groups do kit.json. Mesmos
+# nomes do Read negado pelo grupo; nome de exemplo (.example, .sample...) e liberado.
+# READ_GROUP: "" nao lido, 0 desligado, 1 ligado. kit.json ilegivel conta como ligado.
+READ_GROUP=""
+READ_BAD=""
+READ_WHY=""
+read_group_on() {
+  local root r
+  if [ -z "$READ_GROUP" ]; then
+    READ_GROUP=0
+    while IFS= read -r root; do
+      [ -n "$root" ] || continue
+      r="$(jq -r 'if type == "object" and ((.permissions // {}) | type == "object") then
+          ((.permissions.groups // []) | if type == "array" then any(.[]; . == "segredos") else "x" end)
+        else "x" end' "$root/.claude/kit.json" 2>/dev/null)"
+      r="${r//$CR/}"
+      case "$r" in
+        true) READ_GROUP=1; break ;;
+        false) ;;
+        x) READ_GROUP=1; READ_BAD="$root/.claude/kit.json"; READ_WHY="tem permissions ou permissions.groups com tipo errado (groups precisa ser lista)"; break ;;
+        *) READ_GROUP=1; READ_BAD="$root/.claude/kit.json"; READ_WHY="nao e JSON valido (jq . mostra o erro)"; break ;;
+      esac
+    done < <(kit_kit_roots "$START_DIR")
+  fi
+  [ "$READ_GROUP" = "1" ]
+}
+
+read_deny() {
+  read_group_on || return 0
+  if [ -n "$READ_BAD" ]; then
+    kit_deny_pretool "kit: $READ_BAD $READ_WHY; o grupo segredos nao pode ser conferido e a leitura de '$1' pelo shell foi bloqueada. Corrija o kit.json."
+  fi
+  kit_deny_pretool "kit: leitura de segredo ('$1') pelo shell bloqueada (grupo segredos). Quem usa o valor e o script do projeto, que carrega o arquivo (node --env-file, docker compose --env-file); o Claude nao le o conteudo."
+}
+
+# 0 se o caminho (relativo ao projeto ou como foi escrito) tem nome de segredo do grupo.
+secret_name() {
+  local p base
+  kit_fold_to "$1"
+  p="${KIT_FOLDED%/}"
+  case "/$p/" in */secrets/*) return 0 ;; esac
+  base="${p##*/}"
+  kit_is_example_name "$base" && return 1
+  case "$base" in
+    .env | .env.local | .env.*.local | .env.test | .env.production | .env.development | .env.staging | \
+      *.pem | *.key) return 0 ;;
+  esac
+  return 1
+}
+
+# Credenciais na home. Com $2 = 1, o caminho nao foi resolvido: casa o trecho em qualquer pasta.
+HOME_CMP=""
+home_secret() {
+  local p h
+  kit_fold_to "$1"
+  p="$KIT_FOLDED"
+  if [ "$2" -eq 1 ]; then
+    case "/$p" in
+      */.ssh | */.ssh/* | */.aws | */.aws/* | */.kube | */.kube/* | */.config/gh | */.config/gh/* | \
+        */.git-credentials | */.docker/config.json) return 0 ;;
+    esac
+    return 1
+  fi
+  if [ -z "$HOME_CMP" ]; then
+    h="${HOME:-}"
+    h="${h//\\//}"
+    [ -n "$h" ] || return 1
+    kit_path_norm_to "$(msys_drive "$h")" /
+    kit_fold_to "${KIT_NORMED%/}"
+    HOME_CMP="$KIT_FOLDED"
+  fi
+  case "$p" in
+    "$HOME_CMP"/.ssh | "$HOME_CMP"/.ssh/* | "$HOME_CMP"/.aws | "$HOME_CMP"/.aws/* | \
+      "$HOME_CMP"/.kube | "$HOME_CMP"/.kube/* | "$HOME_CMP"/.config/gh | "$HOME_CMP"/.config/gh/* | \
+      "$HOME_CMP"/.git-credentials | "$HOME_CMP"/.npmrc | "$HOME_CMP"/.docker/config.json) return 0 ;;
+  esac
+  return 1
+}
+
+# Caminho absoluto: nome (relativo ao projeto, se estiver dentro) e credencial da home.
+secret_abs() {
+  local p="$1" rel
+  kit_fold_to "$p"
+  rel="$KIT_FOLDED"
+  case "$rel" in "$PROJECT_CMP"/?*) rel="${rel#"$PROJECT_CMP"/}" ;; esac
+  secret_name "$rel" && return 0
+  home_secret "$p" 0
+}
+
+# Um arquivo lido: resolvido, confere o caminho e, se existir, o alvo real (symlink); sem resolver,
+# so pelo nome. $2: o texto como foi escrito, para a mensagem.
+read_one() {
+  local t="$1" shown="$2"
+  if resolve_write "$t"; then
+    secret_abs "$RW_PATH" && read_deny "$shown"
+    if [ -e "$RW_PATH" ] || [ -L "$RW_PATH" ]; then
+      kit_real_path_to "$RW_PATH"
+      [ "$KIT_REAL" != "$RW_PATH" ] && secret_abs "$KIT_REAL" && read_deny "$shown"
+    fi
+  else
+    secret_name "$t" && read_deny "$shown"
+    home_secret "$t" 1 && read_deny "$shown"
+  fi
+  return 0
+}
+
+# Argumento lido. ~ e $HOME viram a home; glob com pasta resolvivel e expandido ali (sem arquivos
+# ocultos, como o bash), senao vale o nome.
+GLOB_M=()
+glob_expand() {
+  local IFS=''
+  GLOB_M=("$1"$2)
+}
+
+read_target() {
+  local t="$1" pre="" was=0 m
+  case "$t" in '' | -) return 0 ;; esac
+  if [ -n "${HOME:-}" ]; then
+    case "$t" in
+      '~' | '$HOME') t="${HOME//\\//}" ;;
+      '~/'* | '$HOME/'*) t="${HOME//\\//}/${t#*/}" ;;
+    esac
+  fi
+  case "$t" in
+    *'$'* | *'`'* | '~'*) read_one "$t" "$1"; return 0 ;;
+    *[*?[]*)
+      case "$t" in
+        /* | [A-Za-z]:/*) ;;
+        [A-Za-z]:*) read_one "$t" "$1"; return 0 ;;
+        *)
+          [ "$CUR_OK" -eq 1 ] || { read_one "$t" "$1"; return 0; }
+          pre="$CUR/" ;;
+      esac
+      shopt -q nullglob && was=1
+      shopt -s nullglob
+      glob_expand "$pre" "$t"
+      [ "$was" -eq 1 ] || shopt -u nullglob
+      for m in ${GLOB_M[@]+"${GLOB_M[@]}"}; do read_one "$m" "$1"; done
+      return 0 ;;
+  esac
+  read_one "$t" "$1"
+}
+
+# Entrada por redirecionamento (<, N<, <>, <arq colado). Heredoc e here-string (<<, <<<) e
+# duplicacao (<&) nao leem arquivo.
+scan_read_redirects() {
+  local tok rest
+  while [ "$#" -gt 0 ]; do
+    tok="$1"
+    shift
+    case "$tok" in
+      *'<<'*)
+        rest="${tok##*<}"
+        [ -z "$rest" ] && [ "$#" -gt 0 ] && shift
+        continue ;;
+      *'<'*) ;;
+      *) continue ;;
+    esac
+    rest="${tok##*<}"
+    rest="${rest#>}"
+    if [ -z "$rest" ] && [ "$#" -gt 0 ]; then
+      rest="$1"
+      shift
+    fi
+    case "$rest" in '&'*) continue ;; esac
+    read_target "$rest"
+  done
+  return 0
+}
+
+# Opcoes de um comando que le: RD_VALOPT (letras curtas com valor), RD_LONGVAL (longas com valor,
+# "|--a|--b|"), RD_SCRIPTOPT e RD_LONGSCRIPT (as que trazem o programa ou o padrao; marcam
+# RD_SCRIPT=1), RD_BREAKOPT (letra que encerra o grupo, como o -i.bak do sed). Posicionais em RD_POS.
+RD_VALOPT=""
+RD_LONGVAL=""
+RD_SCRIPTOPT=""
+RD_LONGSCRIPT=""
+RD_BREAKOPT=""
+RD_FILEOPT=""
+RD_SCRIPT=0
+RD_POS=()
+RD_FV=()
+parse_read_args() {
+  local tok k ch v opts_done=0
+  RD_SCRIPT=0
+  RD_POS=()
+  RD_FV=()
+  while [ "$#" -gt 0 ]; do
+    tok="$1"
+    shift
+    if [ "$opts_done" -eq 0 ]; then
+      case "$tok" in
+        --) opts_done=1; continue ;;
+        --*=*)
+          case "$RD_LONGSCRIPT" in *"|${tok%%=*}|"*) RD_SCRIPT=1 ;; esac
+          [ -n "$RD_FILEOPT" ] && [ "${tok%%=*}" = "--file" ] && RD_FV+=("${tok#*=}")
+          continue ;;
+        --*)
+          case "$RD_LONGSCRIPT" in *"|$tok|"*) RD_SCRIPT=1 ;; esac
+          case "$RD_LONGVAL" in
+            *"|$tok|"*)
+              [ -n "$RD_FILEOPT" ] && [ "$tok" = "--file" ] && [ "$#" -gt 0 ] && RD_FV+=("$1")
+              [ "$#" -gt 0 ] && shift ;;
+          esac
+          continue ;;
+        -?*)
+          k=1
+          while [ "$k" -lt "${#tok}" ]; do
+            ch="${tok:$k:1}"
+            case "|$RD_BREAKOPT|" in *"$ch"*) break ;; esac
+            case "|$RD_SCRIPTOPT|" in *"$ch"*) RD_SCRIPT=1 ;; esac
+            case "|$RD_VALOPT|" in
+              *"$ch"*)
+                v="${tok:$((k + 1))}"
+                if [ -z "$v" ] && [ "$#" -gt 0 ]; then v="$1"; shift; fi
+                # -f traz o programa ou os padroes de um arquivo: o arquivo e lido.
+                case "|$RD_FILEOPT|" in *"$ch"*) RD_FV+=("$v") ;; esac
+                break ;;
+            esac
+            k=$((k + 1))
+          done
+          continue ;;
+      esac
+    fi
+    RD_POS+=("$tok")
+  done
+  return 0
+}
+
+# Comando que le os arquivos dos argumentos. Recebe o comando ja sem prefixos.
+check_read() {
+  [ "$READ_GROUP" != "0" ] || return 0
+  local name="${1##*/}" tok n first=1 up=0
+  name="${name%.exe}"
+  RD_VALOPT=""
+  RD_LONGVAL=""
+  RD_SCRIPTOPT=""
+  RD_LONGSCRIPT=""
+  RD_BREAKOPT=""
+  RD_FILEOPT=""
+  case "$name" in
+    cat | tac | head | tail | less | more | bat | batcat | nl | od | xxd | hexdump | strings | base64 | \
+      cut | sort | source | . | grep | egrep | fgrep | rg | ag | sed | gsed | awk | gawk | mawk | nawk | \
+      cp | scp | curl) ;;
+    *) return 0 ;;
+  esac
+  scan_redirects 0 "$@"
+  set -- ${ARGS_NR[@]+"${ARGS_NR[@]}"}
+  shift
+  if [ "$name" = "curl" ]; then
+    for tok in "$@"; do
+      if [ "$up" -eq 1 ]; then up=0; read_target "$tok"; continue; fi
+      case "$tok" in
+        -T | --upload-file) up=1 ;;
+        -T?*) read_target "${tok#-T}" ;;
+        --upload-file=*) read_target "${tok#*=}" ;;
+        *@*) tok="${tok#*@}"; read_target "${tok#<}" ;;
+      esac
+    done
+    return 0
+  fi
+  case "$name" in
+    grep | egrep | fgrep)
+      RD_VALOPT="ABCmefdD"
+      RD_LONGVAL="|--regexp|--file|--after-context|--before-context|--context|--max-count|--directories|--devices|--include|--exclude|--exclude-dir|--exclude-from|--label|"
+      RD_SCRIPTOPT="ef"
+      RD_LONGSCRIPT="|--regexp|--file|"
+      RD_FILEOPT="f" ;;
+    rg)
+      RD_VALOPT="ABCmefgtTjMEr"
+      RD_LONGVAL="|--regexp|--file|--after-context|--before-context|--context|--max-count|--glob|--iglob|--type|--type-not|--threads|--max-columns|--encoding|--replace|--max-depth|--type-add|"
+      RD_SCRIPTOPT="ef"
+      RD_LONGSCRIPT="|--regexp|--file|"
+      RD_FILEOPT="f" ;;
+    ag)
+      RD_VALOPT="ABCmGgp"
+      RD_LONGVAL="|--after|--before|--context|--max-count|--file-search-regex|--depth|--path-to-ignore|--ignore|" ;;
+    sed | gsed)
+      RD_VALOPT="efl"
+      RD_LONGVAL="|--expression|--file|--line-length|"
+      RD_SCRIPTOPT="ef"
+      RD_LONGSCRIPT="|--expression|--file|"
+      RD_BREAKOPT="iI"
+      RD_FILEOPT="f" ;;
+    awk | gawk | mawk | nawk)
+      RD_VALOPT="fvFe"
+      RD_LONGVAL="|--file|--assign|--field-separator|--source|"
+      RD_SCRIPTOPT="fe"
+      RD_LONGSCRIPT="|--file|--source|"
+      RD_FILEOPT="f" ;;
+    cp)
+      RD_VALOPT="tS"
+      RD_LONGVAL="|--target-directory|--suffix|"
+      RD_SCRIPTOPT="t"
+      RD_LONGSCRIPT="|--target-directory|" ;;
+    scp) RD_VALOPT="cDFiJloPSX" ;;
+  esac
+  parse_read_args "$@"
+  for tok in ${RD_FV[@]+"${RD_FV[@]}"}; do read_target "$tok"; done
+  n=${#RD_POS[@]}
+  [ "$n" -gt 0 ] || return 0
+  case "$name" in
+    # O primeiro posicional e o padrao ou o programa, salvo quando veio por opcao.
+    grep | egrep | fgrep | rg | ag | sed | gsed | awk | gawk | mawk | nawk)
+      [ "$RD_SCRIPT" -eq 1 ] && first=0 ;;
+    # Origens: todos menos o destino (o ultimo), salvo com -t. Um posicional so (cp .env{,.bak},
+    # que as chaves partem) conta como origem.
+    cp | scp)
+      first=0
+      if [ "$n" -gt 1 ] && { [ "$name" = "scp" ] || [ "$RD_SCRIPT" -eq 0 ]; }; then unset "RD_POS[$((n - 1))]"; fi ;;
+    *) first=0 ;;
+  esac
+  for tok in ${RD_POS[@]+"${RD_POS[@]}"}; do
+    if [ "$first" -eq 1 ]; then first=0; continue; fi
+    read_target "$tok"
+  done
+  return 0
+}
+
 # Um comando simples (ja separado de ;, &&, |...). sh -c/bash -c analisa o resto como comando.
+# WRITE_ONLY=1: a leitura extra com o texto entre aspas mascarado, so de escrita e de leitura de segredo.
 WRITE_ONLY=0
 check_segment() {
   [ "$#" -gt 0 ] || return 0
   scan_redirects 1 "$@"
+  if [ "$SECRET_HINT" -eq 1 ]; then scan_read_redirects "$@"; fi
   [ "$WRITE_ONLY" -eq 1 ] || check_chmod "$@"
   skip_prefix "$@"
   local -a w=("$@")
@@ -844,6 +1176,7 @@ check_segment() {
   local j=1 found=0
   [ "$WRITE_ONLY" -eq 1 ] || check_sql "${c[@]}"
   check_write_cmd "${c[@]}"
+  if [ "$SECRET_HINT" -eq 1 ]; then check_read "${c[@]}"; fi
   if [ "$WRITE_ONLY" -eq 1 ]; then
     case "${c[0]}" in
       sh | bash | zsh | dash | ksh | */sh | */bash | */zsh | */dash | */ksh) ;;
@@ -913,12 +1246,15 @@ case "$FLAT" in
     [ "$OUTER" != "$FLAT" ] && analyze "$OUTER" ;;
 esac
 
-# Script de sed ou perl entre aspas com ;, |, &, (), {}, crase ou > se partiria em trechos e o
-# arquivo ficaria longe do comando. Mais uma leitura, so de escrita, com esses caracteres trocados
-# por _ dentro das aspas. A leitura de cima continua valendo para sh -c "echo > .env".
+# Script de sed, perl ou awk, ou padrao de grep, entre aspas com ;, |, &, (), {}, crase ou > se
+# partiria em trechos e o arquivo ficaria longe do comando. Mais uma leitura, so de escrita e de
+# leitura de segredo, com esses caracteres trocados por _ dentro das aspas. A leitura de cima
+# continua valendo para sh -c "echo > .env".
+MASK_RE='(^|[^a-z0-9_])(g?sed|perl)(\.exe)?([[:space:]]|$)'
+[ "$SECRET_HINT" -eq 1 ] && MASK_RE='(^|[^a-z0-9_])(g?sed|perl|[gmn]?awk|[ef]?grep|rg|ag)(\.exe)?([[:space:]]|$)'
 case "$CMD" in
   *"$DQ"* | *"$SQ"*)
-    if has '(^|[^a-z0-9_])(g?sed|perl)(\.exe)?([[:space:]]|$)'; then
+    if has "$MASK_RE"; then
       MASKED="$(printf '%s' "$CMD" | awk '
         { s = (NR > 1 ? "\n" : "") $0; o = ""; n = length(s)
           for (i = 1; i <= n; i++) {

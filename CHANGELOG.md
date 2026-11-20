@@ -4,6 +4,12 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.11
+
+### Entrou
+
+- **Leitura de segredo pelo shell.** Com o grupo `segredos` marcado no `/kit:init`, o guarda de comando nega `cat .env`, `grep KEY .env`, `source .env`, `sed`/`awk` no arquivo, `cp .env` para outro lugar, `curl -d @.env`, `< .env` e afins, com os mesmos nomes que o grupo já negava no `Read` (inclusive `~/.ssh`, `~/.aws` e as outras credenciais da home). Arquivo de exemplo (`.env.example`), `grep .env .gitignore` (o nome como padrão), `node --env-file .env` e `docker compose --env-file .env` continuam liberados. Sem o grupo, nada muda.
+
 ## 0.9.10
 
 ### Entrou

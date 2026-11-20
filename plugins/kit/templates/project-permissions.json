@@ -3,7 +3,7 @@
     {
       "id": "segredos",
       "label": "Segredos",
-      "description": "Nega Read de .env, .env.local/test/production/..., *.pem, *.key, secrets/ e credenciais em ~ (.ssh, .aws, .kube, gh, docker, npm, git). .env*.example continua legível.",
+      "description": "Nega Read de .env, .env.local/test/production/..., *.pem, *.key, secrets/ e credenciais em ~ (.ssh, .aws, .kube, gh, docker, npm, git). .env*.example continua legível. Com o grupo, o guarda de comando nega também a leitura pelo shell (cat, grep, source...).",
       "settings": {
         "permissions": {
           "deny": [
