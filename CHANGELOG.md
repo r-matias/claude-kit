@@ -4,6 +4,12 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.15
+
+### Mudou
+
+- **/kit:map mais barato.** O `kit:mapper` passa a rodar em Sonnet em vez do modelo da sessão: é leitura e extração, com `arquivo:linha` em cada afirmação. O `kit:map-verifier` continua no modelo da sessão, mais forte que o mapeador que ele confere. Os outros agents não mudam.
+
 ## 0.9.14
 
 ### Mudou
