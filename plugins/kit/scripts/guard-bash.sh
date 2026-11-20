@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# PreToolUse/Bash: nega comandos destrutivos, inclusive dentro de sh -c, bash -c, $() e crases.
+# PreToolUse/Bash: nega comandos destrutivos, inclusive dentro de sh -c, bash -c, cmd /c,
+# powershell -Command, $() e crases.
 # Compativel com bash 3.2. Qualquer erro inesperado bloqueia (exit 2).
 set -u
 KIT_HERE="${BASH_SOURCE[0]%/*}"
@@ -77,6 +78,7 @@ esac
 case "$FAST" in
   *rm* | *find* | *git* | *sh* | *curl* | *wget* | *mkfs* | *dd* | *drop* | *truncate* | *chmod* | \
     *xargs* | *'$'* | *'`'* | *eval* | *source* | \
+    *cmd* | *powershell* | *pwsh* | *py* | *node* | *deno* | *bun* | *ruby* | *php* | \
     *'>'* | *tee* | *sed* | *perl* | *cp* | *mv* | *install* | *ln* | \
     *.env* | *.pem* | *.key* | *secrets* | *.ssh* | *.aws* | *.kube* | *.git-credentials* | *.npmrc* | \
     *.config/gh* | *.docker/config.json*) ;;
@@ -162,6 +164,13 @@ if has "(curl|wget)[^;&]*\|[[:space:]]*${PFX_RE}${SH_RE}([[:space:]]|$)" ||
   has "(^|[^a-z0-9_])${SH_RE}([[:space:]]+-[a-z]*)*[[:space:]]+(\\\$\(|\`|<\()[[:space:]]*(curl|wget)" ||
   has "(^|[^a-z0-9_])(eval|source|\.)[[:space:]]+(\\\$\(|\`|<\()[[:space:]]*(curl|wget)"; then
   kit_deny_pretool "kit: execucao de script baixado da rede (curl/wget | sh) bloqueada."
+fi
+# PowerShell: iwr/irm/DownloadString com iex ou Invoke-Expression (no PowerShell 5, curl e wget sao iwr).
+NET_PS='(iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring|curl|wget)'
+IEX_PS='(iex|invoke-expression)'
+if has "(^|[^a-z0-9_-])${NET_PS}[^;&]*\|[[:space:]]*${IEX_PS}([^a-z0-9_-]|$)" ||
+  has "(^|[^a-z0-9_-])${IEX_PS}([^a-z0-9_-][^;|]*)?[^a-z0-9_-]${NET_PS}([^a-z0-9_-]|$)"; then
+  kit_deny_pretool "kit: execucao de script baixado da rede (iwr | iex) bloqueada."
 fi
 if has '(^|[^a-z0-9_./-])mkfs(\.[a-z0-9]+)?([[:space:]]|$)'; then
   kit_deny_pretool "kit: mkfs bloqueado."
@@ -295,9 +304,11 @@ glob_base() {
 # substituicao de comando, alvo relativo depois de cd nao resolvivel ou glob que apaga o projeto.
 rm_target_unsafe() {
   local t="$1" r b
+  # %VAR% do cmd e drive de provedor do PowerShell (HKCU:, Env:) tambem nao se resolvem.
   case "$t" in
-    '~'* | *'$'* | *'`'*) return 0 ;;
+    '~'* | *'$'* | *'`'* | *%*%*) return 0 ;;
   esac
+  [[ ${t%%/*} =~ ^[A-Za-z][A-Za-z0-9_]+: ]] && return 0
   case "$t" in
     [A-Za-z]: | [A-Za-z]:[!/]*) return 0 ;;
     /* | [A-Za-z]:/*) ;;
@@ -370,12 +381,21 @@ do_cd() {
   return 0
 }
 
+# Confirmacao adiada: o pedido sai depois da analise inteira, para que um trecho negado no mesmo
+# comando ganhe. Vale o primeiro. Uso: ask_later <motivo do ask> <motivo da negacao em bypassPermissions>
+ASK_MSG=""
+ASK_BYPASS=""
+ask_later() {
+  [ -z "$ASK_MSG" ] || return 0
+  ASK_MSG="$1"
+  ASK_BYPASS="$2"
+}
+
 # Descarta alteracoes nao commitadas do working tree, sem volta. Desfazer a propria edicao e legitimo,
-# entao o usuario confirma em vez de o guarda negar. So guarda o motivo: o pedido sai depois da analise
-# inteira, para que um trecho negado no mesmo comando ganhe.
-ASK_OP=""
+# entao o usuario confirma em vez de o guarda negar.
 git_discard() {
-  [ -n "$ASK_OP" ] || ASK_OP="$1"
+  ask_later "kit: $1 descarta alteracoes nao commitadas sem volta, inclusive as que voce nao fez nesta sessao. Confirme so se nada ali precisa ser mantido; senao, use git stash." \
+    "kit: $1 bloqueado em bypassPermissions (descarta alteracoes nao commitadas sem volta e nao ha como confirmar). Use git stash ou rode manualmente."
 }
 
 check_git() {
@@ -1158,6 +1178,243 @@ check_read() {
   return 0
 }
 
+# 0 se o texto e um grupo de switches do cmd colados (/s/q, /f/s/q, /a:h/s).
+win_switches() {
+  local p IFS=/
+  local -a parts=()
+  read -r -a parts <<<"$1"
+  for p in ${parts[@]+"${parts[@]}"}; do
+    case "$p" in '' | ? | ?:*) ;; *) return 1 ;; esac
+  done
+  return 0
+}
+
+# Remocao do Windows: rd, rmdir, del e erase do cmd com /s; Remove-Item e os aliases do PowerShell
+# com -Recurse (ou prefixo dele). Alvos: posicionais (lista com virgula inclusive), -Path e -LiteralPath.
+# Sem alvo (itens vindos do pipeline), nega. O rm tambem passa aqui, pelo -Recurse do PowerShell.
+check_win_rm() {
+  local tok l nm rec=0 val=0 skip=0 cmdname
+  local -a targets=() parts=()
+  to_lower "${1##*/}"
+  cmdname="${LC_OUT%.exe}"
+  shift
+  while [ "$#" -gt 0 ]; do
+    tok="$1"
+    shift
+    if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+    if [ "$val" -eq 1 ]; then val=0; targets+=("$tok"); continue; fi
+    to_lower "$tok"
+    l="$LC_OUT"
+    case "$l" in
+      /s | //s) rec=1; continue ;;
+      /? | //? | /?:* | //?:*) continue ;;
+      /*/*)
+        if win_switches "$l"; then
+          case "$l/" in */s/*) rec=1 ;; esac
+          continue
+        fi
+        targets+=("$tok"); continue ;;
+      -?*) ;;
+      *) targets+=("$tok"); continue ;;
+    esac
+    nm="${l%%:*}"
+    case "-recurse" in "$nm"*) [ "${#nm}" -ge 2 ] && rec=1; continue ;; esac
+    case "$nm" in
+      -lp | -pspath) [ "$nm" = "$l" ] && val=1 || targets+=("${tok#*:}"); continue ;;
+    esac
+    case "-path" in
+      "$nm"*) [ "$nm" = "$l" ] && val=1 || targets+=("${tok#*:}"); continue ;;
+    esac
+    case "-literalpath" in
+      "$nm"*) [ "$nm" = "$l" ] && val=1 || targets+=("${tok#*:}"); continue ;;
+    esac
+    case "$nm" in
+      -fi* | -in* | -ex* | -cr* | -st*) [ "$nm" = "$l" ] && skip=1 ;;
+    esac
+  done
+  [ "$rec" -eq 1 ] || return 0
+  if [ "${#targets[@]}" -eq 0 ] && [ "$cmdname" != "rm" ]; then
+    kit_deny_pretool "kit: remocao recursiva sem alvo explicito ($cmdname) bloqueada (itens vindos do pipeline nao podem ser conferidos). Passe os caminhos explicitamente."
+  fi
+  for tok in ${targets[@]+"${targets[@]}"}; do
+    IFS=, read -r -a parts <<<"$tok"
+    for l in ${parts[@]+"${parts[@]}"}; do
+      [ -n "$l" ] || continue
+      if rm_target_unsafe "$l"; then
+        kit_deny_pretool "kit: remocao recursiva em '$l' bloqueada (fora do projeto, raiz, home ou alvo nao resolvivel)."
+      fi
+    done
+  done
+  return 0
+}
+
+# cmd /c ou /k: o resto e um comando.
+check_cmd() {
+  local -a w=("$@")
+  local i=1 n=$# tok
+  while [ "$i" -lt "$n" ]; do
+    to_lower "${w[$i]}"
+    case "$LC_OUT" in
+      /c | //c | /k | //k)
+        i=$((i + 1))
+        [ "$i" -lt "$n" ] && check_segment "${w[@]:$i}"
+        return 0 ;;
+      # /c colado ao comando: cmd /c"rd /s x" chega como /crd.
+      /c?* | //c?* | /k?* | //k?*)
+        tok="${w[$i]#/}"
+        tok="${tok#/}"
+        tok="${tok:1}"
+        i=$((i + 1))
+        check_segment "$tok" ${w[@]+"${w[@]:$i}"}
+        return 0 ;;
+      /*) i=$((i + 1)) ;;
+      *) return 0 ;;
+    esac
+  done
+  return 0
+}
+
+# powershell/pwsh -Command: o resto e um comando (no powershell.exe, o primeiro posicional tambem).
+# -EncodedCommand nega: o conteudo nao pode ser conferido. -File executa script: fora do guarda.
+check_ps() {
+  local -a w=("$@")
+  local i=1 n=$# name kind="$1"
+  while [ "$i" -lt "$n" ]; do
+    to_lower "${w[$i]}"
+    case "$LC_OUT" in
+      -* | /*) ;;
+      *)
+        [ "$kind" = "powershell" ] && check_segment "${w[@]:$i}"
+        return 0 ;;
+    esac
+    name="${LC_OUT#-}"
+    name="${name#-}"
+    name="${name#/}"
+    case "$name" in
+      c | cwa | commandwithargs | com | comm | comma | comman | command)
+        i=$((i + 1))
+        [ "$i" -lt "$n" ] && check_segment "${w[@]:$i}"
+        return 0 ;;
+      e | ec | en*)
+        case "$name" in
+          e | ec) name="encodedcommand" ;;
+        esac
+        case "encodedcommand" in
+          "$name"*) kit_deny_pretool "kit: powershell -EncodedCommand bloqueado (conteudo opaco, o guarda nao confere). Passe o comando em texto com -Command." ;;
+        esac
+        i=$((i + 1)) ;;
+      f | fi | fil | file) return 0 ;;
+      i | int* | n* | sta | mta | l | lo | log | logi | login) i=$((i + 1)) ;;
+      # Pasta de trabalho propria: alvos relativos deixam de ser resolviveis.
+      wd | wo*) CUR_OK=0; i=$((i + 2)) ;;
+      ex* | ep | w* | i* | o* | v* | ps* | settingsfile | config* | cu*) i=$((i + 2)) ;;
+      *) i=$((i + 1)) ;;
+    esac
+  done
+  return 0
+}
+
+# Interpretador com codigo na linha de comando. O guarda nao entende o codigo: com API que apaga
+# arquivo ou dispara processo em qualquer ponto do texto, pede confirmacao.
+INTERP_RE='rmtree|os\.(remove|system|popen|spawn|exec)|(^|[^a-z0-9_])(unlink|rmdir)|rmsync|fs\.rm\(|fs\.promises\.rm|rimraf|subprocess|child_process|execsync|spawnsync|execfilesync|(^|[^a-z0-9_.])system([[:space:]]|\()|fileutils\.rm|file\.delete|dir\.delete|shell_exec|passthru|proc_open|popen|deno\.(remove|run|command)|bun\.spawn'
+check_interp() {
+  local name="$1" tok inline=0
+  shift
+  case "$name" in
+    python* | py)
+      while [ "$#" -gt 0 ]; do
+        tok="$1"
+        shift
+        case "$tok" in
+          -W | -X) [ "$#" -gt 0 ] && shift ;;
+          -W* | -X* | --*) ;;
+          -*c*) inline=1; break ;;
+          -*m*) break ;;
+          -*) ;;
+          *) break ;;
+        esac
+      done ;;
+    # As opcoes acabam no primeiro posicional (o script); o que vem depois e argumento dele.
+    node | bun)
+      while [ "$#" -gt 0 ]; do
+        tok="$1"
+        shift
+        case "$tok" in
+          -e | -p | -pe | -ep | --eval | --print | --eval=* | --print=*) inline=1; break ;;
+          -r | --require | --import | --loader | -C | --conditions) [ "$#" -gt 0 ] && shift ;;
+          -*) ;;
+          *) break ;;
+        esac
+      done ;;
+    deno) [ "${1:-}" = "eval" ] && inline=1 ;;
+    perl)
+      while [ "$#" -gt 0 ]; do
+        tok="$1"
+        shift
+        case "$tok" in
+          --*) ;;
+          -[MmIdDxV]*) ;;
+          -*[eE]*) inline=1; break ;;
+          -*) ;;
+          *) break ;;
+        esac
+      done ;;
+    ruby)
+      while [ "$#" -gt 0 ]; do
+        tok="$1"
+        shift
+        case "$tok" in
+          -r | -I | -C | -E) [ "$#" -gt 0 ] && shift ;;
+          --*) ;;
+          -[rICEK]*) ;;
+          -*e*) inline=1; break ;;
+          -*) ;;
+          *) break ;;
+        esac
+      done ;;
+    php)
+      while [ "$#" -gt 0 ]; do
+        tok="$1"
+        shift
+        case "$tok" in
+          -r | -R | -B | -E) inline=1; break ;;
+          -*) ;;
+          *) break ;;
+        esac
+      done ;;
+  esac
+  [ "$inline" -eq 1 ] || return 0
+  has "$INTERP_RE" || return 0
+  ask_later "kit: $name com codigo inline que apaga arquivo ou dispara outro processo (rmtree, os.remove, unlink, subprocess, child_process, rmSync, system...). O guarda nao confere esse codigo; confirme so depois de ler o que ele faz." \
+    "kit: $name com codigo inline que apaga arquivo ou dispara outro processo bloqueado em bypassPermissions (nao ha como confirmar). Rode manualmente se for intencional."
+}
+
+# Comandos do cmd e do PowerShell, interpretadores com codigo inline. Recebe o comando ja sem prefixos.
+check_other() {
+  local name
+  to_lower "${1##*/}"
+  name="${LC_OUT%.exe}"
+  case "$name" in
+    cmd) check_cmd "$@" ;;
+    powershell | pwsh) shift; check_ps "$name" "$@" ;;
+    rd | rmdir | del | erase | remove-item | ri) check_win_rm "$@" ;;
+    # cmd e PowerShell nao distinguem maiusculas: Rm, Git e Cd chegam aqui.
+    rm) check_rm "$@"; check_win_rm "$@" ;;
+    git) check_git "$@" ;;
+    cd | pushd | popd) do_cd "$name" "${@:2}" ;;
+    set-location | sl | chdir | push-location | pop-location) CUR_OK=0 ;;
+    format | format.com)
+      shift
+      for name in "$@"; do
+        case "$name" in [A-Za-z]: | [A-Za-z]:/*) kit_deny_pretool "kit: format de unidade bloqueado." ;; esac
+      done ;;
+    format-volume | clear-disk | remove-partition | initialize-disk)
+      kit_deny_pretool "kit: ${1##*/} bloqueado (apaga disco ou particao). Rode manualmente se for intencional." ;;
+    python | python[0-9]* | py | node | bun | deno | perl | ruby | php) shift; check_interp "$name" "$@" ;;
+  esac
+  return 0
+}
+
 # Um comando simples (ja separado de ;, &&, |...). sh -c/bash -c analisa o resto como comando.
 # WRITE_ONLY=1: a leitura extra com o texto entre aspas mascarado, so de escrita e de leitura de segredo.
 WRITE_ONLY=0
@@ -1186,7 +1443,7 @@ check_segment() {
   fi
   case "${c[0]}" in
     cd | pushd | popd) do_cd "${c[@]}" ;;
-    rm | */rm | rm.exe | */rm.exe) check_rm "${c[@]}" ;;
+    rm | */rm | rm.exe | */rm.exe) check_rm "${c[@]}"; check_win_rm "${c[@]}" ;;
     find | */find | find.exe | */find.exe) check_find "${c[@]}" ;;
     *'$'*) check_rm "${c[@]}" ;;
     git | */git | git.exe | */git.exe) check_git "${c[@]}" ;;
@@ -1199,6 +1456,7 @@ check_segment() {
         esac
       done
       [ "$found" -eq 1 ] && [ "$j" -lt "${#c[@]}" ] && check_segment "${c[@]:$j}" ;;
+    *) check_other "${c[@]}" ;;
   esac
   return 0
 }
@@ -1279,9 +1537,9 @@ esac
 
 # Nenhum trecho negado: pede a confirmacao guardada. Em bypassPermissions a documentacao nao garante
 # que o ask de hook vire pergunta, entao nega.
-if [ -n "$ASK_OP" ]; then
-  [ "$MODE" = "bypassPermissions" ] && kit_deny_pretool "kit: $ASK_OP bloqueado em bypassPermissions (descarta alteracoes nao commitadas sem volta e nao ha como confirmar). Use git stash ou rode manualmente."
-  kit_ask_pretool "kit: $ASK_OP descarta alteracoes nao commitadas sem volta, inclusive as que voce nao fez nesta sessao. Confirme so se nada ali precisa ser mantido; senao, use git stash."
+if [ -n "$ASK_MSG" ]; then
+  [ "$MODE" = "bypassPermissions" ] && kit_deny_pretool "$ASK_BYPASS"
+  kit_ask_pretool "$ASK_MSG"
 fi
 
 exit 0

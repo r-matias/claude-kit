@@ -4,6 +4,13 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.12
+
+### Entrou
+
+- **cmd e PowerShell dentro do Bash.** O guarda de comando passa a ler o que vai em `cmd /c` e `powershell`/`pwsh -Command`: `rd /s`, `del /s` e `Remove-Item -Recurse` (e os aliases `ri`, `rm`, `rmdir`, `rd`, `del`, `erase`) fora do projeto são negados como o `rm -rf`; `git` passa pelas mesmas regras; `iwr`/`irm`/`DownloadString` com `iex` é negado como `curl | sh`; `format`, `Format-Volume`, `Clear-Disk`, `Remove-Partition` e `Initialize-Disk` são negados. `powershell -EncodedCommand` (`-enc`, `-e`, `-ec`) é negado porque o conteúdo não pode ser conferido. Como no `rm -rf` com variável, o que o guarda não consegue resolver nega: alvo com `%VAR%` ou drive de provedor (`HKCU:`), `Remove-Item -Recurse` sem alvo (itens vindos do pipeline) e alvo relativo depois de `Set-Location`, `sl`, `chdir` ou `-WorkingDirectory`.
+- **Confirmação para código inline destrutivo.** `python -c`, `node -e`, `perl -e`, `ruby -e`, `php -r`, `deno eval` e `bun -e` com código que apaga arquivo ou dispara outro processo (`rmtree`, `os.remove`, `unlink`, `subprocess`, `child_process`, `rmSync`, `system`...) pedem sua confirmação; em `bypassPermissions`, são negados. Código sem essas palavras (`python -c "import json; ..."`) passa sem atrito. Script gravado e depois executado (`python limpa.py`) continua fora: é papel do sandbox.
+
 ## 0.9.11
 
 ### Entrou
