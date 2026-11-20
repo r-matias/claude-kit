@@ -19,6 +19,71 @@ if ! kit_fields CMD '.tool_input.command' CWD '.cwd' MODE '.permission_mode'; th
 fi
 [ -n "$CMD" ] || exit 0
 
+# Roda a cada chamada de Bash e, no Git Bash, cada processo custa dezenas de milissegundos: daqui
+# ate o caminho rapido, so bash puro.
+BS='\'
+NL=$'\n'
+
+# Continuacao de linha vira espaco; escapes de aspas, $, crase e espaco perdem a barra; o resto
+# das barras invertidas vira / (caminho Windows). Depois as aspas saem: o conteudo de sh -c "..."
+# passa a ser analisado como texto comum.
+SL='/'
+DQ='"'
+SQ="'"
+TAB=$'\t'
+CR=$'\r'
+FLAT=${CMD//"$BS$NL"/ }
+for c in "$DQ" "$SQ" '$' '`' ' '; do
+  FLAT=${FLAT//"$BS$c"/$c}
+done
+while [[ "$FLAT" == *"$BS$BS"* ]]; do FLAT=${FLAT//"$BS$BS"/$BS}; done
+FLAT=${FLAT//"$BS"/$SL}
+FLAT=${FLAT//"$DQ"/}
+FLAT=${FLAT//"$SQ"/}
+FLAT=${FLAT//"$TAB"/ }
+FLAT=${FLAT//"$CR"/ }
+while [ "${FLAT%"$NL"}" != "$FLAT" ]; do FLAT="${FLAT%"$NL"}"; done
+
+# Minusculas em bash puro (o 3.2 nao tem ${x,,}), em LC_OUT. So ASCII: os padroes sao ASCII.
+LC_OUT=""
+to_lower() {
+  local i
+  LC_OUT="$1"
+  case "$1" in *[ABCDEFGHIJKLMNOPQRSTUVWXYZ]*) ;; *) return 0 ;; esac
+  for ((i = 0; i < 26; i++)); do
+    LC_OUT="${LC_OUT//${KIT_ASCII_UPPER:$i:1}/${KIT_ASCII_LOWER:$i:1}}"
+  done
+}
+to_lower "$FLAT"
+FLAT_LC="$LC_OUT"
+
+# Caminho rapido: tudo o que o guarda nega ou confirma depende de uma destas palavras no texto.
+# Regra nova acrescenta a sua aqui.
+case "$FLAT_LC" in
+  *rm* | *find* | *git* | *sh* | *curl* | *wget* | *mkfs* | *dd* | *drop* | *truncate* | *chmod* | \
+    *xargs* | *'$'* | *'`'* | *eval* | *source*) ;;
+  *) exit 0 ;;
+esac
+
+# Regex estendida linha a linha, como o grep -Ei: o texto vai para minusculas, entao o padrao tem
+# de ser escrito todo em minusculas. Uso: has_in <texto> <re>
+has_in() {
+  local rest l
+  to_lower "$1"
+  rest="$LC_OUT"
+  case "$rest" in
+    *"$NL"*) ;;
+    *) [[ $rest =~ $2 ]]; return ;;
+  esac
+  while :; do
+    l="${rest%%"$NL"*}"
+    [[ $l =~ $2 ]] && return 0
+    [ "$l" != "$rest" ] || return 1
+    rest="${rest#*"$NL"}"
+  done
+}
+has() { has_in "$FLAT_LC" "$1"; }
+
 [ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-$PWD}"
 CWD="${CWD//\\//}"
 # No shell principal: os subshells herdam o sistema ja lido.
@@ -51,14 +116,6 @@ msys_drive() {
   printf '%s' "$p"
 }
 
-# Continuacao de linha vira espaco; escapes de aspas, $, crase e espaco perdem a barra; o resto
-# das barras invertidas vira / (caminho Windows). Depois as aspas saem: o conteudo de sh -c "..."
-# passa a ser analisado como texto comum.
-FLAT="${CMD//\\$'\n'/ }"
-FLAT="$(printf '%s' "$FLAT" | sed -E "s/\\\\([\"'\$\` ])/\\1/g; s/\\\\+/\\//g" | tr -d "\"'" | tr '\t\r' '  ')"
-
-has() { printf '%s' "$FLAT" | grep -Eiq -- "$1"; }
-
 # DROP/TRUNCATE: o texto inteiro so marca a suspeita; quem nega e check_sql, trecho a trecho.
 DROP_RE='(^|[^a-z0-9_])drop[[:space:]]+(database|table|schema)([^a-z0-9_]|$)'
 TRUNC_RE='(^|[^a-z0-9_.-])truncate[[:space:]]+(table[[:space:]]|[a-z_`\[])'
@@ -84,7 +141,7 @@ if has '(^|[^a-z0-9_./-])mkfs(\.[a-z0-9]+)?([[:space:]]|$)'; then
   kit_deny_pretool "kit: mkfs bloqueado."
 fi
 if has '(^|[^a-z0-9_-])dd[[:space:]].*of=/dev/' &&
-  ! printf '%s' "$FLAT" | grep -Eiq 'of=/dev/(null|zero|stdout|stderr)([[:space:]]|$)'; then
+  ! has 'of=/dev/(null|zero|stdout|stderr)([[:space:]]|$)'; then
   kit_deny_pretool "kit: dd escrevendo em dispositivo bloqueado."
 fi
 
@@ -490,10 +547,10 @@ check_sql() {
     git | git.exe | grep | egrep | fgrep | rg | ag | ack) return 0 ;;
   esac
   local seg="$*"
-  if [ "$SQL_DROP" -eq 1 ] && printf '%s' "$seg" | grep -Eiq -- "$DROP_RE"; then
+  if [ "$SQL_DROP" -eq 1 ] && has_in "$seg" "$DROP_RE"; then
     kit_deny_pretool "kit: DROP DATABASE/TABLE bloqueado. Rode manualmente se for intencional."
   fi
-  if [ "$SQL_TRUNC" -eq 1 ] && printf '%s' "$seg" | grep -Eiq -- "$TRUNC_RE"; then
+  if [ "$SQL_TRUNC" -eq 1 ] && has_in "$seg" "$TRUNC_RE"; then
     kit_deny_pretool "kit: TRUNCATE bloqueado. Rode manualmente se for intencional."
   fi
   return 0
@@ -534,7 +591,12 @@ analyze() {
   local -a words
   CUR="$START_DIR"
   CUR_OK=1
-  segs="$(printf '%s' "$1" | sed -E 's/(\|\||&&|\$\(|[;|&`(){}])/\n/g')"
+  # ||, &&, $( e ;|&`(){} separam trechos. Separador repetido so gera linha vazia, que e pulada.
+  seg='$('
+  segs=${1//"$seg"/$NL}
+  for seg in ';' '|' '&' '`' '(' ')' '{' '}'; do
+    segs=${segs//"$seg"/$NL}
+  done
   while IFS= read -r seg; do
     case "$seg" in *[![:space:]]*) ;; *) continue ;; esac
     words=()
@@ -545,18 +607,22 @@ analyze() {
 }
 
 # Duas leituras: os comandos de dentro de $() e crases como trechos proprios, e o comando externo
-# com cada substituicao trocada por $KITSUB (alvo nao resolvivel).
+# com cada substituicao trocada por $KITSUB (alvo nao resolvivel). Sem $(, <(, >( nem crase, o
+# comando externo e o proprio texto.
 analyze "$FLAT"
-OUTER="$FLAT"
-prev=""
-n=0
-while [ "$prev" != "$OUTER" ] && [ "$n" -lt 20 ]; do
-  prev="$OUTER"
-  OUTER="$(printf '%s' "$OUTER" | sed -E 's/[$<>]\([^()]*\)/$KITSUB/g')"
-  n=$((n + 1))
-done
-OUTER="$(printf '%s' "$OUTER" | sed -E 's/`[^`]*`/$KITSUB/g; s/[$<>]\(/ $KITSUB /g; s/`/ $KITSUB /g')"
-[ "$OUTER" != "$FLAT" ] && analyze "$OUTER"
+case "$FLAT" in
+  *'$('* | *'<('* | *'>('* | *'`'*)
+    OUTER="$FLAT"
+    prev=""
+    n=0
+    while [ "$prev" != "$OUTER" ] && [ "$n" -lt 20 ]; do
+      prev="$OUTER"
+      OUTER="$(printf '%s' "$OUTER" | sed -E 's/[$<>]\([^()]*\)/$KITSUB/g')"
+      n=$((n + 1))
+    done
+    OUTER="$(printf '%s' "$OUTER" | sed -E 's/`[^`]*`/$KITSUB/g; s/[$<>]\(/ $KITSUB /g; s/`/ $KITSUB /g')"
+    [ "$OUTER" != "$FLAT" ] && analyze "$OUTER" ;;
+esac
 
 # Nenhum trecho negado: pede a confirmacao guardada. Em bypassPermissions a documentacao nao garante
 # que o ask de hook vire pergunta, entao nega.

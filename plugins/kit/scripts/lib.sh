@@ -114,7 +114,7 @@ kit_fields() {
       while [ "${v%$'\n'}" != "$v" ]; do v="${v%$'\n'}"; done
       printf -v "$n" '%s' "$v"
     done
-  } < <(printf '%s' "$KIT_INPUT" | jq -j "$prog" 2>/dev/null)
+  } < <(jq -j "$prog" 2>/dev/null <<<"$KIT_INPUT")
   [ "$ok" = "ok" ]
 }
 

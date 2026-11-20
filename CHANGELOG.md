@@ -4,6 +4,12 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.9
+
+### Mudou
+
+- **Guarda de comando mais rápido.** Comando sem nenhuma palavra que o guarda examina (`rm`, `git`, `find`, `curl`, `$`, ...) é liberado sem abrir processo além da leitura da entrada, e os que precisam de análise fazem o casamento no próprio bash. No Windows, cada chamada de Bash passou de cerca de 590 ms para 125 ms sem gatilho e 185 ms com gatilho. O que o guarda nega ou pede para confirmar não mudou.
+
 ## 0.9.8
 
 ### Mudou
