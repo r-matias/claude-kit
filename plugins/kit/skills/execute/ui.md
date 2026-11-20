@@ -51,5 +51,5 @@ Se o diff do plano tem arquivo de `ui.globs`, antes de tirar o diff e de chamar 
 1. Rode a captura completa, `ui.sh capture --name final`, nas rotas da SPEC. Capture também cada estado da seção Telas que fica atrás de interação, com `--steps` e um `--name` por estado.
 2. Corrija todo `achado` e capture de novo.
 3. Chame o `kit:ui-reviewer` na mesma mensagem dos outros revisores da F1, com os caminhos da SPEC e do PLAN, a lista dos arquivos de interface alterados e a pasta de cada captura. Sem captura, diga `sem captura`.
-4. A F2 vale para ele: corrija BLOCKER e MAJOR, capture de novo e chame de novo, até `aprovado` (no máximo 3 rodadas; se sobrar BLOCKER, diga qual, com o id).
-5. Na Evidência da F1: `  - Interface: <captura de T telas em L larguras | sem captura> · kit:ui-reviewer → <aprovado | N achados corrigidos>`.
+4. A F2 vale para ele: corrija BLOCKER e MAJOR, capture de novo e chame de novo, até `aprovado` (no máximo 3 rodadas; se sobrar BLOCKER ou MAJOR, pergunte como no passo 5.4 da [SKILL.md](SKILL.md)).
+5. Na Evidência da F1: `  - Interface: <captura de T telas em L larguras | sem captura> · kit:ui-reviewer → <aprovado | N achados corrigidos | N aceitos pelo usuário>`.

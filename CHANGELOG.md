@@ -4,6 +4,12 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.13
+
+### Mudou
+
+- **Revisão com teto no /kit:execute.** O `kit:code-reviewer` do checkpoint de cada wave e os revisores da wave final (F2) passam a rodar no máximo 3 rodadas, como já faziam o `plan-reviewer` e o `ui-reviewer`. Se depois da terceira ainda sobrar BLOCKER ou MAJOR, a execução para e pergunta: continuar corrigindo, aceitar o achado (registrado em Decisões do PLAN.md) ou parar. Ela nunca segue para a próxima wave com achado grave aberto sem a sua resposta. O template do PLAN.md diz o mesmo na F2.
+
 ## 0.9.12
 
 ### Entrou
