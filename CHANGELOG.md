@@ -4,6 +4,12 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.14
+
+### Mudou
+
+- **Uma revisão só em plano de uma wave.** No `/kit:execute`, quando o plano tem uma wave só (fora a final), o checkpoint roda os `verify` e confere os `done`, mas não chama o `kit:code-reviewer`: o diff da wave é o mesmo que a wave final revisa. O checkpoint registra `Revisão: na wave final`. Plano com várias waves, ou no formato antigo sem wave final, não muda.
+
 ## 0.9.13
 
 ### Mudou
