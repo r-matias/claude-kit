@@ -4,6 +4,18 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.10.5
+
+### Entrou
+
+- **Linha `direção:` no `ui.sh status`.** Em projeto com `ui.globs`, mostra o estado de `.claude/rules/kit-design.md`: `ok`, `ausente`, `do projeto` (sem o cabeçalho `kit:design`) ou `paths fora de sincronia` com o glob que falta ou sobra frente a `ui.globs`. Rules de área aparecem no fim da linha, cada uma com `ok` ou `do projeto`.
+
+### Mudou
+
+- **`/kit:init` e a direção visual.** O init nunca cria, regrava nem apaga a rule de direção, em nenhum modo: só a `/kit:design` grava. Em projeto com tela e sem direção, o relatório termina em `Pronto. Próximo: /kit:design, depois /kit:spec <ideia>`. No modo reparo, `paths:` da rule fora de sincronia com `ui.globs` vira aviso e o mesmo próximo passo.
+- **Adoção com `kit-design.md` do projeto.** Arquivo com esse nome e sem o cabeçalho `kit:design` é rule do projeto: fica intocado e é registrado em `docs/claude-adoption.md`.
+- **`ui.globs` proposto pelo init deixa a amostra de fora.** Glob que casaria `docs/specs/**/amostra.html`, como `**/*.html`, é trocado por um glob pela pasta das telas.
+
 ## 0.10.4
 
 ### Entrou

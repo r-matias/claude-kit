@@ -76,6 +76,8 @@ Obrigatória para toda sugestão "Desativar a do projeto" ou "Declarar no `kit.j
 
 Siga os passos do SKILL.md com as regras de escrita: arquivos novos ou do kit (`.claude/kit.json`, `docs/claude-adoption.md`), merge aditivo no `.claude/settings.json` (`merge-json.sh --preview` na confirmação, `--apply` depois), tudo na confirmação única. Declarações (`coupled_changes`, `key_parity`, `protected_paths`) vão para o `kit.json`. O que tocaria `CLAUDE.md`, skills, agents, rules ou hooks existentes só fica registrado em `docs/claude-adoption.md`.
 
+`.claude/rules/kit-design.md` (ou `kit-design-<area>.md`) que já existe sem o cabeçalho `kit:design` é rule do projeto, mesmo com o nome do kit: não toque, não proponha outra e registre em Peças com a sugestão "Manter no projeto". A `/kit:design` também não a regrava; para a direção passar a ser gravada pelo kit, o relatório diz que o usuário renomeia a rule do projeto. Com o cabeçalho, é do kit e o init também não a toca (só a `/kit:design` grava).
+
 ## 5. Relatório
 
 Grave `docs/claude-adoption.md` (arquivo do kit; se já existir, acrescente uma seção nova com a data):

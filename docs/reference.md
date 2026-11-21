@@ -241,7 +241,8 @@ Uma linha por item, só leitura:
 - `ui design:` com biblioteca de componentes, tema e tokens achados pelo nome do arquivo (só em arquivo de estilo, de código de tela, JSON ou YAML; teste e story não contam) ou pelas dependências do `package.json`;
 - `node:` e `navegador:`, o que a captura do kit precisa (`node` 16 ou mais novo e Chrome, Edge, Chromium ou o Chromium do Playwright);
 - `captura: comando | kit | nenhuma`;
-- `rule:`, só com `ui.globs` no `kit.json`, o estado da `.claude/rules/kit-ui.md`: `ok`, `ausente`, `desatualizada — <motivo>` (cabeçalho `kit:ui` de versão menor que a do template, bloco de regras diferente do `ui-rules.md` atual, ou `paths:` sem um glob de `ui.globs`) ou `do projeto` (arquivo sem o cabeçalho do kit). É o que o modo reparo do `/kit:init` usa para criar ou atualizar a rule.
+- `rule:`, só com `ui.globs` no `kit.json`, o estado da `.claude/rules/kit-ui.md`: `ok`, `ausente`, `desatualizada — <motivo>` (cabeçalho `kit:ui` de versão menor que a do template, bloco de regras diferente do `ui-rules.md` atual, ou `paths:` sem um glob de `ui.globs`) ou `do projeto` (arquivo sem o cabeçalho do kit). É o que o modo reparo do `/kit:init` usa para criar ou atualizar a rule;
+- `direção:`, só com `ui.globs` no `kit.json`, o estado da `.claude/rules/kit-design.md`: `ok`, `ausente`, `do projeto` (sem o cabeçalho `kit:design`) ou `paths fora de sincronia — <motivo>` (glob de `ui.globs` que falta no `paths:`, ou glob do `paths:` que não está em `ui.globs`). Com rules de área, acrescenta `; áreas: <area> (ok | do projeto), ...`; o `paths:` delas não é comparado, porque cobre só a área. O `/kit:init` nunca grava essas rules: `ausente` e fora de sincronia fazem o relatório terminar em `/kit:design, depois /kit:spec <ideia>`, e fora de sincronia vira aviso.
 
 O `ui.sh` não lê nem grava settings, do usuário ou do projeto.
 
@@ -261,7 +262,7 @@ Skill de direção visual (`skills/design/SKILL.md`). O SKILL.md traz as regras 
 
 O `kit:ui-reviewer` cobra a direção como contrato, como a SPEC: `M10` para tela fora da rule que vale para o arquivo, `M11` para redesenho que não chega à amostra. Desvio da direção é `M10`, não `M4`; sem rule de direção, nenhum dos dois se aplica. Ele lê o código da amostra, sem vê-la renderizada.
 
-Ainda não ligado: o `/kit:init` e o `ui.sh status` não conhecem a rule de direção. A rule já chega ao Claude pelo `paths:`, como qualquer rule do projeto.
+O `/kit:init` não grava a rule de direção em nenhum modo, nem no reparo: só a `/kit:design` grava. Ele lê a linha `direção:` do `ui.sh status` para avisar do `paths:` fora de sincronia e para pôr a `/kit:design` antes da `/kit:spec` no próximo passo. Na adoção, `kit-design.md` sem o cabeçalho `kit:design` é rule do projeto e fica intocada. Ao propor `ui.globs`, o init troca glob que casaria `docs/specs/**/amostra.html` (como `**/*.html`) por um glob pela pasta das telas.
 
 ### `ui.sh capture`
 

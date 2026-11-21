@@ -11,6 +11,8 @@
 #       navegador: ok <nome> (<caminho>) | ausente
 #       captura: comando | kit | nenhuma — ...
 #       rule: ok | ausente | desatualizada — <motivo> | do projeto ...   (so com ui.globs no kit.json)
+#       direção: ok | ausente | do projeto ... | paths fora de sincronia — <motivo>[; áreas: <area> (ok | do projeto), ...]
+#         (so com ui.globs; estado da .claude/rules/kit-design.md e das kit-design-<area>.md, que so a /kit:design grava)
 #     Extensoes e marcadores vem de templates/ui-markers.txt. So leitura: nao le nem grava settings.
 #
 #   ui.sh capture [--kit <kit.json>] [--name <nome>] [--routes <a,b>] [--probe-only] [--tiles N]
@@ -59,6 +61,65 @@ ui_rule_state() {
     grep -qF -- "\"$g\"" "$rule" || { echo "desatualizada — paths sem o glob $g de ui.globs"; return 0; }
   done < <(jq -r '.ui.globs[]? | strings' "$kit" 2>/dev/null | tr -d '\r')
   echo "ok"
+}
+
+# Globs do paths: do frontmatter de uma rule, um por linha, sem aspas. Aceita lista e forma inline.
+ui_rule_paths() {
+  awk '
+    function emit(v) {
+      sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v)
+      if (v ~ /^".*"$/ || v ~ /^'\''.*'\''$/) v = substr(v, 2, length(v) - 2)
+      if (v != "") print v
+    }
+    { sub(/\r$/, "") }
+    NR == 1 { if ($0 != "---") exit; next }
+    $0 == "---" { exit }
+    /^paths:/ {
+      rest = $0; sub(/^paths:[ \t]*/, "", rest)
+      if (rest == "") { inp = 1; next }
+      inp = 0; sub(/^\[/, "", rest); sub(/\][ \t]*$/, "", rest)
+      n = split(rest, parts, ","); for (i = 1; i <= n; i++) emit(parts[i])
+      next
+    }
+    inp && /^[ \t]*-[ \t]/ { v = $0; sub(/^[ \t]*-/, "", v); emit(v); next }
+    /^[^ \t]/ { inp = 0 }' "$1"
+}
+
+ui_has_design_header() {
+  awk '{ sub(/\r$/, "") } /^<!-- kit:design v[0-9]+ -->$/ { f = 1; exit } END { exit !f }' "$1"
+}
+
+# Estado da direcao visual: .claude/rules/kit-design.md frente a ui.globs e as rules de area kit-design-<area>.md.
+# So le; quem grava essas rules e a /kit:design.
+ui_design_state() {
+  local rules="$1/.claude/rules" kit="$2" rule state globs have g f area areas=""
+  rule="$rules/kit-design.md"
+  if [ ! -f "$rule" ]; then
+    state="ausente"
+  elif ! ui_has_design_header "$rule"; then
+    state="do projeto (sem o cabeçalho kit:design)"
+  else
+    state="ok"
+    globs="$(jq -r '.ui.globs[]? | strings' "$kit" 2>/dev/null | tr -d '\r')"
+    have="$(ui_rule_paths "$rule")"
+    while IFS= read -r g; do
+      [ -n "$g" ] || continue
+      grep -qxF -- "$g" <<<"$have" || { state="paths fora de sincronia — sem o glob $g de ui.globs"; break; }
+    done <<<"$globs"
+    if [ "$state" = "ok" ]; then
+      while IFS= read -r g; do
+        [ -n "$g" ] || continue
+        grep -qxF -- "$g" <<<"$globs" || { state="paths fora de sincronia — glob $g fora de ui.globs"; break; }
+      done <<<"$have"
+    fi
+  fi
+  for f in "$rules"/kit-design-*.md; do
+    [ -f "$f" ] || continue
+    area="${f##*/kit-design-}"
+    area="${area%.md}"
+    if ui_has_design_header "$f"; then areas="$areas${areas:+, }$area (ok)"; else areas="$areas${areas:+, }$area (do projeto)"; fi
+  done
+  echo "$state${areas:+; áreas: $areas}"
 }
 
 cmd_status() {
@@ -150,6 +211,7 @@ cmd_status() {
   echo "captura: $mode"
   if [ -f "$kit" ] && command -v jq >/dev/null 2>&1 && jq -e '(.ui | type) == "object" and ((.ui.globs // []) | length) > 0' "$kit" >/dev/null 2>&1; then
     echo "rule: $(ui_rule_state "$dir" "$kit")"
+    echo "direção: $(ui_design_state "$dir" "$kit")"
   fi
   return 0
 }

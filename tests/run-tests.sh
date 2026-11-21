@@ -1467,6 +1467,52 @@ if [ -z "$FILTER" ] || [[ "interface ui" == *"$FILTER"* ]]; then
     ok "ui status: rule ausente, em dia, com regra, glob ou versão para trás, e do projeto; ui false não tem a linha"
   else ko "ui status: rule ausente, em dia, com regra, glob ou versão para trás, e do projeto; ui false não tem a linha" "1='$r1' 2='$r2' 3='$r3' 4='$r4' 5='$r5' 6='$r6' 7='$r7'"; fi
 
+  # Linha direção: estado da .claude/rules/kit-design.md frente a ui.globs e as rules de área. Só leitura.
+  mkdir -p "$P/.claude/rules"
+  RD="$P/.claude/rules/kit-design.md"
+  design_line() { ui_line 'direção: ' "$(ui_status "$CFG0" "$PATH")"; }
+  # Uso: write_design <arquivo> <cabecalho: 1 ou 0> <glob>... Grava como a /kit:design grava (CRLF no meio, como no Windows).
+  write_design() {
+    local f="$1" h="$2" g
+    shift 2
+    { printf '%s\n' '---' 'paths:'; for g in "$@"; do printf '  - "%s"\r\n' "$g"; done
+      printf '%s\n' '---'; [ "$h" = "1" ] && printf '%s\r\n' '<!-- kit:design v1 -->'
+      printf '%s\n' '# Direção visual deste projeto' '' '- Direção: teste'; } >"$f"
+  }
+  printf '%s\n' '{"ui":{"globs":["**/*.tsx","**/*.css"]}}' >"$RK"
+  d1="$(design_line)"
+  write_design "$RD" 1 '**/*.tsx' '**/*.css'
+  d2="$(design_line)"
+  write_design "$RD" 1 '**/*.tsx'
+  d3="$(design_line)"
+  write_design "$RD" 1 '**/*.tsx' '**/*.css' 'docs/**/*.html'
+  d4="$(design_line)"
+  write_design "$RD" 0 '**/*.tsx' '**/*.css'
+  d5="$(design_line)"
+  printf '%s\n' '---' 'paths: ["**/*.tsx", "**/*.css"]' '---' '<!-- kit:design v1 -->' >"$RD"
+  d9="$(design_line)"
+  write_design "$RD" 1 '**/*.tsx' '**/*.css'
+  write_design "$P/.claude/rules/kit-design-landing.md" 1 'src/landing/**'
+  write_design "$P/.claude/rules/kit-design-admin.md" 0 'src/admin/**'
+  d6="$(design_line)"
+  rm -f "$RD"
+  d7="$(design_line)"
+  sum_before="$(cat "$P/.claude/rules/"*.md | cksum)"
+  ui_status "$CFG0" "$PATH" >/dev/null
+  sum_after="$(cat "$P/.claude/rules/"*.md | cksum)"
+  printf '%s\n' '{"ui":false}' >"$RK"
+  d8="$(design_line)"
+  rm -rf "$RK" "$P/.claude/rules"
+  if [ "$d1" = "direção: ausente" ] && [ "$d2" = "direção: ok" ] &&
+    [ "$d3" = "direção: paths fora de sincronia — sem o glob **/*.css de ui.globs" ] &&
+    [ "$d4" = "direção: paths fora de sincronia — glob docs/**/*.html fora de ui.globs" ] &&
+    [ "$d5" = "direção: do projeto (sem o cabeçalho kit:design)" ] && [ "$d9" = "direção: ok" ] &&
+    [ "$d6" = "direção: ok; áreas: admin (do projeto), landing (ok)" ] &&
+    [ "$d7" = "direção: ausente; áreas: admin (do projeto), landing (ok)" ] &&
+    [ "$sum_before" = "$sum_after" ] && [ -z "$d8" ]; then
+    ok "ui status: direção ausente, em dia, paths fora de sincronia nos dois sentidos, do projeto e áreas; status não grava a rule"
+  else ko "ui status: direção ausente, em dia, paths fora de sincronia nos dois sentidos, do projeto e áreas; status não grava a rule" "1='$d1' 2='$d2' 3='$d3' 4='$d4' 5='$d5' 6='$d6' 7='$d7' 8='$d8' 9='$d9'"; fi
+
   # Sem node: status diz ausente e a captura sai com 3.
   NONODE_PATH="$(path_without node)"
   if found_in_path "$NONODE_PATH" node >/dev/null; then
@@ -2296,6 +2342,16 @@ if [ -z "$FILTER" ]; then
   for st in ausente desatualizada 'do projeto' ok; do
     grep -qF "echo \"$st" "$SCRIPTS/ui.sh" || ui_bad+="ui.sh sem o estado de rule '$st' "
   done
+  # Cada estado da linha direção tem instrucao no init, que nunca grava a rule de direção.
+  for st in ausente 'do projeto' 'paths fora de sincronia' ok; do
+    grep -qF "state=\"$st" "$SCRIPTS/ui.sh" || ui_bad+="ui.sh sem o estado de direção '$st' "
+    grep -qF "\`direção: $st" "$INIT_MD" || ui_bad+="init sem o estado de direção '$st' "
+  done
+  for want in 'só a `/kit:design` as grava' 'O init nunca as cria, regrava nem apaga' 'Pronto. Próximo: /kit:design, depois /kit:spec <ideia>' \
+    'docs/specs/**/amostra.html'; do
+    grep -qF -- "$want" "$INIT_MD" || ui_bad+="init:'$want' "
+  done
+  grep -qF 'sem o cabeçalho `kit:design` é rule do projeto' "$REPO/plugins/kit/skills/init/adopt.md" || ui_bad+="adopt:kit-design do projeto "
   grep -qF '## Interface (`ui`)' "$REPO/plugins/kit/skills/init/stacks.md" || ui_bad+="stacks "
   jq -e '(.ui.globs | length) > 0 and .ui.viewports == ["360x800", "768x1024", "1280x800", "1920x1080"] and (.ui.dev | length) > 0 and (.ui.url | test("^http://"))' \
     "$REPO/plugins/kit/templates/kit.example.json" >/dev/null 2>&1 || ui_bad+="kit.example.json "

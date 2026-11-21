@@ -132,8 +132,10 @@ check_init() {
     grep -qxF -- "$g" <(tr -d '\r' <"$R" 2>/dev/null) || bad+="[${g:0:40}] "
   done < <(tr -d '\r' <"$PLUGIN/skills/execute/ui-rules.md")
   if [ -z "$bad" ]; then ok "$label: a rule traz o bloco de ui-rules.md sem mudar uma palavra"; else ko "$label: a rule traz o bloco de ui-rules.md sem mudar uma palavra" "linhas ausentes: $bad"; fi
-  if grep -qiE 'interface:\**[[:space:]]' <<<"$text" && grep -qF 'Pronto. Próximo: /kit:spec' <<<"$text"; then ok "$label: relatório com a linha de interface e o próximo passo"
-  else ko "$label: relatório com a linha de interface e o próximo passo" "$(tail -n 12 <<<"$text")"; fi
+  if grep -qiE 'interface:\**[[:space:]]' <<<"$text" && grep -qF 'Pronto. Próximo: /kit:design, depois /kit:spec' <<<"$text"; then ok "$label: relatório com a linha de interface e a direção visual antes da SPEC"
+  else ko "$label: relatório com a linha de interface e a direção visual antes da SPEC" "$(tail -n 12 <<<"$text")"; fi
+  if ! ls "$d/.claude/rules/" 2>/dev/null | grep -q '^kit-design'; then ok "$label: o init não grava rule de direção"
+  else ko "$label: o init não grava rule de direção" "$(ls "$d/.claude/rules/" | tr '\n' ' ')"; fi
   if (cd "$d" && bash "$UIS" capture --probe-only --name aceite >"$d.capture" 2>&1); then ok "$label: a captura roda com o kit.json gravado e sai sem achado"
   else ko "$label: a captura roda com o kit.json gravado e sai sem achado" "$(tail -n 6 "$d.capture" | tr '\n' ' ')"; fi
   if [ "$(git -C "$d" rev-list --count HEAD | tr -d '\r')" = "1" ]; then ok "$label: nenhum commit criado"; else ko "$label: nenhum commit criado" "$(git -C "$d" log --oneline | tr -d '\r')"; fi

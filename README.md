@@ -41,7 +41,7 @@ Se o kit consegue fazer, ele faz. Primeiro junta tudo o que vai propor, mostra o
 5. **Pergunta sobre notificações** (desligadas por padrão), avisando se você já tem alertas que seriam duplicados (ver [Notificações](#notificações)).
    Em projeto com tela, prepara a revisão de interface: propõe o `ui` do `kit.json`, grava as regras de tela em `.claude/rules/kit-ui.md` e diz como as telas serão capturadas (ver [Interface](#interface)). Rodado de novo, recria ou atualiza essas regras se ficaram para trás.
 6. **Mapeia o código**, se o projeto tiver mais de 300 arquivos de código ou mais de um repositório: roda o `/kit:map` ao final, sem perguntar (só pergunta se passar de 30 agents).
-7. **Relatório curto** (até ~10 linhas): o que foi feito (com o caminho de cada backup), o que foi verificado, avisos reais e `Pronto. Próximo: /kit:spec <ideia>`. Ele não lista tarefas para você.
+7. **Relatório curto** (até ~10 linhas): o que foi feito (com o caminho de cada backup), o que foi verificado, avisos reais e `Pronto. Próximo: /kit:spec <ideia>` (em projeto com tela e sem direção visual, `/kit:design` vem antes). Ele não lista tarefas para você.
 
 Rodado de novo num projeto já configurado, entra em modo reparo: valida o `kit.json`, os comandos e o settings, soma só o que falta (mesma confirmação única) e roda `/kit:map --update` se o mapa estiver desatualizado.
 
@@ -308,7 +308,7 @@ A amostra carrega a fonte por CDN, com fonte de reserva: sem rede, a tipografia 
 
 **Plano, execução e revisão.** O `/kit:plan` cita a rule de direção em toda tarefa de tela e abre a wave 1 com a fundação visual quando a direção ainda não está aplicada; o `/kit:execute` passa a rule aos subagents de tela. Na wave final, o `kit:ui-reviewer` cobra a direção como contrato: tela com fonte, cor ou composição fora da rule sai com `M10`, e redesenho que não chega à estrutura da amostra escolhida, com `M11`. Ele lê o código da amostra; não a vê renderizada.
 
-Nesta versão o `/kit:init` e o `ui.sh status` ainda não conhecem a rule de direção; chega na próxima.
+**No `/kit:init`.** A rule de direção é só da `/kit:design`: o init nunca a grava, nem no modo reparo. Em projeto com tela e sem direção, o relatório dele termina em `Pronto. Próximo: /kit:design, depois /kit:spec <ideia>`; com o `paths:` da rule fora de sincronia com `ui.globs`, avisa e recomenda a mesma `/kit:design`. O `ui.sh status` mostra o estado na linha `direção:`.
 
 ## LSP de TypeScript com teto de memória
 
