@@ -2239,7 +2239,15 @@ if [ -z "$FILTER" ]; then
   for rule in $(grep -oE 'add\("[a-z-]+"' "$SCRIPTS/ui-probe.js" | sed -E 's/add\("//; s/"//' | sort -u) console requisicao nao-carregou; do
     grep -qF "\`$rule\`" "$REPO/docs/reference.md" || ui_bad+="reference sem a regra $rule "
   done
-  for id in M10 M11; do grep -qE "^- \*\*$id\*\* " "$SR" || ui_bad+="spec-reviewer:$id "; done
+  for id in M10 M11 M12; do grep -qE "^- \*\*$id\*\* " "$SR" || ui_bad+="spec-reviewer:$id "; done
+  grep -qE '^- \*\*M12\*\* .*DESIGN\.md.*amostra.*kit-design.*biblioteca' "$SR" || ui_bad+="spec-reviewer:M12 sem direção "
+  # A /kit:spec e a segunda porta da direcao visual: segue os passos da /kit:design por dentro.
+  for want in '**Redesenho visual.**' '${CLAUDE_PLUGIN_ROOT}/skills/design/passos.md' '${CLAUDE_PLUGIN_ROOT}/skills/design/SKILL.md' \
+    'Definir a direção agora (Recomendado)' 'Seguir sem direção' '"sem mudança"' 'Redesenho do app todo pedido pelo usuário' 'caminho de um `DESIGN.md`'; do
+    grep -qF -- "$want" "$SPEC_MD" || ui_bad+="spec:'$want' "
+  done
+  grep -qF '**Redesenho do app todo**' "$REPO/plugins/kit/skills/epic/SKILL.md" && grep -qF 'Componentes base' "$REPO/plugins/kit/skills/epic/SKILL.md" || ui_bad+="epic:redesenho "
+  grep -qF '/kit:design' "$REPO/plugins/kit/skills/init/new.md" || ui_bad+="init/new:design "
   grep -qE '^- \*\*M9\*\* .*ui\.globs' "$REPO/plugins/kit/agents/plan-reviewer.md" && grep -qE '^- \*\*B3\*\* .*estado de tela' "$REPO/plugins/kit/agents/plan-reviewer.md" || ui_bad+="plan-reviewer "
   for want in '## Telas' '**Feature com tela.**' 'ui.globs' 'Estados: vazio' 'Tela pequena:' 'Padrão visual:'; do
     grep -qF -- "$want" "$SPEC_MD" || ui_bad+="spec:'$want' "

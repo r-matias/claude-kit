@@ -9,6 +9,7 @@ disable-model-invocation: true
 - Não escreva código nesta skill.
 - Cada fatia entrega valor observável sozinha e pode ir para produção isoladamente. Fatia "só backend" ou "só modelo de dados" sem efeito visível não conta, a menos que seja pré-requisito explícito.
 - Prefira fatias verticais finas; a primeira fatia é o caminho mais simples ponta a ponta.
+- **Redesenho do app todo** (o épico vem de um `DESIGN.md` de escopo app): a fatia 1 é a fundação (tokens, fontes e todos os Componentes base do `DESIGN.md`) com a tela de referência já migrada; as seguintes são grupos de telas. A SPEC de cada fatia seguinte lista, em Arquivos e interfaces envolvidos, os componentes base que as telas dela consomem. Componente que falta na lista do `DESIGN.md` entra na fatia 1, nunca numa fatia de tela. Riscos registra que a troca de tokens muda também as telas ainda não migradas.
 
 ## Passos
 1. Épico: $ARGUMENTS. Leia o CLAUDE.md e explore a área (delegue ao `kit:investigator` se for grande).

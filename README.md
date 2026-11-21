@@ -117,6 +117,12 @@ Para redesenhar uma tela ou um componente dentro da direção que o projeto já 
 - `/kit:design tela de onboarding do convite` (página que ainda não existe)
 - `/kit:design Button` (componente, em todos os estados, com a lista das telas que o usam)
 
+O redesenho também pode começar pela `/kit:spec`, que segue os mesmos passos por dentro. Numa página ou num componente, ela gera as amostras, grava o `DESIGN.md` e continua até a SPEC na mesma sessão. No app todo, grava a direção e para com o comando seguinte pronto, porque o que vem depois é um épico. Com um `DESIGN.md` já gravado, a `/kit:spec` parte dele e não repete a entrevista de design:
+
+- `/kit:spec redesenhar a tela de faturas`
+- `/kit:spec novo visual para o app inteiro`
+- `/kit:spec docs/specs/painel-novo/DESIGN.md`
+
 **Bug conhecido:** `/kit:fix` começa por um teste que reproduz a falha e corrige pela causa raiz.
 
 - `/kit:fix #482`
@@ -298,7 +304,9 @@ A amostra carrega a fonte por CDN, com fonte de reserva: sem rede, a tipografia 
 
 **Página e componente.** Com uma rota, um arquivo ou um nome no argumento, a skill redesenha só aquele alvo, dentro da direção gravada: as amostras variam composição e hierarquia, e fonte e paleta ficam as do projeto. Pedido que exige mudar fonte ou paleta é escopo app, e ela pergunta se sobe o escopo. Numa página de projeto ainda sem direção, ela pergunta se a página é o piloto da direção do app (grava a `kit-design.md` para todos, aplicada só nessa tela agora) ou só uma recomposição com o padrão atual. No componente, a amostra mostra todos os estados e variantes, e o `DESIGN.md` lista as telas que o usam, com a rota.
 
-Nesta versão o uso da direção pela `/kit:spec`, pelo `/kit:plan`, pelo `/kit:execute` e pelo revisor de interface ainda não está ligado; chega nas próximas.
+**Pela `/kit:spec`.** Feature com tela num projeto sem padrão visual (sem tema, tokens nem biblioteca) e sem direção: a `/kit:spec` pergunta se define a direção agora (recomendado: amostras com a tela da feature e a entrevista continua) ou segue sem. Projeto que já tem padrão segue o padrão: quem abre um redesenho é você. Em redesenho, a SPEC aponta a rule, o `DESIGN.md` e a amostra em `Padrão visual:`, e o revisor de SPEC cobra isso. Redesenho do app todo que vira épico tem a fundação (tokens, fontes e componentes base) na fatia 1.
+
+Nesta versão o uso da direção pelo `/kit:plan`, pelo `/kit:execute` e pelo revisor de interface ainda não está ligado; chega nas próximas.
 
 ## LSP de TypeScript com teto de memória
 

@@ -4,6 +4,23 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.10.2
+
+### Entrou
+
+- **Redesenho pela `/kit:spec`.** Pedido como `/kit:spec redesenhar a tela de faturas` segue os passos da `/kit:design` na mesma sessão: amostras, escolha, `DESIGN.md` e então a SPEC. No app todo, ela grava a direção e para com `/kit:spec docs/specs/<slug>/DESIGN.md` pronto, porque o que vem depois é um épico.
+- **`/kit:spec` a partir de um `DESIGN.md`.** Com o caminho no argumento, a ideia vem dele, a SPEC vai na mesma pasta e o que ele já responde (direção, amostra, componentes base, telas afetadas) não vira pergunta.
+- **Épico de redesenho do app.** A fatia 1 traz a fundação (tokens, fontes e todos os componentes base do `DESIGN.md`) com a tela de referência; as seguintes são grupos de telas, cada SPEC listando os componentes base que consome.
+- **`kit:spec-reviewer` com o `M12`.** Redesenho sem `DESIGN.md` ou sem a amostra em `Padrão visual:`, e feature com tela em projeto sem padrão nem direção sem a escolha registrada em Decisões, saem como MAJOR.
+
+### Mudou
+
+- **Feature com tela em projeto sem padrão visual nem direção.** A pergunta de 2 ou 3 estilos por nome deu lugar a uma só: definir a direção agora, com amostras (recomendado), ou seguir sem. Projeto que já tem padrão segue o padrão, como antes.
+- Em redesenho, a seção Telas diz o que muda em cada tela e cita como "sem mudança" o estado que fica igual; `Padrão visual:` aponta a rule de direção, o `DESIGN.md` e a amostra.
+- Projeto criado do zero pelo `/kit:init`: a direção visual nasce depois, pela `/kit:design`, e a amostra escolhida serve de tela de referência até existir uma.
+
+Ainda não ligado nesta versão: o `/kit:plan`, o `/kit:execute` e o `kit:ui-reviewer` ainda não consomem nem cobram a direção; o `/kit:init` e o `ui.sh status` ainda não conhecem a rule de direção.
+
 ## 0.10.1
 
 ### Entrou

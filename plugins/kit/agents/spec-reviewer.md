@@ -43,8 +43,9 @@ Cada regra tem um id e uma severidade fixa. Todo achado cita o id da regra que e
 - **M9** Objetivo promete um resultado que nenhum item de Escopo entrega e que Fora de escopo não exclui.
 - **M10** Feature com tela (algum item de Escopo descreve o que a pessoa vê ou opera numa interface) sem a seção Telas, ou com tela que não diz o que aparece em vazio, carregando ou erro quando o Escopo torna o estado alcançável: lista que pode vir vazia, dado que vem de rede ou banco, envio que pode falhar. Cite o item de Escopo.
 - **M11** Tela sem ação principal ou sem fluxo (não dá para dizer o que a pessoa faz ali e em que ordem), ou tela com tabela, grade ou mais de uma coluna sem dizer como fica na tela pequena.
+- **M12** Direção visual sem registro. Redesenho (Objetivo ou Escopo muda a aparência de tela ou componente que já existe) sem um `DESIGN.md` citado ou sem a amostra dele (o `amostra.html` da pasta do `DESIGN.md`) em `Padrão visual:`. Ou feature com tela sem direção (nenhuma `.claude/rules/kit-design*.md` com o cabeçalho `kit:design` vale para os arquivos dela: a de área só vale onde o `paths:` casa; confira com Glob e Read) num projeto sem padrão visual (sem tema ou tokens na linha "Tema e tokens" nem biblioteca de componentes na `.claude/rules/kit-ui.md`), sem a escolha de definir a direção ou seguir sem ela registrada em Decisões. Cite o item de Escopo e o que falta.
 
-Decisão registrada pelo usuário em Decisões (como `tamanho: manter`) não é achado. Tamanho da SPEC também não: é conferido pela skill. Em SPEC sem tela, M10 e M11 não se aplicam. Cor, fonte, espaçamento e nome de componente não são achado: seguem o padrão visual do projeto e são papel do plano.
+Decisão registrada pelo usuário em Decisões (como `tamanho: manter`) não é achado. Tamanho da SPEC também não: é conferido pela skill. Em SPEC sem tela, M10, M11 e M12 não se aplicam. Cor, fonte, espaçamento e nome de componente não são achado: seguem o padrão visual do projeto e são papel do plano. O M12 cobra que a direção exista e esteja citada, nunca qual ela é.
 
 ## Saída
 Depois da paráfrase, um achado por linha:
