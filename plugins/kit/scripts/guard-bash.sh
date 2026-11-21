@@ -103,9 +103,28 @@ flatten_ps() {
   f=${f//"$TAB"/ }
   f=${f//"$CR"/ }
   f=${f//'${HOME}'/'$HOME'}
+  # ${env:USERPROFILE} e afins viram $env:USERPROFILE: as chaves separariam o trecho.
+  case "$f" in
+    *'${'*)
+      rest="$f"
+      pre=""
+      q=""
+      while [[ "$rest" == *"$PS_LB"* ]]; do
+        pre="${rest%%"$PS_LB"*}"
+        rest="${rest#*"$PS_LB"}"
+        c="${rest%%"$PS_RB"*}"
+        case "$c" in
+          "$rest" | '' | *[[:space:]]*) q+="$pre$PS_LB" ;;
+          *) q+="$pre\$$c"; rest="${rest#*"$PS_RB"}" ;;
+        esac
+      done
+      f="$q$rest" ;;
+  esac
   while [ "${f%"$NL"}" != "$f" ]; do f="${f%"$NL"}"; done
   FLAT_OUT="$f"
 }
+PS_LB='${'
+PS_RB='}'
 if [ "$SHELL_MODE" = pwsh ]; then flatten() { flatten_ps "$@"; }; fi
 flatten "$CMD"
 FLAT="$FLAT_OUT"
@@ -130,11 +149,14 @@ FAST="$FLAT_LC "
 # PowerShell: nomes de cmdlet e alias curtos (ri, rd, del) aparecem dentro de outras palavras, entao
 # casam como palavra inteira (o - faz parte do nome: format-table nao e format). & sozinho e o
 # operador de chamada.
-PS_FAST_RE='(^|[^a-z0-9_-])(remove-item|ri|rm|rd|rmdir|del|erase|format|format-volume|clear-disk|remove-partition|initialize-disk|iex|invoke-expression|iwr|irm|invoke-webrequest|invoke-restmethod|start-process|saps|start|git|cmd|powershell|pwsh|(ba|z|da|k|fi)?sh|find|mkfs|dd|curl|wget|python[0-9.]*|py|node|deno|bun|perl|ruby|php)([^a-z0-9_-]|$)'
+PS_FAST_RE='(^|[^a-z0-9_-])(remove-item|ri|rm|rd|rmdir|del|erase|format|format-volume|clear-disk|remove-partition|initialize-disk|iex|invoke-expression|iwr|irm|invoke-webrequest|invoke-restmethod|start-process|saps|start|git|cmd|powershell|pwsh|(ba|z|da|k|fi)?sh|find|mkfs|dd|curl|wget|python[0-9.]*|py|node|deno|bun|perl|ruby|php|set-content|sc|add-content|ac|clear-content|clc|out-file|tee-object|tee|new-item|ni|copy-item|cp|copy|cpi|move-item|mv|move|mi|rename-item|ren|rni|export-csv|epcsv|export-clixml|export-alias|epal|export-formatdata|g?sed|install|ln)([^a-z0-9_-]|$)'
 if [ "$SHELL_MODE" = pwsh ]; then
-  for c in '>&1' '>&2' '&&'; do FAST=${FAST//"$c"/ }; done
+  # 2>$null nao escreve em arquivo. Leitura de segredo so e conferida com um nome do grupo no texto.
+  for c in '>&1' '>&2' '&&' '>$null ' '> $null ' '>/dev/null ' '> /dev/null '; do FAST=${FAST//"$c"/ }; done
   case "$FAST" in
-    *downloadstring* | *delete* | *drop* | *truncate* | *'$('* | *'&'*) ;;
+    *downloadstring* | *delete* | *drop* | *truncate* | *'$('* | *'&'* | *'>'* | \
+      *.env* | *.pem* | *.key* | *secrets* | *.ssh* | *.aws* | *.kube* | *.git-credentials* | *.npmrc* | \
+      *.config/gh* | *.docker/config.json*) ;;
     *) [[ $FAST =~ $PS_FAST_RE ]] || exit 0 ;;
   esac
 fi
@@ -1100,8 +1122,18 @@ glob_expand() {
 }
 
 read_target() {
-  local t="$1" pre="" was=0 m
+  local t="$1" pre="" was=0 m h
   case "$t" in '' | -) return 0 ;; esac
+  # PowerShell: $HOME, $env:USERPROFILE e $env:HOME, sem distinguir maiusculas, sao a home.
+  if [ "$SHELL_MODE" = pwsh ] && [ -n "${HOME:-}" ]; then
+    case "$t" in
+      '$'*)
+        to_lower "$t"
+        for h in '$env:userprofile' '$env:home' '$home'; do
+          case "$LC_OUT" in "$h" | "$h"/*) t="\$HOME${t:${#h}}"; break ;; esac
+        done ;;
+    esac
+  fi
   if [ -n "${HOME:-}" ]; then
     case "$t" in
       '~' | '$HOME') t="${HOME//\\//}" ;;
@@ -1671,6 +1703,249 @@ check_start() {
   CUR_OK="$cur_ok"
 }
 
+# PowerShell: parametros de um cmdlet de arquivo. Especificacao em "|nome:papel:canonico|...", com
+# papel P (caminho), D (destino), N (novo nome), M (nome do New-Item), T (tipo do item), V (valor
+# ignorado) ou S (switch). Nome por extenso, por prefixo ou -Nome:valor. Prefixo ambiguo (o
+# PowerShell recusaria) fica com o papel de caminho, se houver, senao com switch: assim nenhum
+# caminho e engolido como valor. Parametro desconhecido conta como switch. Posicionais vao, na ordem
+# da lista "canonico:papel ...", para o primeiro ainda nao dado por nome; os que sobram contam como
+# caminho. Lista com virgula em caminho vira varios.
+PS_COMMON='|erroraction:V:ea|ea:V:ea|warningaction:V:wa|wa:V:wa|informationaction:V:infa|infa:V:infa|errorvariable:V:ev|ev:V:ev|warningvariable:V:wv|wv:V:wv|informationvariable:V:iv|iv:V:iv|outvariable:V:ov|ov:V:ov|outbuffer:V:ob|ob:V:ob|pipelinevariable:V:pv|pv:V:pv|progressaction:V:proga|proga:V:proga|verbose:S:vb|vb:S:vb|debug:S:db|db:S:db|whatif:S:wi|wi:S:wi|confirm:S:cf|cf:S:cf|'
+PSS_PATH='|path:P:path|literalpath:P:path|lp:P:path|pspath:P:path|'
+PSS_FILT='|filter:V:filter|include:V:include|exclude:V:exclude|credential:V:credential|'
+PSS_SETC="$PSS_PATH$PSS_FILT|value:V:value|encoding:V:encoding|stream:V:stream|passthru:S:passthru|force:S:force|nonewline:S:nonewline|asbytestream:S:asbytestream|usetransaction:S:usetransaction|"
+PSS_CLC="$PSS_PATH$PSS_FILT|stream:V:stream|force:S:force|"
+PSS_OUTF='|filepath:P:path|path:P:path|literalpath:P:path|lp:P:path|pspath:P:path|encoding:V:encoding|width:V:width|inputobject:V:inputobject|append:S:append|force:S:force|noclobber:S:noclobber|nonewline:S:nonewline|'
+PSS_TEE='|filepath:P:path|path:P:path|literalpath:P:path|lp:P:path|pspath:P:path|variable:V:variable|inputobject:V:inputobject|encoding:V:encoding|append:S:append|'
+PSS_NI="$PSS_PATH|name:M:name|itemtype:T:itemtype|type:T:itemtype|value:V:value|target:V:value|credential:V:credential|force:S:force|"
+PSS_COPY="$PSS_PATH$PSS_FILT|destination:D:destination|container:S:container|force:S:force|recurse:S:recurse|passthru:S:passthru|fromsession:V:fromsession|tosession:V:tosession|"
+PSS_MOVE="$PSS_PATH$PSS_FILT|destination:D:destination|force:S:force|passthru:S:passthru|"
+PSS_REN="$PSS_PATH|newname:N:newname|credential:V:credential|force:S:force|passthru:S:passthru|"
+PSS_ECSV="$PSS_PATH|inputobject:V:inputobject|delimiter:V:delimiter|encoding:V:encoding|quotefields:V:quotefields|usequotes:V:usequotes|append:S:append|force:S:force|noclobber:S:noclobber|notypeinformation:S:nti|includetypeinformation:S:iti|useculture:S:useculture|"
+PSS_EXML="$PSS_PATH|inputobject:V:inputobject|depth:V:depth|encoding:V:encoding|force:S:force|noclobber:S:noclobber|includescriptblock:S:isb|"
+PSS_EPAL="$PSS_PATH|name:V:name|as:V:as|description:V:description|scope:V:scope|append:S:append|force:S:force|noclobber:S:noclobber|passthru:S:passthru|"
+PSS_GC="$PSS_PATH$PSS_FILT|readcount:V:readcount|totalcount:V:totalcount|first:V:totalcount|head:V:totalcount|tail:V:tail|last:V:tail|delimiter:V:delimiter|encoding:V:encoding|stream:V:stream|raw:S:raw|wait:S:wait|force:S:force|asbytestream:S:asbytestream|"
+PSS_SLS="$PSS_PATH|pattern:V:pattern|inputobject:V:inputobject|include:V:include|exclude:V:exclude|encoding:V:encoding|context:V:context|culture:V:culture|simplematch:S:sm|casesensitive:S:cs|quiet:S:quiet|list:S:list|notmatch:S:notmatch|allmatches:S:allmatches|noemphasis:S:noemphasis|raw:S:raw|"
+PSS_ICSV="$PSS_PATH|delimiter:V:delimiter|header:V:header|encoding:V:encoding|useculture:S:useculture|"
+PSS_IXML="$PSS_PATH|first:V:first|skip:V:skip|includetotalcount:S:itc|"
+PSS_GI="$PSS_PATH$PSS_FILT|stream:V:stream|force:S:force|"
+PSS_FHX="$PSS_PATH|inputobject:V:inputobject|encoding:V:encoding|count:V:count|offset:V:offset|raw:S:raw|"
+PSP_P=()
+PSP_D=()
+PSP_N=()
+PSP_M=()
+PSP_T=""
+PSP_V=()
+PSP_BOUND="|"
+ps_put() {
+  local p
+  local -a parts=()
+  case "$1" in
+    P)
+      IFS=, read -r -a parts <<<"$2"
+      for p in ${parts[@]+"${parts[@]}"}; do
+        [ -n "$p" ] && PSP_P+=("$p")
+      done ;;
+    D) PSP_D+=("$2") ;;
+    N) PSP_N+=("$2") ;;
+    M) PSP_M+=("$2") ;;
+    T) PSP_T="$2" ;;
+  esac
+  return 0
+}
+ps_parse() {
+  local spec="$1$PS_COMMON" posl="$2" tok nm e en r role canon brole bcanon pend="" pc last=""
+  local -a ents=()
+  shift 2
+  PSP_P=()
+  PSP_D=()
+  PSP_N=()
+  PSP_M=()
+  PSP_T=""
+  PSP_V=()
+  PSP_BOUND="|"
+  IFS='|' read -r -a ents <<<"$spec"
+  while [ "$#" -gt 0 ]; do
+    tok="$1"
+    shift
+    # Lista com virgula e espaco (a.txt, b.txt ou a.txt ,b.txt) continua o parametro anterior.
+    if [ -n "$pend" ]; then
+      ps_put "$pend" "$tok"
+      last="$pend"
+      pend=""
+      case "$tok" in *,) pend="$last" ;; esac
+      continue
+    fi
+    case "$tok" in
+      ,) [ -z "$last" ] || pend="$last"; continue ;;
+      ,?*)
+        if [ -n "$last" ]; then
+          ps_put "$last" "${tok#,}"
+          case "$tok" in *,) pend="$last" ;; esac
+          continue
+        fi ;;
+    esac
+    case "$tok" in
+      -?*) ;;
+      *)
+        role=P
+        for pc in $posl; do
+          case "$PSP_BOUND" in *"|${pc%%:*}|"*) continue ;; esac
+          PSP_BOUND+="${pc%%:*}|"
+          role="${pc#*:}"
+          break
+        done
+        ps_put "$role" "$tok"
+        [ "$role" != V ] || PSP_V+=("$tok")
+        last="$role"
+        case "$tok" in *,) pend="$role" ;; esac
+        continue ;;
+    esac
+    last=""
+    to_lower "${tok#-}"
+    nm="${LC_OUT%%:*}"
+    brole=""
+    bcanon=""
+    for e in ${ents[@]+"${ents[@]}"}; do
+      en="${e%%:*}"
+      case "$en" in "$nm"*) ;; *) continue ;; esac
+      r="${e#*:}"
+      role="${r%%:*}"
+      canon="${r#*:}"
+      if [ "$en" = "$nm" ]; then brole="$role"; bcanon="$canon"; break; fi
+      case "$brole" in
+        '') brole="$role"; bcanon="$canon" ;;
+        P) ;;
+        D | N | M) [ "$role" = P ] && brole=P && bcanon="$canon" ;;
+        *)
+          case "$role" in
+            P | D | N | M) brole="$role"; bcanon="$canon" ;;
+            S) brole=S ;;
+          esac ;;
+      esac
+    done
+    [ -n "$brole" ] || continue
+    PSP_BOUND+="$bcanon|"
+    [ "$brole" != S ] || continue
+    # -Nome:valor; -Nome: valor (com espaco) leva a palavra seguinte, como -Nome valor.
+    if [ "$nm" != "$LC_OUT" ] && [ -n "${tok#*:}" ]; then
+      ps_put "$brole" "${tok#*:}"
+      last="$brole"
+      case "$tok" in *,) pend="$brole" ;; esac
+    else
+      pend="$brole"
+    fi
+  done
+  return 0
+}
+
+# Valor posicional (o -Value do Set-Content, o -Encoding do Out-File) e conferido pelo nome quando o
+# comando tem texto entre aspas com espaco: sem as aspas, o fim de um caminho com espaco
+# (-Path 'C:\Program Files\x\.env') cai nesse lugar.
+PS_QSPACE=0
+PS_QSPACE_RE="$SQ[^$SQ]*[[:space:]][^$SQ]*$SQ|$DQ[^$DQ]*[[:space:]][^$DQ]*$DQ"
+[ "$SHELL_MODE" = pwsh ] && [[ $CMD =~ $PS_QSPACE_RE ]] && PS_QSPACE=1
+# Espaco escapado com crase e aspas tipograficas (o flatten_ps as trata como aspas) tambem contam.
+if [ "$SHELL_MODE" = pwsh ]; then
+  case "$CMD" in
+    *'` '* | *"\`$TAB"* | *$'\xe2\x80\x98'* | *$'\xe2\x80\x99'* | *$'\xe2\x80\x9a'* | *$'\xe2\x80\x9b'* | \
+      *$'\xe2\x80\x9c'* | *$'\xe2\x80\x9d'* | *$'\xe2\x80\x9e'*) PS_QSPACE=1 ;;
+  esac
+fi
+ps_write_paths() {
+  local t
+  for t in ${PSP_P[@]+"${PSP_P[@]}"}; do write_target "$t"; done
+  [ "$PS_QSPACE" -eq 1 ] || return 0
+  for t in ${PSP_V[@]+"${PSP_V[@]}"}; do kit_check_write_name "$t"; done
+  return 0
+}
+ps_read_paths() {
+  local t
+  for t in ${PSP_P[@]+"${PSP_P[@]}"}; do read_target "$t"; done
+  return 0
+}
+
+# New-Item: pasta (-ItemType Directory) nao e escrita de arquivo; com -Name, o item nasce em cada -Path.
+ps_new_item() {
+  local p n
+  to_lower "$PSP_T"
+  case "$LC_OUT" in d*) return 0 ;; esac
+  if [ "${#PSP_M[@]}" -eq 0 ]; then ps_write_paths; return 0; fi
+  [ "${#PSP_P[@]}" -gt 0 ] || PSP_P=(".")
+  for p in "${PSP_P[@]}"; do # array nao vazio
+    for n in "${PSP_M[@]}"; do write_target "${p%/}/$n"; done # array nao vazio
+  done
+  return 0
+}
+
+# Copy-Item e Move-Item seguem o cp e o mv: sem -Destination, o destino e a pasta corrente.
+ps_copy() {
+  local d="."
+  [ "${#PSP_P[@]}" -gt 0 ] || return 0
+  [ "${#PSP_D[@]}" -gt 0 ] && d="${PSP_D[0]}"
+  check_copy "$1" -- "${PSP_P[@]}" "$d" # array nao vazio
+}
+
+# Rename-Item: a origem some e o novo nome nasce na pasta dela.
+ps_rename() {
+  local p n d
+  ps_write_paths
+  for n in ${PSP_N[@]+"${PSP_N[@]}"}; do
+    case "$n" in */*) write_target "$n"; continue ;; esac
+    [ "${#PSP_P[@]}" -gt 0 ] || kit_check_write_name "$n"
+    for p in ${PSP_P[@]+"${PSP_P[@]}"}; do
+      p="${p%/}"
+      d="."
+      case "$p" in */*) d="${p%/*}" ;; esac
+      [ -n "$d" ] || d="/"
+      write_target "$d/$n"
+    done
+  done
+  return 0
+}
+
+# PowerShell: cmdlets e aliases que escrevem arquivo passam pelas regras do guard-files; os que leem,
+# com o grupo segredos, pelas da leitura pelo shell. Comando com caminho so conta se for um cmdlet
+# qualificado pelo modulo (Microsoft.PowerShell.Management\Set-Content); cp.exe e afins nao sao alias.
+check_ps_io() {
+  local name
+  to_lower "${1##*/}"
+  name="$LC_OUT"
+  case "$1" in */*) case "$name" in *-*) ;; *) return 0 ;; esac ;; esac
+  scan_redirects 0 "$@"
+  set -- ${ARGS_NR[@]+"${ARGS_NR[@]}"}
+  shift
+  case "$name" in
+    set-content | sc | add-content | ac) ps_parse "$PSS_SETC" "path:P value:V" "$@"; ps_write_paths ;;
+    clear-content | clc) ps_parse "$PSS_CLC" "path:P" "$@"; ps_write_paths ;;
+    out-file) ps_parse "$PSS_OUTF" "path:P encoding:V" "$@"; ps_write_paths ;;
+    tee-object | tee) ps_parse "$PSS_TEE" "path:P" "$@"; ps_write_paths ;;
+    new-item | ni) ps_parse "$PSS_NI" "path:P" "$@"; ps_new_item ;;
+    copy-item | cp | copy | cpi)
+      ps_parse "$PSS_COPY" "path:P destination:D" "$@"
+      ps_copy cp
+      if [ "$SECRET_HINT" -eq 1 ]; then ps_read_paths; fi ;;
+    move-item | mv | move | mi) ps_parse "$PSS_MOVE" "path:P destination:D" "$@"; ps_copy mv ;;
+    rename-item | ren | rni) ps_parse "$PSS_REN" "path:P newname:N" "$@"; ps_rename ;;
+    export-csv | epcsv) ps_parse "$PSS_ECSV" "path:P delimiter:V" "$@"; ps_write_paths ;;
+    export-clixml | export-formatdata) ps_parse "$PSS_EXML" "path:P" "$@"; ps_write_paths ;;
+    export-alias | epal) ps_parse "$PSS_EPAL" "path:P name:V" "$@"; ps_write_paths ;;
+  esac
+  [ "$SECRET_HINT" -eq 1 ] || return 0
+  case "$name" in
+    get-content | gc | cat | type) ps_parse "$PSS_GC" "path:P" "$@"; ps_read_paths ;;
+    select-string | sls) ps_parse "$PSS_SLS" "pattern:V path:P" "$@"; ps_read_paths ;;
+    import-csv | ipcsv) ps_parse "$PSS_ICSV" "path:P delimiter:V" "$@"; ps_read_paths ;;
+    import-clixml) ps_parse "$PSS_IXML" "path:P" "$@"; ps_read_paths ;;
+    format-hex | fhx) ps_parse "$PSS_FHX" "path:P" "$@"; ps_read_paths ;;
+    # Get-Item -Stream le o fluxo de dados alternativo.
+    get-item | gi)
+      ps_parse "$PSS_GI" "path:P" "$@"
+      case "$PSP_BOUND" in *'|stream|'*) ps_read_paths ;; esac ;;
+  esac
+  return 0
+}
+
 # Um comando simples (ja separado de ;, &&, |...). sh -c/bash -c analisa o resto como comando.
 # WRITE_ONLY=1: a leitura extra com o texto entre aspas mascarado, so de escrita e de leitura de segredo.
 WRITE_ONLY=0
@@ -1745,6 +2020,7 @@ check_segment() {
   [ "$WRITE_ONLY" -eq 1 ] || check_sql "${c[@]}"
   check_write_cmd "${c[@]}"
   if [ "$SECRET_HINT" -eq 1 ]; then check_read "${c[@]}"; fi
+  if [ "$SHELL_MODE" = pwsh ]; then check_ps_io "${c[@]}"; fi
   if [ "$WRITE_ONLY" -eq 1 ]; then
     case "${c[0]}" in
       sh | bash | zsh | dash | ksh | */sh | */bash | */zsh | */dash | */ksh) ;;

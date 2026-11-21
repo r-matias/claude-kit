@@ -4,6 +4,12 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.19
+
+### Entrou
+
+- **Escrita e leitura de segredo pela ferramenta PowerShell.** O `guard-pwsh.sh` passa a aplicar as regras de escrita do `guard-files` (segredo, `guards.deny_write`, `protected_paths`, `guards.allow_write`) a `Set-Content`, `Add-Content`, `Clear-Content`, `Out-File`, `Tee-Object`, `New-Item`, `Copy-Item`, `Move-Item`, `Rename-Item`, `Export-Csv`, `Export-Clixml` e aos aliases deles (`sc`, `ac`, `cp`, `mv`, `ren`, `ni`...), com parâmetros por nome, por prefixo e posicionais: `Set-Content .env 'X=1'` e `Copy-Item .env.example .env` são negados como `echo > .env` e `cp .env.example .env` no Bash. Com o grupo `segredos`, `Get-Content .env`, `Select-String KEY .env`, `Import-Csv`, `Format-Hex`, `Get-Item -Stream` e a origem do `Copy-Item` também são negados, inclusive em `$HOME`, `$env:USERPROFILE` e `${env:USERPROFILE}`; `.env.example` e `node --env-file .env` continuam liberados. Caminho entre aspas com espaço (`Set-Content -Path 'C:\Program Files\x\.env' x`) também é conferido; por isso, num comando com texto entre aspas com espaço, valor posicional com nome de segredo é negado por excesso. `Add-Content .gitignore .env` passa.
+
 ## 0.9.18
 
 ### Entrou
