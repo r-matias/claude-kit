@@ -123,7 +123,7 @@ check_init() {
   else ko "$label: ui.dev e ui.url do servidor do projeto" "$(jq -c '{dev: .ui.dev, url: .ui.url}' "$K" 2>&1)"; fi
   if ! bash "$PLUGIN/scripts/setup.sh" guards "$K" 2>&1 | grep -q 'inválido: ui'; then ok "$label: setup guards não acusa nada no ui"
   else ko "$label: setup guards não acusa nada no ui" "$(bash "$PLUGIN/scripts/setup.sh" guards "$K" 2>&1 | grep 'ui' | tr '\n' ' ')"; fi
-  if [ -f "$R" ] && grep -qx 'paths:' <(tr -d '\r' <"$R") && grep -qxF '<!-- kit:ui v1 -->' <(tr -d '\r' <"$R") && grep -qF 'web/tokens.css' "$R"; then
+  if [ -f "$R" ] && grep -qx 'paths:' <(tr -d '\r' <"$R") && grep -qxF '<!-- kit:ui v2 -->' <(tr -d '\r' <"$R") && grep -qF 'web/tokens.css' "$R"; then
     ok "$label: .claude/rules/kit-ui.md com paths, cabeçalho kit:ui e os tokens do projeto"
   else ko "$label: .claude/rules/kit-ui.md com paths, cabeçalho kit:ui e os tokens do projeto" "$(head -n 12 "$R" 2>&1 | tr '\n' '|')"; fi
   bad=""

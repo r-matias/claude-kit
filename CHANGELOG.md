@@ -4,6 +4,21 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.10.3
+
+### Entrou
+
+- **`/kit:plan` com direção visual.** Em projeto com `.claude/rules/kit-design.md`, toda tarefa de tela cita a rule de direção, a amostra (quando a SPEC a cita) e os componentes que consome. Direção ainda não aplicada vira a primeira tarefa da wave 1: tokens, fontes empacotadas no projeto, estilos base e a linha "Tema e tokens" da `kit-ui.md`. Componente usado por mais de uma tarefa nasce numa wave anterior, e não em duas tarefas paralelas que criariam cada uma o seu.
+- **`kit:plan-reviewer` cobra a direção no `M9`.** Tarefa de tela sem a rule de direção, plano sem a fundação visual quando ela falta e o mesmo componente criado por duas tarefas saem como MAJOR.
+- **`/kit:execute` passa a direção adiante.** O subagent de tarefa com tela recebe a rule de direção e a lista de componentes base do `DESIGN.md`; o `kit:ui-reviewer` recebe os caminhos da rule, do `DESIGN.md` e da amostra.
+
+### Mudou
+
+- **Regras de interface.** Projeto sem tema tira os tokens da direção registrada, e não mais de uma receita genérica; as fontes e a escala vêm da direção; o movimento admite o momento orquestrado que a direção prevê; em redesenho, o componente existente é alterado em vez de ganhar um irmão ao lado.
+- **`.claude/rules/kit-ui.md` na versão 2**, com uma linha que aponta a rule de direção. O `ui.sh status` mostra a rule antiga como `desatualizada`; rode `/kit:init` (modo reparo) para atualizá-la.
+
+Ainda não ligado nesta versão: o `kit:ui-reviewer` recebe os caminhos da direção, mas ainda não a cobra; o `/kit:init` e o `ui.sh status` ainda não conhecem a rule de direção.
+
 ## 0.10.2
 
 ### Entrou

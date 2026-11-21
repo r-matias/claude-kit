@@ -7,6 +7,7 @@ O script de interface é o `ui.sh` indicado no SKILL.md. Rode-o na raiz do proje
 ## Ao implementar
 - Siga o bloco de [ui-rules.md](ui-rules.md). Subagent que recebe tarefa com arquivo de `ui.globs` recebe esse bloco no prompt, sem mudar uma palavra, junto com o de subagent-rules.md.
 - Se o projeto tem `.claude/rules/kit-ui.md`, ele diz onde ficam tema, tokens, componentes compartilhados e a tela que serve de molde.
+- Direção registrada: a rule `kit-design` que vale para os arquivos da tarefa (a `.claude/rules/kit-design-<area>.md` cujo `paths:` casa, senão a `.claude/rules/kit-design.md`). Subagent de tarefa com tela recebe também o conteúdo dessa rule, sem o frontmatter, e, quando a SPEC cita um `DESIGN.md`, a lista de Componentes base dele.
 - Linha de `behavior` sobre estado de tela (vazio, carregando, erro, sucesso) vira teste quando o projeto testa componente. Sem teste de componente, a evidência do `done` é a captura da tela naquele estado.
 
 ## Captura
@@ -50,6 +51,6 @@ Primeiro passo do checkpoint, antes do `verify` e da revisão, se a wave alterou
 Se o diff do plano tem arquivo de `ui.globs`, antes de tirar o diff e de chamar os revisores da F1:
 1. Rode a captura completa, `ui.sh capture --name final`, nas rotas da SPEC. Capture também cada estado da seção Telas que fica atrás de interação, com `--steps` e um `--name` por estado.
 2. Corrija todo `achado` e capture de novo.
-3. Chame o `kit:ui-reviewer` na mesma mensagem dos outros revisores da F1, com os caminhos da SPEC e do PLAN, a lista dos arquivos de interface alterados e a pasta de cada captura. Sem captura, diga `sem captura`.
+3. Chame o `kit:ui-reviewer` na mesma mensagem dos outros revisores da F1, com os caminhos da SPEC e do PLAN, a lista dos arquivos de interface alterados e a pasta de cada captura. Sem captura, diga `sem captura`. Quando existem, passe também os caminhos da rule de direção (`.claude/rules/kit-design*.md` que vale para as telas), do `DESIGN.md` e da amostra citados pela SPEC.
 4. A F2 vale para ele: corrija BLOCKER e MAJOR, capture de novo e chame de novo, até `aprovado` (no máximo 3 rodadas; se sobrar BLOCKER ou MAJOR, pergunte como no passo 5.4 da [SKILL.md](SKILL.md)).
 5. Na Evidência da F1: `  - Interface: <captura de T telas em L larguras | sem captura> · kit:ui-reviewer → <aprovado | N achados corrigidos | N aceitos pelo usuário>`.

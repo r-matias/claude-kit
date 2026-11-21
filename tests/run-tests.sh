@@ -1446,12 +1446,13 @@ if [ -z "$FILTER" ] || [[ "interface ui" == *"$FILTER"* ]]; then
       cat "$REPO/plugins/kit/skills/execute/ui-rules.md"; } >"$RR"
   }
   printf '%s\n' '{"ui":{"globs":["**/*.tsx","**/*.css"]}}' >"$RK"
+  KV="$(tr -d '\r' <"$REPO/plugins/kit/templates/kit-ui.rule.md" | sed -n 's/^<!-- kit:ui v\([0-9][0-9]*\) -->$/\1/p')"
   r1="$(rule_line)"
-  write_rule 1 '**/*.tsx' '**/*.css'
+  write_rule "$KV" '**/*.tsx' '**/*.css'
   r2="$(rule_line)"
   grep -v '^3\. ' "$RR" >"$RR.tmp" && mv "$RR.tmp" "$RR"
   r3="$(rule_line)"
-  write_rule 1 '**/*.tsx'
+  write_rule "$KV" '**/*.tsx'
   r4="$(rule_line)"
   write_rule 0 '**/*.tsx' '**/*.css'
   r5="$(rule_line)"
@@ -1461,7 +1462,7 @@ if [ -z "$FILTER" ] || [[ "interface ui" == *"$FILTER"* ]]; then
   r7="$(rule_line)"
   rm -rf "$RK" "$P/.claude/rules"
   if [ "$r1" = "rule: ausente" ] && [ "$r2" = "rule: ok" ] && [ "$r3" = "rule: desatualizada — 1 linhas do bloco de regras diferentes das do kit" ] &&
-    [ "$r4" = "rule: desatualizada — paths sem o glob **/*.css de ui.globs" ] && [ "$r5" = "rule: desatualizada — versão 0, a do kit é 1" ] &&
+    [ "$r4" = "rule: desatualizada — paths sem o glob **/*.css de ui.globs" ] && [ "$r5" = "rule: desatualizada — versão 0, a do kit é $KV" ] &&
     [ "$r6" = "rule: do projeto (sem o cabeçalho kit:ui)" ] && [ -z "$r7" ] && [ -z "$(ls -A "$CFG0")" ]; then
     ok "ui status: rule ausente, em dia, com regra, glob ou versão para trás, e do projeto; ui false não tem a linha"
   else ko "ui status: rule ausente, em dia, com regra, glob ou versão para trás, e do projeto; ui false não tem a linha" "1='$r1' 2='$r2' 3='$r3' 4='$r4' 5='$r5' 6='$r6' 7='$r7'"; fi
@@ -2253,6 +2254,13 @@ if [ -z "$FILTER" ]; then
     grep -qF -- "$want" "$SPEC_MD" || ui_bad+="spec:'$want' "
   done
   grep -qF 'ui.globs' "$PLAN_MD" && grep -qF 'kit:ui-reviewer' "$PLAN_MD" && grep -qF 'seção Telas' "$PLAN_MD" || ui_bad+="plan "
+  # O plano consome a direcao: rule citada na tarefa de tela, fundacao visual e componente compartilhado nascendo antes.
+  for want in 'kit-design' '**Fundação visual.**' '**Reuso em plano com tela.**' 'nunca em duas tarefas da mesma wave' 'Componentes base'; do
+    grep -qF -- "$want" "$PLAN_MD" || ui_bad+="plan:'$want' "
+  done
+  grep -qE '^- \*\*M9\*\* .*kit-design.*fundação visual.*criado por duas tarefas' "$REPO/plugins/kit/agents/plan-reviewer.md" || ui_bad+="plan-reviewer:M9 sem direção "
+  grep -qF 'kit-design' "$EXE_DIR/ui.md" && grep -qF 'Componentes base' "$EXE_DIR/ui.md" || ui_bad+="ui.md:direção "
+  grep -qF 'altere o componente existente' "$EXE_DIR/ui-rules.md" && grep -qF 'direção registrada' "$EXE_DIR/ui-rules.md" || ui_bad+="ui-rules.md:direção "
   grep -qE '^- \[ \] F1\. .*<; em plano com tela: e `kit:ui-reviewer`[^>]*>$' "$TPL" || ui_bad+="template:F1 "
   EXE_MD="$EXE_DIR/SKILL.md"
   tr -d '\r' <"$EXE_MD" | grep -q '^allowed-tools:.* Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ui.sh" \*)' || ui_bad+="execute:allowed-tools "
@@ -2287,7 +2295,8 @@ if [ -z "$FILTER" ]; then
   grep -qF '## Interface (`ui`)' "$REPO/plugins/kit/skills/init/stacks.md" || ui_bad+="stacks "
   jq -e '(.ui.globs | length) > 0 and .ui.viewports == ["360x800", "768x1024", "1280x800", "1920x1080"] and (.ui.dev | length) > 0 and (.ui.url | test("^http://"))' \
     "$REPO/plugins/kit/templates/kit.example.json" >/dev/null 2>&1 || ui_bad+="kit.example.json "
-  grep -qx 'paths:' "$REPO/plugins/kit/templates/kit-ui.rule.md" && grep -qxF '<!-- kit:ui v1 -->' "$REPO/plugins/kit/templates/kit-ui.rule.md" || ui_bad+="kit-ui.rule.md "
+  grep -qx 'paths:' "$REPO/plugins/kit/templates/kit-ui.rule.md" && grep -qxF '<!-- kit:ui v2 -->' "$REPO/plugins/kit/templates/kit-ui.rule.md" &&
+    grep -qF -- '- Direção visual: `.claude/rules/kit-design.md`' "$REPO/plugins/kit/templates/kit-ui.rule.md" || ui_bad+="kit-ui.rule.md "
   grep -qE '^ext\|tsx\|' "$REPO/plugins/kit/templates/ui-markers.txt" && grep -qE '^arquivo\|' "$REPO/plugins/kit/templates/ui-markers.txt" &&
     grep -qE '^dep\|' "$REPO/plugins/kit/templates/ui-markers.txt" || ui_bad+="ui-markers.txt "
   for a in adopt.md; do grep -qF 'ui-reviewer' "$REPO/plugins/kit/skills/init/$a" || ui_bad+="adopt:ui-reviewer "; done
