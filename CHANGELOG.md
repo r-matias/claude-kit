@@ -4,6 +4,16 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.21
+
+### Corrigido
+
+- **Caminho com `${VAR}` nos guardas.** `echo X=1 > "${DIR}/.env"`, `tee "${DIR}/.env"`, `cp a "${DIR}/.env"` e, com o grupo `segredos`, `cat "${DIR}/.env"` e `grep KEY ${DIR}/.env` passavam, porque as chaves separavam o nome do arquivo do comando. Agora `${VAR}` é lido como `$VAR` e o alvo é conferido pelo nome, como já acontecia com `$DIR/.env`.
+- **Guarda de comando lento em heredoc.** Num heredoc longo com muitos `>` (HTML, Python com `->`), cada alvo abria processos e o guarda chegava perto do limite de 10 s do hook; com o projeto numa pasta montada pelo Git Bash (como `%TEMP%`), passava dele. O texto repetido é conferido uma vez e cada pasta é resolvida uma vez por chamada: no Windows, 120 funções Python em heredoc caíram de 9,3 s para 2,2 s e 200 linhas de HTML, de 5,5 s para 3,0 s. O tempo ainda cresce com o número de alvos diferentes.
+- **`git clean` com `-e` colado.** `git clean -fd -enode_modules` era lido como dry-run por causa do `n` no valor do `-e`, e `git -c clean.requireForce=false clean -d` passava sem `-f`. Os dois são negados.
+- `node -e "todos.remove(1)"` não pede mais confirmação: só `os.remove`, `os.system` e afins com `os` como palavra inteira contam.
+- Suíte: `--changed` com mudança no `guard-bash.sh` ou no `guard-pwsh.sh` roda também o grupo `guardas`, que tem testes dos dois.
+
 ## 0.9.20
 
 ### Mudou

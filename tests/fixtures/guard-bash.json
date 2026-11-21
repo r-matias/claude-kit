@@ -370,6 +370,18 @@
     { "name": "perl -E system pede confirmacao", "command": "perl -E 'system(\"ls\")'", "expect": "ask" },
     { "name": "ruby -r fileutils -e system pede confirmacao", "command": "ruby -r fileutils -e 'system(\"ls\")'", "expect": "ask" },
     { "name": "node script com -p depois liberado", "command": "node server.js -p 3000 --child_process", "expect": "allow" },
+    { "name": "escrita: > ${DIR}/.env negado pelo nome", "command": "echo X=1 > \"${DIR}/.env\"", "expect": "deny", "reason": "escrita em arquivo de segredo" },
+    { "name": "escrita: tee ${DIR}/.env negado pelo nome", "command": "echo X=1 | tee \"${DIR}/.env\"", "expect": "deny", "reason": "escrita em arquivo de segredo" },
+    { "name": "escrita: cp para ${DIR}/.env negado pelo nome", "command": "cp a \"${DIR}/.env\"", "expect": "deny", "reason": "escrita em arquivo de segredo" },
+    { "name": "escrita: > ${DIR:-.}/.env negado pelo nome", "command": "echo X=1 > \"${DIR:-.}/.env\"", "expect": "deny", "reason": "escrita em arquivo de segredo" },
+    { "name": "escrita: > ${OUT}/report.txt liberado", "command": "echo x > \"${OUT}/report.txt\"", "expect": "allow" },
+    { "name": "leitura: cat ${DIR}/.env negado pelo nome", "command": "cat \"${DIR}/.env\"", "expect": "deny", "reason": "pelo shell bloqueada (grupo segredos)", "kit": { "permissions": { "groups": ["segredos"] } } },
+    { "name": "leitura: grep em ${DIR}/.env negado pelo nome", "command": "grep KEY ${DIR}/.env", "expect": "deny", "reason": "pelo shell bloqueada (grupo segredos)", "kit": { "permissions": { "groups": ["segredos"] } } },
+    { "name": "git clean -fd -enode_modules (valor do -e colado) negado", "command": "git clean -fd -enode_modules", "expect": "deny" },
+    { "name": "git clean -ne node_modules (dry-run) liberado", "command": "git clean -ne node_modules", "expect": "allow" },
+    { "name": "git -c clean.requireForce=false clean -d negado", "command": "git -c clean.requireForce=false clean -d", "expect": "deny" },
+    { "name": "node -e com todos.remove (nao e os.remove) liberado", "command": "node -e \"todos.remove(1)\"", "expect": "allow" },
+    { "name": "python -c com os.remove pede confirmacao", "command": "python -c \"import os; os.remove('x')\"", "expect": "ask" },
     { "name": "rm -r com dois-pontos dentro do projeto liberado", "command": "rm -rf logs/run-10:30 out/img:v2", "expect": "allow" }
   ]
 }

@@ -539,6 +539,8 @@ kit_win_clean() {
 # em KIT_REAL. A pasta real sai de um cd -P no proprio shell (volta para a pasta de antes); no
 # Windows, /c/x vira C:/x sem o cygpath, que so roda para as outras montagens.
 KIT_REAL=""
+KIT_RP_DIRS=()
+KIT_RP_REALS=()
 kit_real_path_to() {
   local p="$1" t n=0 dir rest="" real="" here="$PWD" d i
   while [ -L "$p" ] && [ "$n" -lt 20 ]; do
@@ -556,6 +558,15 @@ kit_real_path_to() {
     [ "$KIT_PARENT" = "$dir" ] && break
     dir="$KIT_PARENT"
   done
+  # A pasta real de cada pasta existente e resolvida uma vez por chamada do hook.
+  for ((i = 0; i < ${#KIT_RP_DIRS[@]}; i++)); do
+    [ "${KIT_RP_DIRS[$i]}" = "$dir" ] && break
+  done
+  if [ "$i" -lt "${#KIT_RP_DIRS[@]}" ]; then
+    kit_path_norm_to "${KIT_RP_REALS[$i]%/}$rest/${p##*/}" /
+    KIT_REAL="$KIT_NORMED"
+    return 0
+  fi
   # Muda a pasta do shell e volta: quem chama nao pode depender de caminho relativo.
   if CDPATH='' cd -P -- "$dir" 2>/dev/null; then
     real="$PWD"
@@ -578,6 +589,8 @@ kit_real_path_to() {
     esac
   fi
   [ -n "$real" ] || real="$dir"
+  KIT_RP_DIRS+=("$dir")
+  KIT_RP_REALS+=("$real")
   kit_path_norm_to "${real%/}$rest/${p##*/}" /
   KIT_REAL="$KIT_NORMED"
 }
@@ -588,10 +601,31 @@ KIT_ROOTS=()
 KIT_RULES=()
 KIT_RC_ROOTS=()
 KIT_RC_RULES=()
+KIT_LR_DIRS=()
+KIT_LR_ROOTS=()
 kit_load_rules() {
-  local root r i
+  local root r i dir roots
   KIT_ROOTS=()
   KIT_RULES=()
+  # As raizes dependem so da primeira pasta existente acima do caminho: uma busca por pasta.
+  dir="${1//\\//}"
+  if [ ! -d "$dir" ]; then kit_parent_to "$dir"; dir="$KIT_PARENT"; fi
+  while [ -n "$dir" ] && [ ! -d "$dir" ]; do
+    kit_parent_to "$dir"
+    [ "$KIT_PARENT" = "$dir" ] && break
+    dir="$KIT_PARENT"
+  done
+  for ((i = 0; i < ${#KIT_LR_DIRS[@]}; i++)); do
+    [ "${KIT_LR_DIRS[$i]}" = "$dir" ] && break
+  done
+  if [ "$i" -lt "${#KIT_LR_DIRS[@]}" ]; then
+    roots="${KIT_LR_ROOTS[$i]}"
+  else
+    roots="$(kit_kit_roots "$dir")"
+    roots="${roots//$'\r'/}"
+    KIT_LR_DIRS+=("$dir")
+    KIT_LR_ROOTS+=("$roots")
+  fi
   while IFS= read -r root; do
     [ -n "$root" ] || continue
     for ((i = 0; i < ${#KIT_RC_ROOTS[@]}; i++)); do
@@ -608,7 +642,7 @@ kit_load_rules() {
     fi
     KIT_ROOTS+=("$root")
     KIT_RULES+=("$r")
-  done < <(kit_kit_roots "$1")
+  done <<<"$roots"
 }
 
 # Caminho relativo a KIT_ROOT em KIT_REL (o proprio caminho se estiver fora) e em minusculas em KIT_CMP.

@@ -2356,7 +2356,7 @@ groups_for_file() {
   local hooks="semjq forma_shell"
   case "$1" in
     plugins/kit/scripts/lib.sh | tests/run-tests.sh | tests/sample/*) echo "*" ;;
-    plugins/kit/scripts/guard-bash.sh | plugins/kit/scripts/guard-pwsh.sh) echo "fx:guard-bash.json fx:guard-pwsh.json $hooks" ;;
+    plugins/kit/scripts/guard-bash.sh | plugins/kit/scripts/guard-pwsh.sh) echo "fx:guard-bash.json fx:guard-pwsh.json $hooks guardas" ;;
     plugins/kit/scripts/guard-files.sh) echo "fx:guard-files*.json $hooks guardas" ;;
     plugins/kit/scripts/verify-gate.sh) echo "fx:verify-gate*.json $hooks guardas" ;;
     plugins/kit/scripts/notify.sh) echo "fx:notify.json fx:verify-gate-notify.json notify $hooks" ;;

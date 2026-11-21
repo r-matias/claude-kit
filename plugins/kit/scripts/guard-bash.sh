@@ -51,8 +51,22 @@ flatten() {
   f=${f//"$SQ"/}
   f=${f//"$TAB"/ }
   f=${f//"$CR"/ }
-  # As chaves separariam o trecho: ${HOME} vira $HOME.
+  # As chaves separariam o trecho: ${HOME} vira $HOME, e ${VAR} (sem espaco dentro) vira $VAR.
   f=${f//'${HOME}'/'$HOME'}
+  case "$f" in
+    *'${'*)
+      local rest="$f" pre out="" v
+      while [[ "$rest" == *"$PS_LB"* ]]; do
+        pre="${rest%%"$PS_LB"*}"
+        rest="${rest#*"$PS_LB"}"
+        v="${rest%%"$PS_RB"*}"
+        case "$v" in
+          "$rest" | '' | *[[:space:]]*) out+="$pre$PS_LB" ;;
+          *) out+="$pre\$$v"; rest="${rest#*"$PS_RB"}" ;;
+        esac
+      done
+      f="$out$rest" ;;
+  esac
   while [ "${f%"$NL"}" != "$f" ]; do f="${f%"$NL"}"; done
   FLAT_OUT="$f"
 }
@@ -581,12 +595,22 @@ check_git() {
       done ;;
     clean)
       local flags=""
+      # git -c clean.requireForce=false dispensa o -f.
+      for tok in "${w[@]}"; do
+        to_lower "$tok"
+        case "$LC_OUT" in
+          clean.requireforce=false | clean.requireforce=0 | clean.requireforce=no | clean.requireforce=off) flags="f" ;;
+        esac
+      done
       for tok in ${rest[@]+"${rest[@]}"}; do
         case "$tok" in
           --force) flags+="f" ;;
           --dry-run) flags+="n" ;;
           --*) ;;
-          -*) flags+="${tok#-}" ;;
+          # -e leva valor, colado ou na palavra seguinte: o que vem depois do e nao e opcao.
+          -*)
+            tok="${tok#-}"
+            flags+="${tok%%e*}" ;;
         esac
       done
       case "$flags" in *f*) ;; *) return 0 ;; esac
@@ -754,6 +778,7 @@ check_sql() {
 # e truncate passam pelas regras do guard-files (kit_check_write no lib.sh). O kit.json so e lido
 # quando aparece um alvo, e cada caminho e conferido uma vez.
 WRITE_SEEN="$NL"
+WRITE_RAW="$NL"
 RW_PATH=""
 
 # Caminho absoluto do alvo em RW_PATH. 1 se nao der para resolver (variavel, ~, glob, C:x, alvo
@@ -783,6 +808,9 @@ write_target() {
     *) return 0 ;;
   esac
   case "$t" in /dev | /dev/*) return 0 ;; esac
+  # O mesmo texto na mesma pasta ja foi conferido: nao resolve de novo.
+  case "$WRITE_RAW" in *"$NL$CUR_OK|$CUR|$t$NL"*) return 0 ;; esac
+  WRITE_RAW+="$CUR_OK|$CUR|$t$NL"
   if ! resolve_write "$t"; then
     kit_check_write_name "$t"
     return 0
@@ -1484,7 +1512,7 @@ check_ps() {
 
 # Interpretador com codigo na linha de comando. O guarda nao entende o codigo: com API que apaga
 # arquivo ou dispara processo em qualquer ponto do texto, pede confirmacao.
-INTERP_RE='rmtree|os\.(remove|system|popen|spawn|exec)|(^|[^a-z0-9_])(unlink|rmdir)|rmsync|fs\.rm\(|fs\.promises\.rm|rimraf|subprocess|child_process|execsync|spawnsync|execfilesync|(^|[^a-z0-9_.])system([[:space:]]|\()|fileutils\.rm|file\.delete|dir\.delete|shell_exec|passthru|proc_open|popen|deno\.(remove|run|command)|bun\.spawn'
+INTERP_RE='rmtree|(^|[^a-z0-9_])os\.(remove|system|popen|spawn|exec)|(^|[^a-z0-9_])(unlink|rmdir)|rmsync|fs\.rm\(|fs\.promises\.rm|rimraf|subprocess|child_process|execsync|spawnsync|execfilesync|(^|[^a-z0-9_.])system([[:space:]]|\()|fileutils\.rm|file\.delete|dir\.delete|shell_exec|passthru|proc_open|popen|deno\.(remove|run|command)|bun\.spawn'
 check_interp() {
   local name="$1" tok inline=0
   shift
