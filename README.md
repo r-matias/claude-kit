@@ -105,6 +105,11 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 - `/kit:epic portal do cliente com login, faturas e suporte`
 - `/kit:epic migrar o checkout para o novo gateway de pagamento`
 
+**Direção visual** (o app funciona, mas as telas saem com o visual padrão de template): `/kit:design` lê o projeto, pergunta quem usa e o que é obrigatório da marca, e gera 3 amostras em HTML, uma por direção, da mesma tela. Você abre as três no navegador e escolhe, pede outra rodada ou combina duas. Só então ela grava a direção em `.claude/rules/kit-design.md` (fontes, paleta, composição, movimento e acabamento), que o Claude recebe sempre que mexe em arquivo de interface, mais `docs/specs/<slug>/DESIGN.md` e a amostra escolhida ao lado. Nenhum código do projeto muda: tokens, fontes e telas entram depois, por SPEC e plano. Ver [Direção visual](#direção-visual).
+
+- `/kit:design`
+- `/kit:design app`
+
 **Bug conhecido:** `/kit:fix` começa por um teste que reproduz a falha e corrige pela causa raiz.
 
 - `/kit:fix #482`
@@ -124,6 +129,7 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 | `/kit:plan` | SPEC pronta | `PLAN.md` ao lado da SPEC | Manual ou sozinho, quando há uma SPEC para planejar |
 | `/kit:execute` | Plano pronto | Código e testes; caixas do `PLAN.md` marcadas com evidência | Só manual |
 | `/kit:epic` | Trabalho grande, várias entregas | `docs/specs/<epico>/EPIC.md` | Só manual |
+| `/kit:design` | Projeto com tela sem identidade visual, ou redesenho do app | Amostras em HTML para escolher, `.claude/rules/kit-design.md`, `docs/specs/<slug>/DESIGN.md` e `amostra.html` | Manual ou sozinho, quando você pede uma direção visual |
 | `/kit:fix` | Bug com sintoma claro ou teste falhando | Teste que reproduz + correção | Manual ou sozinho, quando você relata um bug |
 | `/kit:hunt` | Falha intermitente, lentidão, causa desconhecida | Hipóteses com evidência, sem editar código | Manual ou sozinho, quando você relata uma falha vaga |
 | `/kit:setup` | Avançado: conferir a máquina sem abrir um projeto | Só um resumo: não grava nada | Só manual |
@@ -270,6 +276,20 @@ Configuração, no `.claude/kit.json` (o `/kit:init` propõe):
 Só `globs` é obrigatório. Sem `dev`, o app precisa estar rodando em `url`. Tela que não abre em navegador (app móvel ou desktop) usa `screenshot` no lugar de `dev` e `url`, com o comando do projeto que grava a imagem da tela em `{out}` (`"screenshot": "xcrun simctl io booted screenshot {out}"`): as imagens vão para o revisor, sem a medição. `"ui": false` registra que o projeto não quer revisão de interface.
 
 **Custo.** A medição roda sem modelo. As imagens só são lidas pelo `kit:ui-reviewer`, na wave final de plano com tela: de cada tela ele abre o menor e o maior tamanho por inteiro (até três partes em página longa), a primeira parte dos tamanhos do meio e o tema escuro, e só busca as outras quando a medição aponta para elas.
+
+### Direção visual
+
+As regras acima garantem tela correta; não garantem tela com identidade. A direção visual nasce na `/kit:design`, com amostras que você vê antes de escolher:
+
+1. Ela lê o `CLAUDE.md`, o `ui` do `kit.json`, a `kit-ui.md`, os tokens e uma ou duas telas, e levanta os componentes compartilhados. Projeto sem `ui` no `kit.json`: ela para e indica o `/kit:init`.
+2. Uma rodada de perguntas: quem usa, o que incomoda hoje, o que é obrigatório da marca, tema claro ou escuro.
+3. Propõe 3 direções e gera uma amostra de cada, em paralelo, em `.claude/state/ui/design/<slug>/` (fora do git). Cada amostra é um HTML só, sem build, com dados fictícios, que funciona em 360 e em 1280px.
+4. Você abre os arquivos no navegador e escolhe uma, pede outra rodada dizendo o que mudar ou combina duas (até 3 rodadas).
+5. Com a escolha, grava `.claude/rules/kit-design.md`, `docs/specs/<slug>/DESIGN.md` (problema de hoje, decisões, direção, componentes base a redesenhar, telas afetadas) e `docs/specs/<slug>/amostra.html`, e termina com o comando seguinte pronto.
+
+A amostra carrega a fonte por CDN, com fonte de reserva: sem rede, a tipografia que aparece não é a final. No código do projeto a fonte fica empacotada, nunca por CDN. Uma área de público diferente (a landing page, por exemplo) pode ter direção própria, em `.claude/rules/kit-design-<area>.md`, que substitui a geral só nos arquivos dela. A skill grava em `.claude/`, que o Claude Code protege: a escrita das amostras e da rule pede confirmação; no primeiro prompt, libere a edição da pasta `.claude` do projeto na sessão.
+
+Nesta versão a skill trata o app inteiro (ou uma área); redesenho de uma página ou de um componente, e o uso da direção pela `/kit:spec`, pelo `/kit:plan`, pelo `/kit:execute` e pelo revisor de interface, chegam nas próximas.
 
 ## LSP de TypeScript com teto de memória
 

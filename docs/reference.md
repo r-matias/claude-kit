@@ -243,6 +243,19 @@ Uma linha por item, só leitura:
 
 O `ui.sh` não lê nem grava settings, do usuário ou do projeto.
 
+### `/kit:design`
+
+Skill de direção visual (`skills/design/SKILL.md`). O SKILL.md traz as regras da tarefa e manda ler `skills/design/passos.md`, que não usa variável de skill: outra skill pode segui-lo com Read. Não escreve código de produção nem SPEC.
+
+- **Entrada.** Argumento vazio ou `app`. Exige `ui` no `kit.json`; sem ele, para e recomenda `/kit:init`. Com `.claude/rules/kit-design.md` de cabeçalho `kit:design`, pergunta se substitui ou ajusta; arquivo com esse nome e sem o cabeçalho é do projeto e não é regravado. Outro argumento (página ou componente) ainda não é tratado.
+- **Leitura.** `CLAUDE.md`, `ui`, `kit-ui.md`, tokens, uma ou duas telas e o inventário de componentes compartilhados, pedido ao `kit:investigator`.
+- **Amostras.** 3 direções, uma amostra por direção, cada uma por um subagent `general-purpose`, todas na mesma mensagem. O prompt leva o briefing, a direção, a estrutura da tela representativa e três blocos sem mudar uma palavra: `skills/design/visual.md` (direção visual), `skills/execute/ui-rules.md` e `skills/execute/subagent-rules.md`. Saída em `.claude/state/ui/design/<slug>/<n>-<nome>.html`: HTML autocontido, sem build, 360 e 1280px, só dado fictício, fonte de licença aberta por CDN com fonte de reserva.
+- **Escolha.** Uma direção, outra rodada ou a combinação de duas; no máximo 3 rodadas. A sessão não vê a amostra renderizada (a captura só abre `http` e `https`): quem olha é o usuário, no navegador.
+- **Gravação**, só depois da escolha: `.claude/rules/kit-design.md` a partir de `templates/kit-design.rule.md` (`paths:` com os globs de `ui.globs`, cabeçalho `<!-- kit:design v1 -->`, campos Direção, Tipografia, Paleta, Composição, Movimento, Acabamento, O que evitar e Amostra), `docs/specs/<slug>/DESIGN.md` (Escopo, Problema de hoje, Decisões, Direção escolhida, Amostra, Componentes base, Telas afetadas, Fora do redesenho) e `docs/specs/<slug>/amostra.html`, cópia da escolhida. Área com direção própria: `.claude/rules/kit-design-<area>.md`, com `paths:` só da área e a linha que diz que ela substitui a geral naqueles arquivos.
+- **Saída.** Resumo curto, linha de custo dos subagents e o comando seguinte: `/clear` e `/kit:spec docs/specs/<slug>/DESIGN.md`.
+
+Ainda não ligado: a `/kit:spec`, o `/kit:plan`, o `/kit:execute`, o `kit:ui-reviewer`, o `/kit:init` e o `ui.sh status` não leem a rule de direção nem o `DESIGN.md` por conta própria. A rule já chega ao Claude pelo `paths:`, como qualquer rule do projeto.
+
 ### `ui.sh capture`
 
 ```text

@@ -2159,7 +2159,7 @@ if [ -z "$FILTER" ]; then
 
   # Nenhum placeholder em comando entregue ao usuario.
   ph_bad=""
-  for s in spec plan execute fix hunt init map drift; do
+  for s in spec plan execute fix hunt init map drift design; do
     grep -qF 'Nunca entregue ao usuário comando com placeholder (`<...>`, `SEU_X`, `xxx`)' "$REPO/plugins/kit/skills/$s/SKILL.md" || ph_bad+="$s "
   done
   grep -qF 'Nunca entregue comando com placeholder' "$REPO/plugins/kit/templates/CLAUDE.project.md" || ph_bad+="CLAUDE.project.md "
@@ -2293,6 +2293,48 @@ if [ -z "$FILTER" ]; then
   fi
   if [ -z "$ui_bad" ]; then ok "interface: revisor, regras nas skills, script liberado, sondagem e docs coerentes"
   else ko "interface: revisor, regras nas skills, script liberado, sondagem e docs coerentes" "$ui_bad"; fi
+
+  # Direcao visual: skill com os passos e os blocos em arquivos lidos com Read (sem variavel de skill),
+  # bloco de direcao curto e sem palavra proibida, molde da rule com cabecalho e paths, e docs.
+  DSG="$REPO/plugins/kit/skills/design"
+  DSG_TPL="$REPO/plugins/kit/templates/kit-design.rule.md"
+  dg_bad=""
+  for want in 'name: design' 'argument-hint: "[app | rota ou arquivo da página | componente]"' 'allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)'; do
+    tr -d '\r' <"$DSG/SKILL.md" | grep -qxF -- "$want" || dg_bad+="skill:'$want' "
+  done
+  tr -d '\r' <"$DSG/SKILL.md" | grep -qE '^description: .*amostras.*kit-design\.md.*DESIGN\.md' || dg_bad+="skill:description "
+  for want in '${CLAUDE_SKILL_DIR}/passos.md' '`<raiz-do-plugin>` em [passos.md](passos.md): `${CLAUDE_PLUGIN_ROOT}`' 'Argumento: $ARGUMENTS' \
+    'Não escreva código de produção nesta skill' 'Não grave SPEC' 'Sem `AskUserQuestion` disponível' 'subagent_tokens'; do
+    grep -qF -- "$want" "$DSG/SKILL.md" || dg_bad+="skill:'$want' "
+  done
+  ! grep -qF -e '${CLAUDE_' -e '$ARGUMENTS' "$DSG/passos.md" "$DSG/visual.md" || dg_bad+="variável de skill em arquivo lido com Read "
+  for want in 'general-purpose' 'todas na mesma mensagem' '<raiz-do-plugin>/skills/design/visual.md' '<raiz-do-plugin>/skills/execute/ui-rules.md' \
+    '<raiz-do-plugin>/skills/execute/subagent-rules.md' '<raiz-do-plugin>/templates/kit-design.rule.md' 'sem mudar uma palavra' \
+    '.claude/state/ui/design/<slug>/<n>-<nome>.html' 'kit:investigator' 'recomende `/kit:init`' 'em 360 e em 1280px' 'só dado fictício' 'fonte de reserva' \
+    'No máximo 3 rodadas' '<!-- kit:design v1 -->' 'docs/specs/<slug>/amostra.html' 'docs/specs/<slug>/DESIGN.md' 'kit-design-<area>.md' \
+    '`/kit:spec docs/specs/<slug>/DESIGN.md`' 'Custo: <N> subagents'; do
+    grep -qF -- "$want" "$DSG/passos.md" || dg_bad+="passos:'$want' "
+  done
+  for sec in Escopo 'Problema de hoje' Decisões 'Direção escolhida' Amostra 'Componentes base' 'Telas afetadas' 'Fora do redesenho'; do
+    tr -d '\r' <"$DSG/passos.md" | grep -qxF "## $sec" || dg_bad+="DESIGN.md sem a seção '$sec' "
+  done
+  head -n 1 "$DSG/visual.md" | grep -q '^Direção visual: ' && ! grep -q '^#' "$DSG/visual.md" &&
+    [ "$(grep -cE '^[0-9]+\. ' "$DSG/visual.md")" -ge 8 ] && [ "$(grep -c '' "$DSG/visual.md")" -le 15 ] || dg_bad+="visual.md "
+  for want in 'Inter, Roboto e Arial' 'prefers-reduced-motion' 'visual padrão de template' 'O que continua valendo sempre'; do
+    grep -qF -- "$want" "$DSG/visual.md" || dg_bad+="visual:'$want' "
+  done
+  dg_words="$(grep -nwE 'IA|AI|Claude|[Ss]lop' "$DSG/SKILL.md" "$DSG/passos.md" "$DSG/visual.md" "$DSG_TPL" || true)"
+  [ -z "$dg_words" ] || dg_bad+="palavra proibida no conteúdo de direção: $dg_words "
+  tr -d '\r' <"$DSG_TPL" | grep -qx 'paths:' && tr -d '\r' <"$DSG_TPL" | grep -qxF '<!-- kit:design v1 -->' || dg_bad+="kit-design.rule.md "
+  for field in Direção Tipografia Paleta Composição Movimento Acabamento 'O que evitar' Amostra; do
+    grep -qE "^- $field: " "$DSG_TPL" || dg_bad+="kit-design.rule.md sem o campo '$field' "
+  done
+  grep -qF '| `/kit:design` |' "$REPO/README.md" && grep -qF '/kit:design' "$REPO/docs/reference.md" && grep -qF '/kit:design' "$REPO/docs/design.md" &&
+    grep -qF 'anthropics/skills' "$REPO/docs/design.md" || dg_bad+="README/reference/design "
+  grep -qF ',drift,design}/SKILL.md' "$REPO/CONTRIBUTING.md" && grep -qF 'kit-design.rule.md' "$REPO/CONTRIBUTING.md" || dg_bad+="CONTRIBUTING "
+  grep -qE '^- Skills: .*`design`' "$REPO/plugins/kit/skills/init/adopt.md" || dg_bad+="adopt "
+  if [ -z "$dg_bad" ]; then ok "direção visual: skill, passos, bloco de direção, molde da rule e docs coerentes"
+  else ko "direção visual: skill, passos, bloco de direção, molde da rule e docs coerentes" "$dg_bad"; fi
 
   # Notificacoes: opcionais, perguntadas uma vez, sem duplicar alertas existentes nem guardar segredo.
   nt_bad=""

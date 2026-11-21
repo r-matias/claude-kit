@@ -4,6 +4,15 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.10.0
+
+### Entrou
+
+- **`/kit:design`: direção visual com amostra antes da escolha.** Em projeto com tela, a skill lê o projeto, pergunta quem usa, o que incomoda hoje e o que é obrigatório da marca, e gera 3 amostras em HTML da mesma tela, uma por direção, em `.claude/state/ui/design/<slug>/`. Você abre no navegador e escolhe uma, pede outra rodada ou combina duas (até 3 rodadas). Com a escolha, ela grava `.claude/rules/kit-design.md` (fontes, paleta, composição, movimento, acabamento e o que evitar), que o Claude recebe sempre que mexe em arquivo de interface, `docs/specs/<slug>/DESIGN.md` (problema de hoje, decisões, componentes base a redesenhar, telas afetadas) e `docs/specs/<slug>/amostra.html`. Não muda código do projeto: tokens, fontes e telas entram depois, por SPEC e plano. Uma área de público diferente pode ter direção própria em `.claude/rules/kit-design-<area>.md`.
+- A amostra carrega a fonte por CDN, com fonte de reserva; sem rede, a tipografia mostrada não é a final. No código do projeto a fonte fica empacotada.
+
+Ainda não ligado nesta versão: a skill só trata o app inteiro ou uma área (página e componente vêm na próxima); a `/kit:spec` ainda não lê o `DESIGN.md` como ponto de partida nem abre o redesenho sozinha; o `/kit:plan`, o `/kit:execute` e o `kit:ui-reviewer` ainda não consomem nem cobram a direção; o `/kit:init` e o `ui.sh status` ainda não conhecem a rule de direção. A escrita em `.claude/` pede a confirmação do Claude Code.
+
 ## 0.9.21
 
 ### Corrigido
