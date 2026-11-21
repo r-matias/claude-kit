@@ -4,6 +4,17 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.10.8
+
+### Entrou
+
+- **`ui.sh capture --serve <pasta>`.** Captura os `.html` de uma pasta local, servida em `127.0.0.1` só para leitura e só enquanto a captura roda, sem `ui.url` nem `ui.dev`. Mesma varredura de tamanhos, larguras, sondagem e imagens. `--routes` escolhe os arquivos; o que fica fora da pasta não é servido. Fonte de CDN que não carrega (sem rede) vira aviso, não `M9`.
+
+### Mudou
+
+- **`/kit:design` olha as amostras antes de mostrar.** Cada rodada é capturada com `--serve`; a sessão abre as imagens no menor e no maior tamanho e refaz uma vez a amostra com layout quebrado, controle sem nome, página em branco ou tela errada. Sem node ou navegador, segue como antes e avisa que as amostras não foram vistas renderizadas. A `/kit:design` e a `/kit:spec` passam a ter o `ui.sh` liberado, para a captura não pedir confirmação.
+- **`kit:ui-reviewer` vê a amostra escolhida.** Na wave final, o `/kit:execute` captura a `amostra.html` citada pela SPEC e passa a pasta ao revisor, que compara as imagens dela com as da tela no `M11`. Os achados da captura da amostra não se corrigem: ela é referência.
+
 ## 0.10.7
 
 ### Entrou

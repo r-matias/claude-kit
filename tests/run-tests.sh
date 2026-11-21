@@ -1791,6 +1791,56 @@ if [ -z "$FILTER" ] || [[ "interface ui" == *"$FILTER"* ]]; then
           ok "ui capture: rule de direção sem o cabeçalho kit:design é do projeto e não gera M10"
         else ko "ui capture: rule de direção sem o cabeçalho kit:design é do projeto e não gera M10" "exit $code, $(tail -n 4 <<<"$out")"; fi
 
+        # --serve: pasta local (amostras da /kit:design) servida so durante a captura, sem ui.url nem ui.dev.
+        # Recurso de outra origem que nao carrega vira aviso; caminho que sai da pasta e 404.
+        V2="$UT/serve"
+        mkdir -p "$V2/.claude" "$V2/amostras/sub"
+        jq -n --arg url "$BASE" '{ui: {globs: ["**/*.html"], dev: "echo subiu > dev-rodou.txt", url: $url, routes: ["/ruim"], viewports: ["360x800", "1280x800"]}}' >"$V2/.claude/kit.json"
+        printf 'segredo\n' >"$V2/segredo.txt"
+        printf '%s\n' 'body { font-family: Georgia, serif; margin: 16px }' >"$V2/amostras/estilo.css"
+        printf '%s\n' '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Amostra limpa</title>' \
+          "<link rel=\"stylesheet\" href=\"http://127.0.0.1:$(free_port)/fonte.css\"><link rel=\"stylesheet\" href=\"estilo.css\"></head>" \
+          '<body><main><h1>Painel</h1><p>Texto da amostra.</p></main></body></html>' >"$V2/amostras/1-limpa.html"
+        printf '%s\n' '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Amostra larga</title></head>' \
+          '<body><main><h1>Larga</h1><div style="width: 900px">conteúdo largo</div></main>' \
+          '<script>fetch("/%2e%2e%2fsegredo.txt")</script></body></html>' >"$V2/amostras/2 larga.html"
+        printf '%s\n' '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>sub</title></head>' \
+          '<body><main><h1>Subpasta</h1></main></body></html>' >"$V2/amostras/sub/fora-da-lista.html"
+        out="$(cap "$V2" --serve amostras --name s 2>&1)"; code=$?
+        RV="$V2/.claude/state/ui/s/report.json"
+        surl="$(jq -r '.url' "$RV" 2>/dev/null | tr -d '\r')"
+        if [ "$code" = "1" ] && grep -qF 'pasta amostras servida pelo kit' <<<"$out" && [ ! -e "$V2/dev-rodou.txt" ] &&
+          jq -e --arg base "$BASE" '.server == "pasta" and .served == "amostras" and .url != $base and ([.screens[].route] == ["1-limpa.html", "2 larga.html"])
+            and (.screens[0] | .findings == [] and (.images | length) == 2 and any(.warnings[]; startswith("recurso externo não carregou")))
+            and (.screens[1] | any(.findings[]; .rule == "rolagem-horizontal") and any(.findings[]; .rule == "requisicao" and (.detail | startswith("404 ") and contains("segredo.txt"))))' "$RV" >/dev/null 2>&1 &&
+          [ -s "$V2/.claude/state/ui/s/1-limpa-html-360x800-1.png" ] && [ -n "$surl" ] && ! url_up "$surl/1-limpa.html"; then
+          ok "ui capture --serve: captura os .html da pasta sem ui.dev, CDN fora vira aviso, nada fora da pasta é servido e o servidor fecha"
+        else ko "ui capture --serve: captura os .html da pasta sem ui.dev, CDN fora vira aviso, nada fora da pasta é servido e o servidor fecha" "exit $code, $(tail -n 8 <<<"$out")"; fi
+        # Link dentro da pasta que aponta para fora dela tambem e 404.
+        if MSYS=winsymlinks:nativestrict ln -s "$V2/segredo.txt" "$V2/amostras/link.txt" 2>/dev/null && [ -L "$V2/amostras/link.txt" ]; then
+          printf '%s\n' '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Link</title></head>' \
+            '<body><main><h1>Link</h1></main><script>fetch("/link.txt")</script></body></html>' >"$V2/amostras/link.html"
+          cap "$V2" --serve amostras --name s3 --probe-only --routes link.html >/dev/null 2>&1
+          if jq -e '.screens[0].findings | length == 1 and .[0].rule == "requisicao" and (.[0].detail | startswith("404 ") and endswith("/link.txt"))' "$V2/.claude/state/ui/s3/report.json" >/dev/null 2>&1; then
+            ok "ui capture --serve: link para fora da pasta responde 404"
+          else ko "ui capture --serve: link para fora da pasta responde 404" "$(jq -c '.screens[0].findings' "$V2/.claude/state/ui/s3/report.json" 2>&1 | head -c 400)"; fi
+          rm -f "$V2/amostras/link.html" "$V2/amostras/link.txt"
+        else
+          echo "  pulado ui capture --serve: link para fora da pasta (sistema sem symlink de verdade)"
+        fi
+        o1="$(cap "$V2" --serve amostras --name s2 --probe-only --routes 'sub/fora-da-lista.html' 2>&1)"; c1=$?
+        o2="$(cap "$V2" --serve nao-existe 2>&1)"; c2=$?
+        o3="$(cap "$V2" --serve amostras/estilo.css 2>&1)"; c3=$?
+        mkdir -p "$V2/vazia"
+        o4="$(cap "$V2" --serve vazia 2>&1)"; c4=$?
+        o5="$(cap "$V2" --serve amostras --attach http://127.0.0.1:9 2>&1)"; c5=$?
+        o6="$(cap "$V2" --serve amostras --routes "$BASE/ruim" 2>&1)"; c6=$?
+        if [ "$c1" = "0" ] && jq -e '.screens[0].route == "sub/fora-da-lista.html" and .screens[0].title == "sub"' "$V2/.claude/state/ui/s2/report.json" >/dev/null 2>&1 &&
+          [ "$c2$c3$c4$c5$c6" = "22222" ] && grep -qF 'pede uma pasta que existe' <<<"$o2" && grep -qF 'pede uma pasta que existe' <<<"$o3" && grep -qF 'nenhum .html' <<<"$o4" &&
+          grep -qF -- '--serve não combina com --attach' <<<"$o5" && grep -qF 'é um arquivo da pasta' <<<"$o6"; then
+          ok "ui capture --serve: --routes escolhe arquivos da pasta; pasta que falta, sem .html, com --attach ou rota com endereço sai com 2"
+        else ko "ui capture --serve: --routes escolhe arquivos da pasta; pasta que falta, sem .html, com --attach ou rota com endereço sai com 2" "$c1 $o1 | $c2 $o2 | $c3 $o3 | $c4 $o4 | $c5 $o5 | $c6 $o6"; fi
+
         # Pagina que trava a aba: aquela tela fica incompleta e a seguinte abre numa aba nova.
         out="$(KIT_UI_REPLY_S=3 cap "$E" --name trava --probe-only --routes /trava,/grafico 2>&1)"; code=$?
         if [ "$code" = "5" ] && jq -e '(.screens[0].incomplete | startswith("captura interrompida")) and .totals.incomplete == 1
@@ -2349,9 +2399,13 @@ if [ -z "$FILTER" ]; then
     grep -qF -- "$want" "$EXE_MD" || ui_bad+="execute:'$want' "
   done
   for want in '--probe-only' '--steps' '"setup"' 'text=<texto visível>' '${NOME}' '--attach' 'incompleta' 'kit:ui-reviewer' 'sem captura' 'timeout: 600000' \
-    '## No checkpoint da wave' '## Na wave final (F1)'; do
+    '## No checkpoint da wave' '## Na wave final (F1)' '--serve docs/specs/<slug> --routes amostra.html' 'pasta da captura da amostra'; do
     grep -qF -- "$want" "$EXE_DIR/ui.md" || ui_bad+="ui.md:'$want' "
   done
+  # A amostra capturada por --serve chega ao revisor; a skill de spec, que segue os passos da design, pode rodar a captura.
+  grep -qF 'pasta da captura da amostra' "$REPO/plugins/kit/agents/ui-reviewer.md" || ui_bad+="ui-reviewer:captura da amostra "
+  tr -d '\r' <"$REPO/plugins/kit/skills/spec/SKILL.md" | grep -q '^allowed-tools:.* Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ui.sh" \*)' || ui_bad+="spec:allowed-tools "
+  grep -qF -- '--serve' "$REPO/docs/reference.md" || ui_bad+="reference sem --serve "
   # A sondagem e a captura vem antes do verify e dos revisores, para as correcoes delas passarem por eles.
   grep -qE '^   1\. Interface: .*sondagem do checkpoint' "$EXE_MD" && grep -qE '^   2\. Re-rode os `verify`' "$EXE_MD" &&
     grep -qE '^   1\. F1: em plano com tela .*comece pela captura completa' "$EXE_MD" || ui_bad+="execute:ordem da sondagem "
@@ -2407,7 +2461,7 @@ if [ -z "$FILTER" ]; then
   DSG="$REPO/plugins/kit/skills/design"
   DSG_TPL="$REPO/plugins/kit/templates/kit-design.rule.md"
   dg_bad=""
-  for want in 'name: design' 'argument-hint: "[app | rota ou arquivo da página | componente]"' 'allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)'; do
+  for want in 'name: design' 'argument-hint: "[app | rota ou arquivo da página | componente]"' 'allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ui.sh" *)'; do
     tr -d '\r' <"$DSG/SKILL.md" | grep -qxF -- "$want" || dg_bad+="skill:'$want' "
   done
   tr -d '\r' <"$DSG/SKILL.md" | grep -qE '^description: .*amostras.*kit-design\.md.*DESIGN\.md' || dg_bad+="skill:description "
@@ -2420,7 +2474,8 @@ if [ -z "$FILTER" ]; then
     '<raiz-do-plugin>/skills/execute/subagent-rules.md' '<raiz-do-plugin>/templates/kit-design.rule.md' 'sem mudar uma palavra' \
     '.claude/state/ui/design/<slug>/<n>-<nome>.html' 'kit:investigator' 'recomende `/kit:init`' 'em 360 e em 1280px' 'só dado fictício' 'fonte de reserva' \
     'No máximo 3 rodadas' '<!-- kit:design v1 -->' 'docs/specs/<slug>/amostra.html' 'docs/specs/<slug>/DESIGN.md' 'kit-design-<area>.md' \
-    '`/kit:spec docs/specs/<slug>/DESIGN.md`' 'Custo: <N> subagents'; do
+    '`/kit:spec docs/specs/<slug>/DESIGN.md`' 'Custo: <N> subagents' 'bash "<raiz-do-plugin>/scripts/ui.sh" capture --serve .claude/state/ui/design/<slug>' \
+    'não foram vistas renderizadas'; do
     grep -qF -- "$want" "$DSG/passos.md" || dg_bad+="passos:'$want' "
   done
   for sec in 'Escopo app' 'Escopo página' 'Escopo componente'; do

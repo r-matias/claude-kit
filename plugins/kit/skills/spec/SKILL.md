@@ -2,7 +2,7 @@
 name: spec
 description: Entrevista você sobre uma feature e grava docs/specs/<slug>/SPEC.md com objetivo, escopo, fora de escopo e verificação ponta a ponta. Use ao começar uma feature, ideia ou mudança que ainda não tem especificação.
 argument-hint: "[ideia em uma frase]"
-allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
+allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ui.sh" *)
 ---
 
 ## Regras que valem a tarefa inteira

@@ -46,7 +46,7 @@ const SANDBOX_HINT = WIN ? "" : " Se o Bash roda em sandbox, ele pode estar barr
 const rel = (p) => (path.relative(process.cwd(), p) || ".").split(path.sep).join("/");
 
 function parseArgs(argv) {
-  const a = { kit: ".claude/kit.json", name: "captura", routes: null, out: null, probeOnly: false, attach: null, match: "", doctor: false, tiles: 3, steps: null };
+  const a = { kit: ".claude/kit.json", name: "captura", routes: null, out: null, probeOnly: false, attach: null, match: "", doctor: false, tiles: 3, steps: null, serve: null };
   const need = (i, flag) => {
     if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) throw new Fail(2, `ui: ${flag} precisa de um valor`);
     return argv[i + 1];
@@ -60,6 +60,7 @@ function parseArgs(argv) {
     else if (k === "--attach") a.attach = need(i++, k);
     else if (k === "--match") a.match = need(i++, k);
     else if (k === "--steps") a.steps = need(i++, k);
+    else if (k === "--serve") a.serve = need(i++, k);
     else if (k === "--tiles") a.tiles = Math.max(1, Math.min(6, Number(need(i++, k)) || 3));
     else if (k === "--probe-only") a.probeOnly = true;
     else if (k === "--doctor") a.doctor = true;
@@ -68,6 +69,7 @@ function parseArgs(argv) {
   // O nome vira pasta dentro de .claude/state/ui: comeca por letra ou numero, para "." e ".." nao subirem de pasta.
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$/.test(a.name)) throw new Fail(2, "ui: --name começa por letra ou número e aceita só letras, números, ponto, hífen e sublinhado");
   if (a.steps && a.attach) throw new Fail(2, "ui: --steps não combina com --attach; na página aberta o estado já é o que está na tela");
+  if (a.serve && a.attach) throw new Fail(2, "ui: --serve não combina com --attach; --serve abre a pasta num navegador do kit");
   return a;
 }
 
@@ -483,6 +485,76 @@ async function ensureApp(ui, outDir) {
     await sleep(400);
   }
   throw new Fail(4, `ui: ${ui.url} não respondeu em ${WAIT_S}s depois de "${ui.dev}".${SANDBOX_HINT}\n  ${tail()}`);
+}
+
+const MIME = {
+  ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".gif": "image/gif", ".webp": "image/webp", ".avif": "image/avif", ".ico": "image/x-icon",
+  ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf",
+};
+const SERVE_MAX = 12;
+
+// --serve: a pasta (amostras da /kit:design, amostra.html da SPEC) servida so para leitura em 127.0.0.1,
+// numa porta livre, enquanto a captura roda. Caminho que resolve para fora da pasta, inclusive por link, e 404.
+async function serveDir(dir) {
+  let root;
+  try {
+    root = fs.realpathSync(dir);
+    if (!fs.statSync(root).isDirectory()) throw new Error("arquivo");
+  } catch {
+    throw new Fail(2, `ui: --serve pede uma pasta que existe: ${dir}`);
+  }
+  const inside = (f) => f === root || f.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
+  const fileFor = (p) => {
+    let f = fs.realpathSync(path.join(root, p));
+    if (!inside(f)) return "";
+    if (fs.statSync(f).isDirectory()) {
+      f = fs.realpathSync(path.join(f, "index.html"));
+      if (!inside(f)) return "";
+    }
+    return fs.statSync(f).isFile() ? f : "";
+  };
+  const server = http.createServer((req, res) => {
+    const send = (code, body, type) => {
+      res.writeHead(code, { "Content-Type": type || "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(req.method === "HEAD" ? undefined : body);
+    };
+    if (req.method !== "GET" && req.method !== "HEAD") return send(405, "metodo nao aceito");
+    // Host diferente do endereco servido (DNS rebinding) nao le a pasta.
+    if (req.headers.host !== `127.0.0.1:${server.address().port}`) return send(403, "host nao aceito");
+    let file = "";
+    try {
+      file = fileFor(decodeURIComponent(new URL(req.url, "http://kit").pathname));
+    } catch { /* nao existe ou caminho invalido */ }
+    if (!file) return send(404, "nao encontrado");
+    fs.readFile(file, (err, body) => (err ? send(404, "nao encontrado") : send(200, body, MIME[path.extname(file).toLowerCase()] || "application/octet-stream")));
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", (e) => reject(new Fail(4, `ui: --serve não abriu a porta local: ${e.message}.${SANDBOX_HINT}`)));
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const close = () => new Promise((resolve) => {
+    if (typeof server.closeAllConnections === "function") server.closeAllConnections();
+    server.close(() => resolve());
+    setTimeout(resolve, 2000);
+  });
+  return { url: `http://127.0.0.1:${server.address().port}`, root, close };
+}
+
+// Paginas de --serve: as de --routes (arquivos da pasta) ou todo .html do primeiro nivel da pasta.
+function serveRoutes(root, asked) {
+  if (asked) {
+    for (const r of asked) {
+      if (/^[a-z][a-z0-9+.-]*:/i.test(r)) throw new Fail(2, `ui: com --serve a rota "${r}" é um arquivo da pasta, não um endereço`);
+    }
+    return asked;
+  }
+  const found = fs.readdirSync(root).filter((f) => /\.html?$/i.test(f) && fs.statSync(path.join(root, f)).isFile()).sort();
+  if (!found.length) throw new Fail(2, `ui: --serve: nenhum .html em ${rel(root)}`);
+  if (found.length > SERVE_MAX) throw new Fail(2, `ui: --serve: ${found.length} arquivos .html em ${rel(root)}; passe as páginas em --routes (até ${SERVE_MAX} por vez)`);
+  return found;
 }
 
 class Cdp {
@@ -1377,7 +1449,15 @@ async function captureScreen(page, ctx, screen) {
     if (byClass.length) screen.dark_by = byClass.map((t) => (t.startsWith("class:") ? `.${t.slice(6)}` : `[${t.slice(5)}=dark]`)).join(", ");
   }
   for (const c of screen.console) screen.findings.push({ level: "achado", id: "M9", rule: "console", where: "página", detail: c, widths: "", count: 1 });
-  for (const n of screen.network) screen.findings.push({ level: "achado", id: "M9", rule: "requisicao", where: "página", detail: n, widths: "", count: 1 });
+  for (const n of screen.network) {
+    // Na pasta servida (amostra), fonte ou estilo de CDN que nao veio e falta de rede, nao defeito da tela.
+    const target = n.slice(n.lastIndexOf(" ") + 1);
+    if (ctx.served && /^https?:\/\//i.test(target) && !sameOrigin(target, ui.url)) {
+      warn(screen, `recurso externo não carregou (sem rede ou CDN fora do ar; a tipografia mostrada pode ser a de reserva): ${n}`);
+      continue;
+    }
+    screen.findings.push({ level: "achado", id: "M9", rule: "requisicao", where: "página", detail: n, widths: "", count: 1 });
+  }
 }
 
 // {out}, {url} e {route} entram no comando ja entre aspas simples, com ou sem aspas em volta no kit.json
@@ -1410,7 +1490,7 @@ function runCommandShots(ui, args, outDir, screens) {
 
 function summary(report, outDir) {
   const lines = [];
-  const srv = { iniciado: "app iniciado por ui.dev", "ja-rodando": "app já estava rodando", nenhum: "sem ui.url" }[report.server];
+  const srv = { iniciado: "app iniciado por ui.dev", "ja-rodando": "app já estava rodando", nenhum: "sem ui.url", pasta: `pasta ${report.served} servida pelo kit` }[report.server];
   const head = [`captura: ${report.mode}${report.browser ? ` (${report.browser})` : ""}`];
   if (report.mode !== "navegador aberto") head.push(srv);
   head.push(`${report.screens.length} ${report.screens.length === 1 ? "tela" : "telas"}`);
@@ -1462,15 +1542,23 @@ async function main() {
     doctor();
     return 0;
   }
-  const ui = loadUi(args.kit);
+  let ui = loadUi(args.kit);
   const outDir = path.resolve(args.out || path.join(ui.root, ".claude", "state", "ui", args.name));
-  const routes = args.routes || ui.routes;
+  // --serve: o endereco e o do servidor da pasta; ui.url, ui.dev, ui.screenshot e ui.routes ficam de fora.
+  let served = null;
+  if (args.serve) {
+    served = await serveDir(args.serve);
+    cleanups.push(served.close);
+    ui = { ...ui, url: served.url, dev: "", screenshot: "" };
+  }
+  const routes = served ? serveRoutes(served.root, args.routes) : args.routes || ui.routes;
   // Rota com endereco inteiro so por http ou https: file:, chrome: e parecidos nao sao tela do app.
   const join = (r) => {
     if (/^[a-z][a-z0-9+.-]*:/i.test(r)) {
       if (!/^https?:\/\//i.test(r)) throw new Fail(2, `ui: rota "${r}" precisa ser um caminho do app ou um endereço http(s)`);
       return r;
     }
+    if (served) return ui.url + "/" + encodeURI(r.replace(/^\/+/, ""));
     return ui.url ? ui.url + (r.startsWith("/") ? r : "/" + r) : "";
   };
   const plan = args.steps ? loadSteps(args.steps) : null;
@@ -1482,6 +1570,10 @@ async function main() {
     version: 1, captured_at: new Date().toISOString(), mode: "", browser: "", url: ui.url, server: "nenhum",
     viewports: ui.viewports.map((v) => v.label), widths: [], screens, totals: { findings: 0, check: 0, images: 0, incomplete: 0 },
   };
+  if (served) {
+    report.server = "pasta";
+    report.served = rel(served.root);
+  }
   if (plan) {
     for (const s of [...plan.setup, ...plan.steps]) if ("goto" in s) join(s.goto);
     report.steps = { setup: plan.setup.length, steps: plan.steps.length };
@@ -1539,7 +1631,7 @@ async function main() {
     if (!browser) throw new Fail(3, "ui: nenhum navegador Chromium encontrado (Chrome, Edge ou Chromium); sem captura");
     report.mode = "navegador";
     prepareOut(outDir, !args.out);
-    report.server = (await ensureApp(ui, outDir)).state;
+    if (!served) report.server = (await ensureApp(ui, outDir)).state;
     const br = await openBrowser(browser, ui);
     cleanups.push(br.close);
     report.browser = `${browser.name} ${br.version.split(".")[0]}`.trim();
@@ -1554,7 +1646,7 @@ async function main() {
     };
     try {
       let page = await openPage();
-      const ctx = { ui, args, probe: fs.readFileSync(path.join(HERE, "ui-probe.js"), "utf8"), outDir, widths: [], axe: "", scheme: true, steps: plan, join };
+      const ctx = { ui, args, probe: fs.readFileSync(path.join(HERE, "ui-probe.js"), "utf8"), outDir, widths: [], axe: "", scheme: true, steps: plan, join, served: !!served };
       const ax = axePath(ui.root);
       if (ax) ctx.axe = fs.readFileSync(ax, "utf8");
       // Preparo (login, dado de teste): uma vez por aba, antes das rotas. Se falha, nenhuma tela esta no estado pedido.

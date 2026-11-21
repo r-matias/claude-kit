@@ -5,7 +5,8 @@ A skill que mandou ler este arquivo já disse qual é o argumento e qual é a ra
 - `<raiz-do-plugin>/skills/design/visual.md`: bloco de direção visual;
 - `<raiz-do-plugin>/skills/execute/ui-rules.md`: bloco de regras de interface;
 - `<raiz-do-plugin>/skills/execute/subagent-rules.md`: bloco de leitura e Bash dos subagents;
-- `<raiz-do-plugin>/templates/kit-design.rule.md`: molde da rule de direção.
+- `<raiz-do-plugin>/templates/kit-design.rule.md`: molde da rule de direção;
+- `<raiz-do-plugin>/scripts/ui.sh`: captura das amostras, na conferência do passo 4.
 
 Os três blocos vão no prompt dos subagents sem mudar uma palavra.
 
@@ -33,7 +34,13 @@ Os três blocos vão no prompt dos subagents sem mudar uma palavra.
    - a resposta esperada: o caminho gravado, as duas famílias de fonte, a paleta por papel e uma linha sobre a composição.
 
    Subagent que volta sem ter gravado o arquivo: peça uma vez que refaça. Se falhar de novo, siga com as amostras que existem e diga qual faltou.
-4. **Escolha.** Mostre o caminho completo de cada amostra, para abrir no navegador, e uma linha por direção. Avise que a fonte vem de CDN: sem rede aparece a fonte de reserva, e a tipografia mostrada não é a final. `AskUserQuestion` com uma opção por amostra da rodada e a opção "Outra rodada"; a pergunta diz que no campo livre dá para dizer o que mudar, quais duas combinar ou escolher uma amostra de rodada anterior.
+4. **Escolha.** Antes de mostrar, a conferência: na raiz do projeto, rode `bash "<raiz-do-plugin>/scripts/ui.sh" capture --serve .claude/state/ui/design/<slug> --routes <arquivos da rodada, separados por vírgula> --name design-<slug>`, com `timeout: 600000` na chamada de Bash. A captura serve a pasta só durante a rodada e grava imagens nos tamanhos de `ui.viewports`. Abra com Read as imagens do menor e do maior tamanho de cada amostra.
+   - Amostra com `achado [B2]` ou `achado [B3]`, página em branco ou que não mostra a tela pedida: refaça essa amostra uma vez, pelo mesmo prompt mais o problema visto, e capture de novo. Se o problema continuar, mostre-a dizendo qual é. Os outros achados não refazem a amostra.
+   - `aviso: recurso externo não carregou`: sem rede, a imagem mostra a fonte de reserva.
+   - `conferir [M10]` compara a amostra com a direção já gravada no projeto: vale no escopo página e componente e no ajuste; em direções novas, ignore.
+   - Captura que sai com 3 (sem node ou sem navegador), com 4 (porta local barrada, em geral pelo sandbox do Bash) ou que o usuário não autoriza: siga sem ela e diga que as amostras não foram vistas renderizadas. Saída 5: use as imagens que saíram e diga qual amostra ficou incompleta.
+
+   Mostre o caminho completo de cada amostra, para abrir no navegador, e uma linha por direção, sobre o que as imagens mostram. Avise que a fonte vem de CDN: sem rede aparece a fonte de reserva, e a tipografia mostrada não é a final. `AskUserQuestion` com uma opção por amostra da rodada e a opção "Outra rodada"; a pergunta diz que no campo livre dá para dizer o que mudar, quais duas combinar ou escolher uma amostra de rodada anterior.
    - Outra rodada ou combinação: gere de novo só o que foi pedido, pelo mesmo prompt mais o pedido do usuário, com outro `<n>` no nome do arquivo. Na combinação, o prompt leva também os caminhos das duas amostras e o que vem de cada uma.
    - No máximo 3 rodadas, contando a primeira geração. Depois da terceira, pergunte se segue com a amostra que o usuário apontou como mais próxima (sem essa indicação, pergunte qual) ou se para; parando, nada é gravado fora da pasta de estado.
 5. **Gravação**, só depois da escolha. Leia a amostra escolhida: os valores gravados saem do código dela, não da descrição.

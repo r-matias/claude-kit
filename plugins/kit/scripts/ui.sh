@@ -17,11 +17,13 @@
 #
 #   ui.sh capture [--kit <kit.json>] [--name <nome>] [--routes <a,b>] [--probe-only] [--tiles N]
 #                 [--steps <json | arquivo.json>] [--attach <http://host:porta> [--match <trecho da url>]]
-#                 [--out <pasta>]
+#                 [--serve <pasta>] [--out <pasta>]
 #     Roda ui-capture.mjs com o "ui" do kit.json: sobe o app se preciso, percorre as larguras, grava
 #     imagens e report.json em .claude/state/ui/<nome>/ e imprime o resumo. --steps leva a tela ate um
-#     estado (login, clique, campo preenchido) antes de medir. Saida: 0 sem achado, 1 com achado,
-#     2 uso ou config, 3 sem meio de captura, 4 app nao respondeu, 5 captura incompleta.
+#     estado (login, clique, campo preenchido) antes de medir. --serve captura os .html de uma pasta local
+#     (amostras da /kit:design) servida em 127.0.0.1 so durante a captura, sem ui.url nem ui.dev; --routes
+#     escolhe os arquivos. Saida: 0 sem achado, 1 com achado, 2 uso ou config, 3 sem meio de captura,
+#     4 app nao respondeu, 5 captura incompleta.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -232,13 +234,13 @@ cmd_capture() {
   local engine="$ENGINE" a prev=""
   local -a args=()
   # Git Bash converte argumento com cara de caminho (/login) ao chamar um .exe: a conversao fica
-  # desligada e so --kit, --out e o arquivo de --steps, que sao caminhos, sao convertidos aqui.
+  # desligada e so --kit, --out, --serve e o arquivo de --steps, que sao caminhos, sao convertidos aqui.
   if command -v cygpath >/dev/null 2>&1; then
     KIT_BASH="$(cygpath -m "$BASH")"
     engine="$(cygpath -m "$ENGINE")"
     for a in "$@"; do
       case "$prev" in
-        --kit | --out) a="$(cygpath -m "$a")" ;;
+        --kit | --out | --serve) a="$(cygpath -m "$a")" ;;
         --steps) case "$a" in "["* | "{"*) ;; *) a="$(cygpath -m "$a")" ;; esac ;;
       esac
       args+=("$a")
@@ -255,5 +257,5 @@ cmd_capture() {
 case "${1:-}" in
   status) shift; cmd_status "$@" ;;
   capture) shift; cmd_capture "$@" ;;
-  *) echo "uso: ui.sh status [pasta] | capture [--kit <kit.json>] [--name <nome>] [--routes <a,b>] [--probe-only] [--steps <json | arquivo>] [--attach <url> [--match <trecho>]] [--out <pasta>]" >&2; exit 2 ;;
+  *) echo "uso: ui.sh status [pasta] | capture [--kit <kit.json>] [--name <nome>] [--routes <a,b>] [--probe-only] [--steps <json | arquivo>] [--attach <url> [--match <trecho>]] [--serve <pasta>] [--out <pasta>]" >&2; exit 2 ;;
 esac

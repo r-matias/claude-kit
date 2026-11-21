@@ -2,7 +2,7 @@
 name: design
 description: Define a direção visual do projeto, ou redesenha uma página ou um componente dentro dela, com amostras em HTML que você abre no navegador antes de escolher, e grava a rule de direção (.claude/rules/kit-design.md, só no escopo app), docs/specs/<slug>/DESIGN.md e a amostra escolhida. Use quando o pedido é dar identidade visual a um projeto com tela ou redesenhar o app, uma tela ou um componente; não escreve código de produção nem SPEC.
 argument-hint: "[app | rota ou arquivo da página | componente]"
-allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
+allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**) Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ui.sh" *)
 ---
 
 ## Regras que valem a tarefa inteira
@@ -12,7 +12,7 @@ allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
 - A direção é escolha do usuário, feita com a amostra aberta no navegador. Nunca grave a rule de direção sem essa escolha.
 - Uma direção por projeto. Fonte e paleta só mudam no escopo app, ou numa área com direção própria.
 - Amostra só tem dado fictício: nunca dado real, credencial ou segredo. A escolhida vai para o git.
-- Você não vê a amostra renderizada. Descreva cada uma pela direção e pelo que o subagent devolveu, sem afirmar como ficou na tela.
+- Você só vê a amostra renderizada pelas imagens da conferência do passo de escolha. Sem elas, descreva cada uma pela direção e pelo que o subagent devolveu, sem afirmar como ficou na tela.
 - Sem `AskUserQuestion` disponível: faça as perguntas no texto, com as opções, e pare sem gravar nada.
 - Argumento: $ARGUMENTS
 - Raiz do plugin, chamada de `<raiz-do-plugin>` em [passos.md](passos.md): `${CLAUDE_PLUGIN_ROOT}`
