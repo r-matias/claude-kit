@@ -1,6 +1,6 @@
 ---
 name: design
-description: Define a direção visual do projeto com amostras em HTML que você abre no navegador antes de escolher, e grava a rule de direção (.claude/rules/kit-design.md), docs/specs/<slug>/DESIGN.md e a amostra escolhida. Use quando o pedido é dar identidade visual a um projeto com tela ou redesenhar o app; não escreve código de produção nem SPEC.
+description: Define a direção visual do projeto, ou redesenha uma página ou um componente dentro dela, com amostras em HTML que você abre no navegador antes de escolher, e grava a rule de direção (.claude/rules/kit-design.md, só no escopo app), docs/specs/<slug>/DESIGN.md e a amostra escolhida. Use quando o pedido é dar identidade visual a um projeto com tela ou redesenhar o app, uma tela ou um componente; não escreve código de produção nem SPEC.
 argument-hint: "[app | rota ou arquivo da página | componente]"
 allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
 ---

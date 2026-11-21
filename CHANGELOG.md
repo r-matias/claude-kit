@@ -4,6 +4,15 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.10.1
+
+### Entrou
+
+- **`/kit:design` para uma página ou um componente.** Passe a rota, o arquivo ou o nome (`/kit:design /faturas`, `/kit:design Button`) e a skill redesenha só aquele alvo, dentro da direção que o projeto já tem: 2 ou 3 amostras com as fontes e a paleta atuais, variando composição e hierarquia. Fora do piloto (abaixo), a rule de direção não muda; ela grava `docs/specs/<slug>/DESIGN.md` e a amostra escolhida. Página que ainda não existe parte da descrição. No componente, a amostra mostra todos os estados e variantes, e o `DESIGN.md` lista as telas que o usam, com a rota. Pedido que exige mudar fonte ou paleta é escopo app, e a skill pergunta se sobe o escopo.
+- Página num projeto ainda sem direção: a skill pergunta se ela é o piloto da direção do app (grava a direção para todos, aplicada só nessa tela agora) ou só uma recomposição com o padrão atual.
+
+Ainda não ligado nesta versão: a `/kit:spec` ainda não lê o `DESIGN.md` como ponto de partida nem abre o redesenho sozinha; o `/kit:plan`, o `/kit:execute` e o `kit:ui-reviewer` ainda não consomem nem cobram a direção; o `/kit:init` e o `ui.sh status` ainda não conhecem a rule de direção.
+
 ## 0.10.0
 
 ### Entrou

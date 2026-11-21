@@ -110,6 +110,13 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 - `/kit:design`
 - `/kit:design app`
 
+Para redesenhar uma tela ou um componente dentro da direção que o projeto já tem, passe o alvo. As amostras são 2 ou 3 composições com as fontes e a paleta atuais, e, fora do piloto, a rule de direção não muda:
+
+- `/kit:design /faturas` (página, pela rota)
+- `/kit:design src/pages/Checkout.tsx` (página, pelo arquivo)
+- `/kit:design tela de onboarding do convite` (página que ainda não existe)
+- `/kit:design Button` (componente, em todos os estados, com a lista das telas que o usam)
+
 **Bug conhecido:** `/kit:fix` começa por um teste que reproduz a falha e corrige pela causa raiz.
 
 - `/kit:fix #482`
@@ -129,7 +136,7 @@ Na pasta-mãe de vários repositórios (cada um com seu `.git`), rode o `/kit:in
 | `/kit:plan` | SPEC pronta | `PLAN.md` ao lado da SPEC | Manual ou sozinho, quando há uma SPEC para planejar |
 | `/kit:execute` | Plano pronto | Código e testes; caixas do `PLAN.md` marcadas com evidência | Só manual |
 | `/kit:epic` | Trabalho grande, várias entregas | `docs/specs/<epico>/EPIC.md` | Só manual |
-| `/kit:design` | Projeto com tela sem identidade visual, ou redesenho do app | Amostras em HTML para escolher, `.claude/rules/kit-design.md`, `docs/specs/<slug>/DESIGN.md` e `amostra.html` | Manual ou sozinho, quando você pede uma direção visual |
+| `/kit:design` | Projeto com tela sem identidade visual, ou redesenho do app, de uma tela ou de um componente | Amostras em HTML para escolher, `docs/specs/<slug>/DESIGN.md` e `amostra.html`; no escopo app, também `.claude/rules/kit-design.md` | Manual ou sozinho, quando você pede uma direção visual |
 | `/kit:fix` | Bug com sintoma claro ou teste falhando | Teste que reproduz + correção | Manual ou sozinho, quando você relata um bug |
 | `/kit:hunt` | Falha intermitente, lentidão, causa desconhecida | Hipóteses com evidência, sem editar código | Manual ou sozinho, quando você relata uma falha vaga |
 | `/kit:setup` | Avançado: conferir a máquina sem abrir um projeto | Só um resumo: não grava nada | Só manual |
@@ -289,7 +296,9 @@ As regras acima garantem tela correta; não garantem tela com identidade. A dire
 
 A amostra carrega a fonte por CDN, com fonte de reserva: sem rede, a tipografia que aparece não é a final. No código do projeto a fonte fica empacotada, nunca por CDN. Uma área de público diferente (a landing page, por exemplo) pode ter direção própria, em `.claude/rules/kit-design-<area>.md`, que substitui a geral só nos arquivos dela. A skill grava em `.claude/`, que o Claude Code protege: a escrita das amostras e da rule pede confirmação; no primeiro prompt, libere a edição da pasta `.claude` do projeto na sessão.
 
-Nesta versão a skill trata o app inteiro (ou uma área); redesenho de uma página ou de um componente, e o uso da direção pela `/kit:spec`, pelo `/kit:plan`, pelo `/kit:execute` e pelo revisor de interface, chegam nas próximas.
+**Página e componente.** Com uma rota, um arquivo ou um nome no argumento, a skill redesenha só aquele alvo, dentro da direção gravada: as amostras variam composição e hierarquia, e fonte e paleta ficam as do projeto. Pedido que exige mudar fonte ou paleta é escopo app, e ela pergunta se sobe o escopo. Numa página de projeto ainda sem direção, ela pergunta se a página é o piloto da direção do app (grava a `kit-design.md` para todos, aplicada só nessa tela agora) ou só uma recomposição com o padrão atual. No componente, a amostra mostra todos os estados e variantes, e o `DESIGN.md` lista as telas que o usam, com a rota.
+
+Nesta versão o uso da direção pela `/kit:spec`, pelo `/kit:plan`, pelo `/kit:execute` e pelo revisor de interface ainda não está ligado; chega nas próximas.
 
 ## LSP de TypeScript com teto de memória
 

@@ -2315,6 +2315,13 @@ if [ -z "$FILTER" ]; then
     '`/kit:spec docs/specs/<slug>/DESIGN.md`' 'Custo: <N> subagents'; do
     grep -qF -- "$want" "$DSG/passos.md" || dg_bad+="passos:'$want' "
   done
+  for sec in 'Escopo app' 'Escopo página' 'Escopo componente'; do
+    tr -d '\r' <"$DSG/passos.md" | grep -qxF "## $sec" || dg_bad+="passos sem a seção '$sec' "
+  done
+  for want in 'Piloto da direção do app' 'Só recomposição' 'Página que ainda não existe' 'subir o escopo' 'todos os estados e variantes' \
+    'as telas que usam o componente' 'nenhuma `kit-design*.md` é gravada'; do
+    grep -qF -- "$want" "$DSG/passos.md" || dg_bad+="passos:'$want' "
+  done
   for sec in Escopo 'Problema de hoje' Decisões 'Direção escolhida' Amostra 'Componentes base' 'Telas afetadas' 'Fora do redesenho'; do
     tr -d '\r' <"$DSG/passos.md" | grep -qxF "## $sec" || dg_bad+="DESIGN.md sem a seção '$sec' "
   done
