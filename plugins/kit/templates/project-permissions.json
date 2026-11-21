@@ -41,7 +41,7 @@
     {
       "id": "powershell",
       "label": "PowerShell",
-      "description": "Nega a ferramenta PowerShell, que os guardas do kit não cobrem.",
+      "description": "Nega a ferramenta PowerShell inteira. Sem ele, o guarda do kit confere só as formas listadas na documentação (destrutivo, escrita e leitura de segredo), não tudo o que o Bash cobre.",
       "platforms": ["windows"],
       "settings": { "permissions": { "deny": ["PowerShell"] } }
     },

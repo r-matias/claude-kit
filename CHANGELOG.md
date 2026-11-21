@@ -4,6 +4,13 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.20
+
+### Mudou
+
+- **Texto do grupo `powershell`.** O `/kit:init`, o aviso do `/kit:setup` e as docs deixam de dizer que a ferramenta PowerShell fica fora dos guardas: o grupo nega a ferramenta inteira (cobertura total) e, sem ele, o `guard-pwsh.sh` confere só as formas destrutivas e a escrita e leitura de segredo listadas na referência. O grupo continua oferecido e marcado por padrão no Windows nativo. O "Modelo de ameaça" do README mostra a ferramenta PowerShell como coberta em parte.
+- **Teste ao vivo do guarda da ferramenta PowerShell.** O `tests/run-guards-live-test.sh`, no Windows, confere sem o grupo `powershell` que um `Remove-Item -Recurse` pela ferramenta fora do projeto é negado e dentro dele passa.
+
 ## 0.9.19
 
 ### Entrou

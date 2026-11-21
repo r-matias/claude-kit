@@ -65,7 +65,7 @@ O kit não altera seu settings global (`~/.claude/settings.json` ou o de `CLAUDE
 | `git-destrutivo` | Nega `git push --force`/`-f`, `git reset --hard` e `git clean -fdx` |
 | `push` | Todo `git push` pede confirmação |
 | `curl-wget` | Nega `curl` e `wget` (o registry do stack fica liberado no sandbox). Só é oferecido se o projeto não usa nenhum dos dois (skills, agents, commands, hooks, scripts do `package.json`, `Makefile`, `justfile`, regras `allow`/`ask`); senão o relatório diz quantos arquivos usam |
-| `powershell` | Só no Windows nativo: nega a ferramenta PowerShell, que os guardas não cobrem |
+| `powershell` | Só no Windows nativo: nega a ferramenta PowerShell inteira. Sem ele, o guarda confere nela só as formas destrutivas e a escrita e leitura de segredo listadas em Guardas, não tudo o que cobre no Bash |
 | `sandbox` | Só no macOS e no Linux/WSL2 com `bwrap` e `socat`: liga o sandbox do Bash e pede confirmação para rodar fora dele |
 
 A escolha fica em `permissions.groups` do `.claude/kit.json`; no modo reparo, grupo que você desmarcou não volta a ser proposto. Habilitar o kit num projeto é o mesmo que instalar com `--scope project`: `enabledPlugins` e `extraKnownMarketplaces` vão para o settings do projeto.
@@ -215,14 +215,14 @@ O kit protege contra acidentes e contra contornos do próprio Claude. Ele não �
 - **Código malicioso.** Dependência, script do projeto, servidor MCP ou texto lido de fora (página, issue, arquivo) que induz o Claude a algo que não casa com nenhum padrão dos guardas.
 - **Script gravado e depois executado** (`python limpa.py`, `powershell -File x.ps1`) e **escrita feita por programa** (um gerador, um script que grava arquivo): o guarda vê o comando, não o que ele faz.
 - **Leitura indireta de segredo** (`grep -r KEY .`, `env`, um script que imprime o arquivo) e qualquer leitura pelo shell sem o grupo `segredos`.
-- **Ferramentas fora dos guardas.** Os guardas olham só `Bash` e `Edit`/`Write`/`MultiEdit`/`NotebookEdit`. A ferramenta PowerShell (negada inteira pelo grupo `powershell` no Windows nativo) e as ferramentas de servidores MCP não passam por eles.
+- **Ferramentas fora dos guardas.** Os guardas olham `Bash`, `PowerShell` e `Edit`/`Write`/`MultiEdit`/`NotebookEdit`. As ferramentas de servidores MCP não passam por eles. Na ferramenta PowerShell o guarda é parcial: confere as formas listadas em Guardas, com mais lacunas que no `Bash` ("Não cobre" da linha do `guard-pwsh.sh`); a cobertura total é negá-la inteira pelo grupo `powershell` no Windows nativo.
 - **Padrão que não está na lista.** O guarda de comando é lista de padrões; o que ele deixa passar está no "Não cobre" da linha do `guard-bash.sh` em [docs/reference.md](docs/reference.md#hooks).
 
 **Camadas por plataforma:**
 
 | Camada | O que segura | macOS | Linux / WSL2 | Windows nativo |
 | --- | --- | --- | --- | --- |
-| Guardas (hooks do kit) | Padrões destrutivos pelo `Bash`, escrita em segredo ou caminho protegido pelo `Bash` e pelas ferramentas de edição e, com o grupo `segredos`, leitura de segredo pelo `Bash` | Sim | Sim | Sim (a ferramenta PowerShell fica fora) |
+| Guardas (hooks do kit) | Padrões destrutivos pelo `Bash`, escrita em segredo ou caminho protegido pelo `Bash` e pelas ferramentas de edição e, com o grupo `segredos`, leitura de segredo pelo `Bash`; na ferramenta PowerShell, as mesmas famílias em parte | Sim | Sim | Sim (na ferramenta PowerShell, parcial) |
 | Grupos de permissão (`permissions.deny`/`ask` do projeto) | `Read` de segredo, git destrutivo, `push`, `curl`/`wget`, ferramenta PowerShell | Sim | Sim | Sim |
 | Sandbox (grupo `sandbox`) | Disco e rede de tudo o que o Bash inicia, inclusive script e programa, salvo os comandos de `sandbox.excludedCommands` e o que você confirmar para rodar fora dele; esconde `~/.ssh`, `~/.aws`, `GITHUB_TOKEN` e `NPM_TOKEN` | Sim | Sim, com `bwrap` e `socat` | Não existe; use o WSL2 |
 | Revisão humana | Confirmações (`ask`) dos guardas e das permissões, diff antes do commit (o kit nunca commita) | Sim | Sim | Sim |
@@ -396,7 +396,7 @@ O `push` precisa estar no `notify` (o init já grava assim). Servidor ntfy próp
 
 O `/kit:init` já soma isso ao settings quando detecta testes de integração (inclusive no modo reparo).
 
-**Windows nativo sem sandbox.** O sandbox do Claude Code não existe no Windows nativo. O `/kit:init` não oferece o grupo `sandbox` lá: as regras de `permissions.deny` e os guardas continuam valendo, mas disco e rede não ficam isolados. Para ter sandbox, use o WSL2 e rode o `/kit:init` lá. O grupo `powershell` (só no Windows nativo) nega a ferramenta PowerShell porque os guardas não a cobrem. Quem precisar dela desmarca o grupo, ou remove `"PowerShell"` de `permissions.deny` no `.claude/settings.json` do projeto e tira `powershell` de `permissions.groups`, e fica sem guarda nessa ferramenta.
+**Windows nativo sem sandbox.** O sandbox do Claude Code não existe no Windows nativo. O `/kit:init` não oferece o grupo `sandbox` lá: as regras de `permissions.deny` e os guardas continuam valendo, mas disco e rede não ficam isolados. Para ter sandbox, use o WSL2 e rode o `/kit:init` lá. O grupo `powershell` (só no Windows nativo) nega a ferramenta PowerShell inteira, porque o guarda dela é parcial. Quem precisar dela desmarca o grupo, ou remove `"PowerShell"` de `permissions.deny` no `.claude/settings.json` do projeto e tira `powershell` de `permissions.groups`; a ferramenta passa a ser conferida pelo `guard-pwsh.sh` só nas formas listadas em Guardas.
 
 ## Atualizar e desinstalar
 
@@ -474,6 +474,6 @@ Exemplo completo em [`plugins/kit/templates/kit.example.json`](plugins/kit/templ
   | macOS | Sim | |
   | Linux | Sim | Precisa de `bwrap` e `socat` |
   | WSL2 | Sim | Recomendado no Windows; precisa de `bwrap` e `socat` |
-  | Windows nativo | Não | Sem grupo `sandbox`; valem `permissions.deny` (com o grupo `powershell`) e os guardas |
+  | Windows nativo | Não | Sem grupo `sandbox`; valem `permissions.deny` (com o grupo `powershell`, que nega a ferramenta PowerShell) e os guardas (parciais nessa ferramenta) |
 
 Para contribuir com o kit (estrutura do repositório, testes, publicação), veja [CONTRIBUTING.md](CONTRIBUTING.md). Decisões de desenho em [docs/design.md](docs/design.md).

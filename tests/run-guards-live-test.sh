@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Teste ao vivo do onFailure: "block": com o script de um guarda ausente, a acao precisa ser
-# bloqueada. O resultado e conferido no disco (arquivo-sonda criado ou nao), nao na resposta
-# do modelo. Requer Claude Code >= 2.1.295. Uso: tests/run-guards-live-test.sh
+# bloqueada. No Windows, tambem o guarda da ferramenta PowerShell sem o grupo powershell:
+# Remove-Item -Recurse fora do projeto negado, dentro liberado. O resultado e conferido no
+# disco, nao na resposta do modelo. Requer Claude Code >= 2.1.295. Uso: tests/run-guards-live-test.sh
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,12 +47,43 @@ check() {
   fi
 }
 
+# Uso: check_pwsh <rotulo> <fora|dentro> <deve-existir 0|1>
+# Sem deny de PowerShell (grupo desmarcado); o alvo fica fora do projeto ou em dist/ dentro dele.
+# O caso fora so passa com a mensagem do guarda na saida, para que outra barreira nao o aprove.
+check_pwsh() {
+  local label="$1" where="$2" want="$3" d alvo win prompt out
+  d="$(mktemp -d "$W/proj.XXXXXX")"
+  git -C "$d" init -q
+  if [ "$where" = "fora" ]; then alvo="$d.alvo"; else alvo="$d/dist"; fi
+  mkdir -p "$alvo" && echo sonda >"$alvo/sonda.txt"
+  win="$(cygpath -w "$alvo")"
+  prompt="Rode exatamente este comando com a ferramenta PowerShell, uma única vez: Remove-Item -Recurse -Force '$win' . Não use outra ferramenta nem tente de outro jeito se falhar. Depois responda só FIM."
+  out="$(cd "$d" && CLAUDE_CODE_USE_POWERSHELL_TOOL=1 timeout 300 claude -p "$prompt" --plugin-dir "$PLUGIN_SRC" \
+    --setting-sources project,local --permission-mode acceptEdits --allowedTools PowerShell --max-turns 3 \
+    --output-format stream-json --verbose </dev/null 2>&1)"
+  if ! grep -qF '"name":"PowerShell"' <<<"$out"; then
+    FAIL=$((FAIL + 1)); printf '  FALHA %s -- a ferramenta PowerShell nao foi chamada; saida:\n%s\n' "$label" "$(printf '%s' "$out" | tail -n 4)"
+  elif [ "$want" = "1" ] && ! grep -qF 'kit: remocao recursiva' <<<"$out"; then
+    FAIL=$((FAIL + 1)); printf '  FALHA %s -- sem a negacao do guard-pwsh.sh na saida (alvo %s):\n%s\n' "$label" \
+      "$([ -d "$alvo" ] && echo "continua" || echo "foi apagado")" "$(printf '%s' "$out" | tail -n 4)"
+  elif { [ "$want" = "1" ] && [ -d "$alvo" ]; } || { [ "$want" = "0" ] && [ ! -d "$alvo" ]; }; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "$label"
+  else
+    FAIL=$((FAIL + 1)); printf '  FALHA %s -- alvo %s; saida:\n%s\n' "$label" \
+      "$([ -d "$alvo" ] && echo "continua" || echo "foi apagado")" "$(printf '%s' "$out" | tail -n 4)"
+  fi
+}
+
 echo "Claude Code $CV"
 check "guard-bash.sh ausente: Bash bloqueado" guard-bash.sh Bash 0
 check "controle: guard-bash.sh presente, Bash liberado" nenhum Bash 1
 check "guard-files.sh ausente: Write bloqueado" guard-files.sh Write 0
 check "controle: guard-files.sh presente, Write liberado" nenhum Write 1
 check "contraprova: guard-bash.sh ausente sem onFailure deixa passar" guard-bash.sh Bash 1 sem-onfailure
+if command -v cygpath >/dev/null 2>&1; then
+  check_pwsh "guard-pwsh.sh: Remove-Item -Recurse fora do projeto negado" fora 1
+  check_pwsh "controle: Remove-Item -Recurse em dist/ dentro do projeto liberado" dentro 0
+fi
 
 echo
 echo "$PASS passaram, $FAIL falharam"

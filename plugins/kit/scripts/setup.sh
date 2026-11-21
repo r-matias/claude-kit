@@ -105,7 +105,7 @@ cmd_check() {
     echo "aviso sandbox: o AppArmor restringe user namespaces (Ubuntu 24.04+) e o bwrap pode falhar; veja a seção de sandbox no Linux da documentação do Claude Code"
   fi
   if [ "$p" = "windows" ] && command -v jq >/dev/null 2>&1 && ! powershell_denied; then
-    echo "aviso powershell: comandos pela ferramenta PowerShell não passam pelo guard-bash; aplique o grupo powershell do /kit:init ou ponha \"PowerShell\" em permissions.deny"
+    echo "aviso powershell: a ferramenta PowerShell passa pelo guarda do kit só nas formas listadas na documentação (destrutivo, escrita e leitura de segredo); para negá-la inteira, aplique o grupo powershell do /kit:init ou ponha \"PowerShell\" em permissions.deny"
   fi
   return "$missing"
 }
@@ -136,8 +136,8 @@ cmd_status() {
   return "$missing"
 }
 
-# Grupos que valem nesta plataforma, como array JSON. PowerShell so no Windows nativo, onde os
-# guardas do kit nao a cobrem. Sandbox so no macOS e no Linux/WSL2 com bwrap e socat; sem ele,
+# Grupos que valem nesta plataforma, como array JSON. PowerShell so no Windows nativo, onde a
+# ferramenta vem ligada e o guarda dela e parcial. Sandbox so no macOS e no Linux/WSL2 com bwrap e socat; sem ele,
 # failIfUnavailable travaria todo Bash.
 groups_here() {
   local p sb=true
