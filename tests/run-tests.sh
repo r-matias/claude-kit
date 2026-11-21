@@ -1762,6 +1762,35 @@ if [ -z "$FILTER" ] || [[ "interface ui" == *"$FILTER"* ]]; then
           ok "ui capture: app com o corpo fixo é fotografado rolando o contêiner; .dark de componente não é tema; parte que ficou de fora vira aviso"
         else ko "ui capture: app com o corpo fixo é fotografado rolando o contêiner; .dark de componente não é tema; parte que ficou de fora vira aviso" "$(jq -c '.screens[1] | {dark, findings, warnings, images}' "$RT" 2>&1 | head -c 600)"; fi
 
+        # Estilo medido e direcao visual: familia que de fato renderizou, cores e tamanhos no report.json.
+        # Com rule kit:design de outra familia, tela so com fonte de sistema sai conferir [M10]; sem o
+        # cabecalho a rule e do projeto e nao conta.
+        D="$UT/direcao"
+        mkdir -p "$D/.claude/rules"
+        cp "$E/.claude/kit.json" "$D/.claude/kit.json"
+        printf '%s\n' '---' 'paths:' '  - "**/*.html"' '---' '<!-- kit:design v1 -->' '# Direção visual deste projeto' '' \
+          '- Tipografia: título `Fraunces Kit` (`--familia-titulo`), texto `Marca Kit` — empacotadas em `web/fontes/`' >"$D/.claude/rules/kit-design.md"
+        out="$(cap "$D" --name d --probe-only --routes /fonte,/marca,/ 2>&1)"; code=$?
+        RD="$D/.claude/state/ui/d/report.json"
+        if [ "$code" = "0" ] && grep -qF 'conferir [M10] fonte-fora-da-direcao' <<<"$out" &&
+          jq -e '.screens[0] | (.findings | length) == 1 and .findings[0].id == "M10" and .findings[0].level == "conferir"
+            and (.findings[0].detail | contains("Fraunces Kit, Marca Kit") and contains("não carregada: Fraunces Kit"))
+            and .style.width == 1280 and (.style.fonts | length >= 3 and all(.[]; .system) and any(.[]; .family == "serif") and any(.[]; .family == "system-ui" or .family == "ui-sans-serif")) and .style.unloaded[0] == "Fraunces Kit"
+            and .style.colors[0].color == "#1f2933" and any(.style.colors[]; .color == "#0b5cad") and .style.backgrounds == [{color: "#ffffff", share: 100}]
+            and ([.style.sizes[].px] | sort) == [16, 32]' "$RD" >/dev/null 2>&1; then
+          ok "ui capture: bloco de estilo com a fonte que renderizou (reserva e serif quando a da direção não carrega), e fonte de sistema com direção registrada sai conferir [M10]"
+        else ko "ui capture: bloco de estilo com a fonte que renderizou (reserva e serif quando a da direção não carrega), e fonte de sistema com direção registrada sai conferir [M10]" "exit $code, $(jq -c '.screens[0] | {style, findings}' "$RD" 2>&1 | head -c 700)"; fi
+        if jq -e '(.screens[1] | .findings == [] and .style.fonts[0].family == "Marca Kit" and .style.fonts[0].system == false)
+            and (.screens[2].findings | length == 1 and .[0].id == "M10" and (.[0].detail | contains("system-ui") and (contains("não carregada") | not)))' "$RD" >/dev/null 2>&1; then
+          ok "ui capture: fonte da direção servida por @font-face não é M10; página em system-ui é"
+        else ko "ui capture: fonte da direção servida por @font-face não é M10; página em system-ui é" "$(jq -c '[.screens[1], .screens[2]] | map({route, style: .style.fonts, findings})' "$RD" 2>&1 | head -c 700)"; fi
+        printf '%s\n' '---' 'paths:' '  - "**/*.html"' '---' '# Direção visual deste projeto' 'Cabeçalho citado no texto não conta: <!-- kit:design v1 -->' '' \
+          '- Tipografia: título `Fraunces Kit`, texto `Marca Kit`' >"$D/.claude/rules/kit-design.md"
+        out="$(cap "$D" --name d2 --probe-only --routes /fonte 2>&1)"; code=$?
+        if [ "$code" = "0" ] && jq -e '.screens[0] | .findings == [] and .style.fonts[0].system == true' "$D/.claude/state/ui/d2/report.json" >/dev/null 2>&1; then
+          ok "ui capture: rule de direção sem o cabeçalho kit:design é do projeto e não gera M10"
+        else ko "ui capture: rule de direção sem o cabeçalho kit:design é do projeto e não gera M10" "exit $code, $(tail -n 4 <<<"$out")"; fi
+
         # Pagina que trava a aba: aquela tela fica incompleta e a seguinte abre numa aba nova.
         out="$(KIT_UI_REPLY_S=3 cap "$E" --name trava --probe-only --routes /trava,/grafico 2>&1)"; code=$?
         if [ "$code" = "5" ] && jq -e '(.screens[0].incomplete | startswith("captura interrompida")) and .totals.incomplete == 1
@@ -2287,9 +2316,11 @@ if [ -z "$FILTER" ]; then
   for id in $(grep -ohE '"[BM][0-9]+"' "$SCRIPTS/ui-probe.js" "$SCRIPTS/ui-capture.mjs" | tr -d '"' | sort -u); do
     grep -qE "^- \*\*$id\*\* " "$UR" || ui_bad+="id da sondagem sem regra no revisor:$id "
   done
-  for rule in $(grep -oE 'add\("[a-z-]+"' "$SCRIPTS/ui-probe.js" | sed -E 's/add\("//; s/"//' | sort -u) console requisicao nao-carregou; do
+  for rule in $(grep -oE 'add\("[a-z-]+"' "$SCRIPTS/ui-probe.js" | sed -E 's/add\("//; s/"//' | sort -u) console requisicao nao-carregou fonte-fora-da-direcao; do
     grep -qF "\`$rule\`" "$REPO/docs/reference.md" || ui_bad+="reference sem a regra $rule "
   done
+  grep -qF 'rule: "fonte-fora-da-direcao"' "$SCRIPTS/ui-capture.mjs" && grep -qE '^- \*\*M10\*\* .*bloco `style`.*fonte-fora-da-direcao' "$UR" &&
+    grep -qF 'bloco `style`' "$REPO/docs/reference.md" || ui_bad+="estilo medido e M10 "
   for id in M10 M11 M12; do grep -qE "^- \*\*$id\*\* " "$SR" || ui_bad+="spec-reviewer:$id "; done
   grep -qE '^- \*\*M12\*\* .*DESIGN\.md.*amostra.*kit-design.*biblioteca' "$SR" || ui_bad+="spec-reviewer:M12 sem direção "
   # A /kit:spec e a segunda porta da direcao visual: segue os passos da /kit:design por dentro.

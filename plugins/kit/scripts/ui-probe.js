@@ -478,6 +478,137 @@
     return Object.keys(found).map(Number).filter(function (n) { return n >= 200 && n <= 4000; }).sort(function (a, b) { return a - b; });
   }
 
+  // Familias que o navegador ja traz ou que o sistema operacional usa como padrao. Tela so com elas nao tem
+  // tipografia escolhida.
+  // GENERIC: palavras-chave do CSS que o navegador resolve em todo sistema. As de um sistema so (-apple-system,
+  // ui-serif) passam pela medicao como qualquer familia local.
+  var GENERIC = /^(serif|sans-serif|monospace|cursive|fantasy|system-ui|math|emoji|fangsong)$/;
+  var SYSTEM = /^(-apple-system|blinkmacsystemfont|ui-serif|ui-sans-serif|ui-monospace|ui-rounded|segoe ui|segoe ui emoji|segoe ui symbol|apple color emoji|noto color emoji|roboto|helvetica neue|helvetica|arial|noto sans|liberation sans|liberation serif|liberation mono|dejavu sans|dejavu serif|dejavu sans mono|ubuntu|cantarell|oxygen|times new roman|times|courier new|courier|menlo|monaco|consolas|sf pro text|sf pro display|san francisco)$/;
+
+  function families(stack) {
+    var list = [];
+    var re = /\s*(?:"([^"]*)"|'([^']*)'|([^,]+))\s*(?:,|$)/g;
+    var m;
+    while ((m = re.exec(stack)) && m[0]) {
+      var f = (m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]).trim();
+      if (f) list.push(f);
+    }
+    return list;
+  }
+
+  // Familia de @font-face vale se alguma face dela carregou (ou ainda carrega). Familia local e conferida
+  // pela largura do texto: se nao muda em relacao a fonte de reserva, nao esta instalada.
+  var faceStatus = null;
+  var localCache = {};
+  function available(family) {
+    var key = family.toLowerCase();
+    if (GENERIC.test(key)) return true;
+    if (!faceStatus) {
+      faceStatus = {};
+      try {
+        doc.fonts.forEach(function (face) {
+          var name = face.family.replace(/^["']|["']$/g, "").toLowerCase();
+          var ok = face.status === "loaded" || face.status === "loading";
+          faceStatus[name] = !!(faceStatus[name] || ok);
+        });
+      } catch (e) { /* sem FontFaceSet */ }
+    }
+    if (key in faceStatus) return faceStatus[key];
+    if (key in localCache) return localCache[key];
+    if (!canvas) {
+      canvas = doc.createElement("canvas");
+      canvas.width = canvas.height = 1;
+    }
+    var ctx = canvas.getContext("2d", { willReadFrequently: true });
+    var sample = "mmmmmmmmmmlliWQ@#0";
+    var quoted = /^(-apple-system|blinkmacsystemfont|ui-[a-z]+)$/.test(key) ? key : '"' + family.replace(/"/g, "") + '"';
+    var found = false;
+    var bases = ["monospace", "serif"];
+    for (var i = 0; i < bases.length && !found; i++) {
+      ctx.font = "72px " + bases[i];
+      var w0 = ctx.measureText(sample).width;
+      ctx.font = "72px " + quoted + ", " + bases[i];
+      found = ctx.measureText(sample).width !== w0;
+    }
+    localCache[key] = found;
+    return found;
+  }
+
+  var stackCache = {};
+  function rendered(stack) {
+    if (stackCache[stack]) return stackCache[stack];
+    var list = families(stack);
+    // Nenhuma familia da pilha existe: o navegador desenha na fonte padrao, serif.
+    var out = { family: "serif", skipped: [] };
+    for (var i = 0; i < list.length; i++) {
+      if (available(list[i])) {
+        out.family = list[i];
+        break;
+      }
+      out.skipped.push(list[i]);
+    }
+    stackCache[stack] = out;
+    return out;
+  }
+
+  function top(counts, total, n, label) {
+    return Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; }).slice(0, n).map(function (k) {
+      var o = {};
+      o[label] = label === "px" ? Number(k) : k;
+      o.share = Math.round((counts[k] / total) * 100);
+      return o;
+    });
+  }
+
+  // Estilo do texto visivel, pesado pela quantidade de caracteres: familia que o navegador de fato usou
+  // (a primeira da pilha que existe), cor do texto, cor do fundo e tamanho.
+  function collectStyle() {
+    var nodes = all("body *");
+    var fonts = {}, colors = {}, bgs = {}, sizes = {}, system = {}, skipped = {};
+    var total = 0, bgTotal = 0;
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var tag = el.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT" || tag === "OPTION" || tag === "TEMPLATE") continue;
+      var own = "";
+      for (var n = el.firstChild; n; n = n.nextSibling) if (n.nodeType === 3) own += n.nodeValue;
+      own = own.replace(/\s+/g, "");
+      if (own.length < 2 || !visible(el) || el.closest("[aria-hidden='true']")) continue;
+      var cs = getComputedStyle(el);
+      var weight = own.length;
+      var r = rendered(cs.fontFamily);
+      var lower = r.family.toLowerCase();
+      var isSystem = GENERIC.test(lower) || SYSTEM.test(lower);
+      // Fonte de icone com ligadura (material-icons) nao e texto. Vale a familia que renderizou, nao a
+      // pilha: a do Tailwind e a do Bootstrap terminam em "Segoe UI Symbol".
+      if (!isSystem && /icon|symbol|awesome/i.test(lower)) continue;
+      fonts[r.family] = (fonts[r.family] || 0) + weight;
+      system[r.family] = isSystem;
+      for (var k = 0; k < r.skipped.length; k++) skipped[r.skipped[k]] = 1;
+      var size = Math.round(parseFloat(cs.fontSize));
+      sizes[size] = (sizes[size] || 0) + weight;
+      total += weight;
+      var bg = background(el);
+      var fg = rgba(cs.color);
+      if (bg && fg[3] > 0) {
+        var shown = hex(blend(fg, bg.color));
+        colors[shown] = (colors[shown] || 0) + weight;
+        var b = hex(bg.color);
+        bgs[b] = (bgs[b] || 0) + weight;
+        bgTotal += weight;
+      }
+    }
+    if (!total) return { fonts: [], colors: [], backgrounds: [], sizes: [], unloaded: [], allSystem: false };
+    return {
+      allSystem: Object.keys(system).every(function (f) { return system[f]; }),
+      fonts: top(fonts, total, 6, "family").map(function (f) { f.system = system[f.family]; return f; }),
+      colors: bgTotal ? top(colors, bgTotal, 5, "color") : [],
+      backgrounds: bgTotal ? top(bgs, bgTotal, 5, "color") : [],
+      sizes: top(sizes, total, 6, "px"),
+      unloaded: Object.keys(skipped).filter(function (f) { return !GENERIC.test(f.toLowerCase()) && !SYSTEM.test(f.toLowerCase()); }).slice(0, 6),
+    };
+  }
+
   var out = { width: vw, height: window.innerHeight, scrollWidth: root.scrollWidth, scrollHeight: root.scrollHeight };
   try {
     checkOverflow();
@@ -489,6 +620,7 @@
       checkContrast();
       checkDocument();
       out.title = doc.title || "";
+      if (opts.style) out.style = collectStyle();
     }
     if (opts.breakpoints) {
       out.breakpoints = collectBreakpoints();

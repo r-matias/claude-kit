@@ -4,6 +4,17 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.10.6
+
+### Entrou
+
+- **Estilo medido na captura.** Cada tela do `report.json` traz o bloco `style`, medido no maior tamanho sobre o texto visível: a família que o navegador de fato usou (a primeira da pilha que existe, não a declarada), as famílias declaradas antes dela que não carregaram, as cores de texto e de fundo mais usadas e os tamanhos de fonte, cada um com a parte do texto.
+- **`conferir [M10] fonte-fora-da-direcao`.** Em projeto com rule de direção (`kit-design*.md` com o cabeçalho `kit:design`), tela em que todo o texto saiu em fonte genérica ou de sistema, nenhuma da linha `Tipografia:` da rule, aparece no resumo da captura. O detalhe diz quando a família da direção foi declarada e não carregou.
+
+### Mudou
+
+- **`kit:ui-reviewer` usa o bloco `style` como evidência do `M10`** para fonte e cor, em vez de só olhar a imagem.
+
 ## 0.10.5
 
 ### Entrou

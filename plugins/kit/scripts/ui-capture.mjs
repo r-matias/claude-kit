@@ -168,6 +168,57 @@ function loadUi(kitPath) {
     screenshot: typeof ui.screenshot === "string" ? ui.screenshot.trim() : "",
     viewports: parsed,
     root: path.resolve(path.dirname(kitPath), ".."),
+    direction: loadDirection(path.resolve(path.dirname(kitPath), "..")),
+  };
+}
+
+// Familias da direcao visual: a linha "Tipografia:" de cada .claude/rules/kit-design*.md com o cabecalho
+// kit:design, nomes entre crases antes do travessao (variavel CSS e pasta ficam de fora). Rule sem o
+// cabecalho e do projeto e nao conta.
+function loadDirection(root) {
+  const dir = path.join(root, ".claude", "rules");
+  const rules = [];
+  const families = [];
+  let names = [];
+  try {
+    names = fs.readdirSync(dir).filter((f) => /^kit-design(-[^/\\]+)?\.md$/.test(f)).sort();
+  } catch {
+    return { rules, families };
+  }
+  for (const name of names) {
+    let text = "";
+    try {
+      text = fs.readFileSync(path.join(dir, name), "utf8");
+    } catch {
+      continue;
+    }
+    if (!/^<!-- kit:design v\d+ -->$/m.test(text.replace(/\r/g, ""))) continue;
+    rules.push(`.claude/rules/${name}`);
+    const line = text.split(/\r?\n/).find((l) => /^\s*-\s*Tipografia:/.test(l));
+    if (!line) continue;
+    const head = line.split(/\s—\s/)[0];
+    for (const m of head.matchAll(/`([^`]+)`/g)) {
+      const f = m[1].trim().replace(/^["']|["']$/g, "");
+      if (!f || f.startsWith("--") || /[/\\<>]/.test(f)) continue;
+      if (!families.some((x) => x.toLowerCase() === f.toLowerCase())) families.push(f);
+    }
+  }
+  return { rules, families };
+}
+
+// conferir [M10]: o projeto tem direcao com familia propria e todo o texto visivel saiu em fonte generica
+// ou de sistema, nenhuma delas da direcao.
+function directionFinding(ui, style) {
+  const { families, rules } = ui.direction;
+  if (!families.length || !style || !style.allSystem) return null;
+  const chosen = new Set(families.map((f) => f.toLowerCase()));
+  if (style.fonts.some((f) => chosen.has(f.family.toLowerCase()))) return null;
+  const used = style.fonts.map((f) => `${f.family} ${f.share}%`).join(", ");
+  const missing = (style.unloaded || []).filter((f) => chosen.has(f.toLowerCase()));
+  return {
+    level: "conferir", id: "M10", rule: "fonte-fora-da-direcao", where: "página", widths: "", count: 1,
+    detail: `todo o texto visível em fonte genérica ou de sistema (${used}); a direção (${rules.join(", ")}) usa ${families.join(", ")}` +
+      (missing.length ? `; declarada na página e não carregada: ${missing.join(", ")}` : ""),
   };
 }
 
@@ -1165,8 +1216,8 @@ async function captureScreen(page, ctx, screen) {
   const { ui, args, probe, outDir } = ctx;
   const found = new Findings();
   const fullWidths = ui.viewports.map((v) => v.width);
-  const probeAt = async (full, breakpoints, only) => {
-    const r = await page.evaluate(`(${probe})(${JSON.stringify({ full, breakpoints, only })})`);
+  const probeAt = async (full, breakpoints, only, style) => {
+    const r = await page.evaluate(`(${probe})(${JSON.stringify({ full, breakpoints, only, style })})`);
     if (!r || r.error) screen.incomplete ||= `sondagem falhou: ${r ? String(r.error).split("\n")[0] : "sem resultado"}`;
     return r || { findings: [] };
   };
@@ -1216,12 +1267,14 @@ async function captureScreen(page, ctx, screen) {
       }
       for (const d of page.dialogs) warn(screen, `a página abriu um diálogo (${d}); a captura o fechou para seguir`);
     }
-    const r = await probeAt(true, true);
+    // Estilo so no maior tamanho: e o que vai para o relatorio.
+    const r = await probeAt(true, true, undefined, vp === ui.viewports[ui.viewports.length - 1]);
     if (r.dark) darkAware = true;
     for (const t of r.darkToggles || []) toggles.add(t);
     found.add(r.findings, vp.width);
     breakpoints = [...new Set([...breakpoints, ...(r.breakpoints || [])])];
     if (r.title && !screen.title) screen.title = r.title;
+    if (r.style) screen.style = { width: vp.width, ...r.style };
     for (const c of page.console) if (!screen.console.includes(c)) screen.console.push(c);
     for (const n of page.network) if (!screen.network.includes(n)) screen.network.push(n);
     if (ctx.axe && (vp === ui.viewports[0] || vp === ui.viewports[ui.viewports.length - 1])) {
@@ -1290,6 +1343,8 @@ async function captureScreen(page, ctx, screen) {
     }
   }
   screen.findings.push(...found.result(fullWidths, allWidths, axeWidths));
+  const off = directionFinding(ui, screen.style);
+  if (off) screen.findings.push(off);
   // Tema escuro: pela media query do CSS (certo) ou, sem ela, pela classe ou pelo atributo de tema que as
   // regras do CSS usam (.dark, [data-theme=dark]). No segundo caso quem liga o tema e a captura, entao o
   // contraste sai como conferir.
