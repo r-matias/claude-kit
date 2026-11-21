@@ -4,6 +4,16 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.17
+
+### Entrou
+
+- **Modelo de ameaça no README.** Uma seção só diz o que o kit garante e o que não garante: protege contra acidentes e contornos do próprio Claude, não contra código malicioso, script gravado e executado, leitura indireta de segredo nem ferramentas fora dos guardas (PowerShell, servidores MCP). Traz as camadas por plataforma (guardas, grupos de permissão, sandbox, revisão humana; o Windows nativo fica sem sandbox) e recomendações: permissões mínimas, credencial de produção fora da máquina de desenvolvimento e revisão humana do que tem alto impacto.
+
+### Mudou
+
+- O "Não cobre" do `guard-bash.sh` em `docs/reference.md` passa a citar os comandos git que descartam ou apagam e que o guarda não confere: `git push --prune`, `git tag -d`, `git branch -M`/`-C`/`-f`, `git prune`, `git gc --prune=<data>`, `git rm -f`, `git worktree remove --force`, `git update-ref -d` e `git filter-branch`.
+
 ## 0.9.16
 
 ### Entrou

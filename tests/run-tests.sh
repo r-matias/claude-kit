@@ -2063,6 +2063,17 @@ if [ -z "$FILTER" ]; then
     [ "$(grep -c 'run-skill-generator' "$REPO/README.md")" = "$(grep -c 'run-skill-generator' <<<"$readme_adv")" ]; then
     ok "README: /run-skill-generator e /verify só em Avançado (opcional)"
   else ko "README: /run-skill-generator e /verify só em Avançado (opcional)" "$(grep -n 'run-skill-generator\|/verify' "$REPO/README.md")"; fi
+  # Limites do kit num lugar so: secao Modelo de ameaca, apontada pelos Guardas.
+  tm_bad=""
+  readme_tm="$(awk '/^## Modelo de ameaça$/ { on = 1; next } on && /^## / { on = 0 } on' "$REPO/README.md")"
+  for want in '**Protege:**' '**Não protege:**' '**Camadas por plataforma:**' '**Recomendações:**' 'Windows nativo' 'docs/reference.md#hooks'; do
+    grep -qF -- "$want" <<<"$readme_tm" || tm_bad+="'$want' "
+  done
+  readme_auto="$(awk '/^## O que o kit faz sozinho$/ { on = 1; next } on && /^## / { on = 0 } on' "$REPO/README.md")"
+  grep -qF '[Modelo de ameaça](#modelo-de-ameaça)' <<<"$readme_auto" || tm_bad+="link-guardas "
+  grep -qxF '## Hooks' "$REPO/docs/reference.md" || tm_bad+="reference:hooks "
+  if [ -z "$tm_bad" ]; then ok "README: modelo de ameaça com protege, não protege, camadas e recomendações"
+  else ko "README: modelo de ameaça com protege, não protege, camadas e recomendações" "$tm_bad"; fi
   manual="$(grep -rnE 'kit-settings\.suggested|merge-json\.sh --additions|aplique a sugestão|aplica se quiser|Mescle .*user-settings' \
     "$REPO/README.md" "$REPO/CONTRIBUTING.md" "$REPO/docs" "$REPO/plugins/kit" || true)"
   if [ -z "$manual" ]; then ok "nenhum resto do fluxo de sugestão (kit-settings.suggested) em docs, skills e scripts"; else ko "nenhum resto do fluxo de sugestão" "$manual"; fi

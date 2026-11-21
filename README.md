@@ -196,11 +196,41 @@ Sem você chamar nada, em todo projeto com o kit ligado:
   - escrita em `.env`, chaves, `keys/` e `secrets/`, e nos caminhos protegidos do projeto (código gerado, migrações), tanto pelas ferramentas de edição quanto pelo shell (`>`, `tee`, `sed -i`, `cp`, `mv`...);
   - com o grupo `segredos` marcado no `/kit:init`, ler esses arquivos pelo shell (`cat .env`, `grep KEY .env`, `source .env`, `curl -d @.env`...), além do `Read` que o grupo já nega. Carregar o `.env` pelo script do projeto (`node --env-file .env`, `docker compose --env-file .env`) continua liberado.
 
-  O Claude recebe o motivo e a instrução de não buscar o mesmo efeito por outro comando, interpretador ou ferramenta: ele explica o que queria fazer e pede que você rode manualmente, se for intencional. Os guardas olham só as ferramentas `Bash` e de edição, e o Bash por padrões de comando: script gravado e depois executado (`python limpa.py`), código inline com API que o guarda não lista, escrita feita por programa (um gerador, um script) e leitura indireta de segredo (`grep -r KEY .`, `env`, um script que imprime o arquivo) não são barrados.
+  O Claude recebe o motivo e a instrução de não buscar o mesmo efeito por outro comando, interpretador ou ferramenta: ele explica o que queria fazer e pede que você rode manualmente, se for intencional. O que os guardas não barram está em [Modelo de ameaça](#modelo-de-ameaça).
 - **Formatação.** Cada arquivo editado passa pelo formatter do projeto, se o `kit.json` declarar um.
 - **Gate de fim de turno.** Se o Claude mexeu em código, os comandos de verificação do projeto (build, testes relacionados, lint) rodam antes de ele encerrar. Rodam todos, mesmo depois de uma falha, e as falhas chegam juntas numa mensagem só: ele recebe os erros e continua corrigindo. O gate também confere regras do projeto, como "mudou a tela, atualize o manual", "todo texto existe nas 3 línguas" e "nenhuma supressão de lint nem teste pulado em linha nova" (`diff_deny`, que olha só o que foi adicionado no turno).
 - **Avisos.** Regras leves viram um lembrete para o Claude na hora da edição, sem bloquear nada: acoplamentos ("se mudou a API, confira o site"), código de produção alterado sem teste e padrões de `diff_deny` com `level: "warn"`.
 - **Contexto da sessão.** No início de cada sessão o Claude recebe a branch, os arquivos alterados e as tarefas pendentes do plano ativo. Antes de uma compactação, o kit salva esse estado e o devolve depois. Se faltar `jq` ou `git`, ou se o Claude Code estiver desatualizado, o aviso aparece aqui, com o comando para corrigir. O mesmo vale para um `docs/codemap.md` muito atrás do código (o aviso sugere `/kit:map --update`) e para um `kit.json` com problema: JSON inválido, verificação que cita comando inexistente, ou comando `lint` que ficou fora do gate, caso em que nenhum passo do kit roda o lint.
+
+## Modelo de ameaça
+
+O kit protege contra acidentes e contra contornos do próprio Claude. Ele não é isolamento: guardas e permissões leem o texto da chamada, não o que um programa faz depois de iniciado. Isolamento de disco e rede é o sandbox do Claude Code, onde ele existe.
+
+**Protege:**
+- **Acidentes.** Comando destrutivo pedido pelo Claude (`rm -rf` fora do projeto, git que descarta trabalho ou apaga a rede de recuperação, SQL destrutivo, `curl | sh`) e escrita em segredo ou caminho protegido, pelas ferramentas de edição e pelo shell.
+- **Contornos do próprio Claude.** Depois de um bloqueio, o mesmo efeito pelas vias mais à mão: escrita pelo shell (`echo > .env`), leitura pelo shell com o grupo `segredos` (`cat .env`), `cmd /c` e `powershell -Command` dentro do Bash, e código inline de interpretador com API destrutiva (pede confirmação). O motivo do bloqueio manda não buscar outra via e pedir a você.
+
+**Não protege:**
+- **Código malicioso.** Dependência, script do projeto, servidor MCP ou texto lido de fora (página, issue, arquivo) que induz o Claude a algo que não casa com nenhum padrão dos guardas.
+- **Script gravado e depois executado** (`python limpa.py`, `powershell -File x.ps1`) e **escrita feita por programa** (um gerador, um script que grava arquivo): o guarda vê o comando, não o que ele faz.
+- **Leitura indireta de segredo** (`grep -r KEY .`, `env`, um script que imprime o arquivo) e qualquer leitura pelo shell sem o grupo `segredos`.
+- **Ferramentas fora dos guardas.** Os guardas olham só `Bash` e `Edit`/`Write`/`MultiEdit`/`NotebookEdit`. A ferramenta PowerShell (negada inteira pelo grupo `powershell` no Windows nativo) e as ferramentas de servidores MCP não passam por eles.
+- **Padrão que não está na lista.** O guarda de comando é lista de padrões; o que ele deixa passar está no "Não cobre" da linha do `guard-bash.sh` em [docs/reference.md](docs/reference.md#hooks).
+
+**Camadas por plataforma:**
+
+| Camada | O que segura | macOS | Linux / WSL2 | Windows nativo |
+| --- | --- | --- | --- | --- |
+| Guardas (hooks do kit) | Padrões destrutivos pelo `Bash`, escrita em segredo ou caminho protegido pelo `Bash` e pelas ferramentas de edição e, com o grupo `segredos`, leitura de segredo pelo `Bash` | Sim | Sim | Sim (a ferramenta PowerShell fica fora) |
+| Grupos de permissão (`permissions.deny`/`ask` do projeto) | `Read` de segredo, git destrutivo, `push`, `curl`/`wget`, ferramenta PowerShell | Sim | Sim | Sim |
+| Sandbox (grupo `sandbox`) | Disco e rede de tudo o que o Bash inicia, inclusive script e programa, salvo os comandos de `sandbox.excludedCommands` e o que você confirmar para rodar fora dele; esconde `~/.ssh`, `~/.aws`, `GITHUB_TOKEN` e `NPM_TOKEN` | Sim | Sim, com `bwrap` e `socat` | Não existe; use o WSL2 |
+| Revisão humana | Confirmações (`ask`) dos guardas e das permissões, diff antes do commit (o kit nunca commita) | Sim | Sim | Sim |
+
+**Recomendações:**
+- **Permissões mínimas.** Marque os grupos no `/kit:init` e não alargue o `allow` com curinga (`Bash(*)`). Evite `bypassPermissions`: nesse modo o Claude Code não pede confirmação, então as regras `ask` das permissões (`push`, rodar fora do sandbox) podem passar direto; só o guarda troca o pedido de confirmação dele por negação.
+- **Credencial de produção fora do ambiente.** O Claude roda com o seu usuário: o que o seu terminal alcança, um comando dele também alcança. Na máquina de desenvolvimento, só credencial de desenvolvimento; a de produção fica num cofre ou no CI, não em `.env`, `~/.aws` ou variável de ambiente da sessão.
+- **Sandbox onde existe.** No macOS e no Linux, marque o grupo `sandbox`; no Windows, prefira o WSL2.
+- **Revisão humana do que tem alto impacto.** Migração de banco, infraestrutura, permissões, deploy e qualquer coisa que toque dados de produção: leia o diff e confira o comando antes de confirmar ou commitar.
 
 ## Interface
 
