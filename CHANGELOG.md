@@ -4,6 +4,12 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.10.7
+
+### Entrou
+
+- **Teste ao vivo da direção visual** (`tests/run-design-live-test.sh`, para quem mantém o kit). Roda `/kit:design app` e `/kit:spec redesenhar o painel` num projeto com tela e confere que as amostras saem em paralelo, em HTML autocontido, e que nenhum arquivo do projeto muda. Quando a gravação acontece, confere também a rule de direção com cabeçalho e `paths:`, o `DESIGN.md` com a amostra ao lado e a SPEC apontando a amostra. Em `claude -p`, porém, a escrita em `.claude/` é sempre negada: rule, `DESIGN.md` e SPEC saem como puladas, e as amostras são conferidas pelo conteúdo que os subagents tentaram gravar. Nesse cenário, as duas skills param sem gravar nada e dizem por quê. Na sessão interativa, o Claude Code pede aprovação para cada amostra e para a rule.
+
 ## 0.10.6
 
 ### Entrou
