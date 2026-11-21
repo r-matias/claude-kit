@@ -4,6 +4,19 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.10.4
+
+### Entrou
+
+- **`kit:ui-reviewer` cobra a direção visual.** Com `.claude/rules/kit-design.md` no projeto, tela com família de fonte, cor ou composição fora da rule sai com `MAJOR [M10]`, e redesenho que não chega à estrutura da amostra escolhida (hierarquia, agrupamento, ação principal, tela pequena) sai com `MAJOR [M11]`. A direção é cobrada como contrato; se ela é boa, o revisor não julga. Sem rule de direção, os dois ids não se aplicam.
+
+### Mudou
+
+- **`M3` do `kit:ui-reviewer` em redesenho.** Também é `M3` o componente novo criado ao lado do antigo que ele substitui, com o antigo ainda em uso, e o estilo da amostra colado dentro de uma tela em vez de ir para token ou componente.
+- **Desvio da direção é `M10`, não `M4`.** Com direção registrada, o desvio dela sai como `M10`; o `M4` (tela que destoa das outras) continua para o que a rule não define. Rule `kit-design*.md` sem o cabeçalho `kit:design` é do projeto e não conta como direção.
+
+Ainda não ligado nesta versão: o `/kit:init` e o `ui.sh status` ainda não conhecem a rule de direção. O revisor lê o código da amostra; não a vê renderizada.
+
 ## 0.10.3
 
 ### Entrou

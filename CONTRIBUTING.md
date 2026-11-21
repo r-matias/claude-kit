@@ -83,7 +83,7 @@ bash tests/run-skills-live-test.sh      # skills carregam sem commits e fora de 
 bash tests/run-guards-live-test.sh      # guarda ausente bloqueia (onFailure), com controle e contraprova; no Windows, Remove-Item pela ferramenta PowerShell
 bash tests/run-plan-live-test.sh [--keep]   # /kit:plan decide lacuna técnica, pergunta produto e tamanho; /kit:spec grande pergunta a quebra, pequena grava e revisa
 bash tests/run-drift-live-test.sh [--keep]   # /kit:drift: checker só na SPEC concluída, DRIFT.md com [D2] e puladas
-bash tests/run-reviewers-live-test.sh [--keep] [filtro]   # calibração dos revisores e do drift-checker; "diff" roda só os 3 casos do code-reviewer, "tela" os 4 de interface
+bash tests/run-reviewers-live-test.sh [--keep] [filtro]   # calibração dos revisores e do drift-checker; "diff" roda só os 3 casos do code-reviewer, "tela" os 5 de interface
 bash tests/run-permissions-live-test.sh [--keep]   # ${CLAUDE_PLUGIN_ROOT} e ${CLAUDE_SKILL_DIR} em allowed-tools; Agent(plugin:x) em deny
 bash tests/run-execute-live-test.sh [--keep]   # /kit:execute: paralelo disjunto, serialização, checkpoint com revisão
 bash tests/run-ui-live-test.sh [--keep] [init|execute]   # interface: /kit:init propõe o ui e a rule; /kit:execute captura e chama o kit:ui-reviewer

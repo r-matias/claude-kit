@@ -10,9 +10,10 @@
 # nova sai com [M5] a [M8].
 # Interface: tela com tabela de largura fixa, botao so com icone, data sem contraste e sem estado vazio,
 # capturada de verdade, sai com [B1], [B2], [B3] e [M1]; a tela limpa, aprovado. SPEC de tela sem
-# estados sai com [M10]; a SPEC de tela completa, aprovado. Os casos "tela-ruim" e "tela-limpa" exigem node e um navegador Chromium.
-# Custa uma sessao do Claude Code por caso (quinze), em paralelo. O filtro roda so os casos cujo nome
-# contem o texto: "diff" calibra so o code-reviewer (tres sessoes); "plano", "spec" e "drift" os demais; "tela" roda os quatro casos de interface.
+# estados sai com [M10]; a SPEC de tela completa, aprovado. Tela correta, mas com os titulos na familia do texto
+# contra a rule de direcao (kit-design.md), sai com [M10] do ui-reviewer. Os casos "tela-*" exigem node e um navegador Chromium.
+# Custa uma sessao do Claude Code por caso (dezesseis), em paralelo. O filtro roda so os casos cujo nome
+# contem o texto: "diff" calibra so o code-reviewer (tres sessoes); "plano", "spec" e "drift" os demais; "tela" roda os cinco casos de interface.
 # Uso: tests/run-reviewers-live-test.sh [--keep] [filtro]
 set -u
 
@@ -25,7 +26,7 @@ for a in "$@"; do
   case "$a" in --keep) KEEP=1 ;; *) FILTER="$a" ;; esac
 done
 
-ALL_CASES="plano-ruim plano-limpo plano-grande plano-grande-decidido diff-ruim diff-limpo diff-qualidade spec-ruim spec-limpa spec-tela-ruim spec-tela-limpa drift-limpo drift-ruim tela-ruim tela-limpa"
+ALL_CASES="plano-ruim plano-limpo plano-grande plano-grande-decidido diff-ruim diff-limpo diff-qualidade spec-ruim spec-limpa spec-tela-ruim spec-tela-limpa drift-limpo drift-ruim tela-ruim tela-limpa tela-direcao"
 CASES=""
 for c in $ALL_CASES; do
   case "$c" in *"$FILTER"*) CASES="$CASES $c" ;; esac
@@ -125,8 +126,9 @@ setup_ui_spec() {
   git -C "$d" -c core.autocrlf=false -c user.name=kit-test -c user.email=kit@test commit -qm base
 }
 
-# Uso: setup_ui <nome> <limpa|ruim>. Como setup_ui_spec, mais o plano concluido, a tela implementada
+# Uso: setup_ui <nome> <limpa|ruim|direcao>. Como setup_ui_spec, mais o plano concluido, a tela implementada
 # por tests/reviewers/ui/<variante> e a captura de verdade em .claude/state/ui/final (ignorada pelo git).
+# Variante com rule de direcao: a SPEC passa a cita-la em "Padrão visual:".
 # Devolve 3 se a maquina nao tem como capturar.
 setup_ui() {
   local d="$W/$1" code
@@ -134,8 +136,11 @@ setup_ui() {
   sed 's/^- \[ \]/- [x]/' "$HERE/ui/specs/avisos/PLAN.md" >"$d/docs/specs/avisos/PLAN.md"
   cp -r "$FX/ui/limpa/." "$d/"
   if [ "$2" != "limpa" ]; then
-    cp -r "$FX/ui/$2/." "$d/"
     rm -f "$d/web/avisos.css"
+    cp -r "$FX/ui/$2/." "$d/"
+  fi
+  if [ -f "$FX/ui/$2/.claude/rules/kit-design.md" ]; then
+    sed 's/^- Padrão visual: /- Padrão visual: direção em `.claude\/rules\/kit-design.md`; /' "$d/docs/specs/avisos/SPEC.md" >"$d/spec.tmp" && mv "$d/spec.tmp" "$d/docs/specs/avisos/SPEC.md"
   fi
   git -C "$d" -c core.autocrlf=false add -A
   git -C "$d" -c core.autocrlf=false -c user.name=kit-test -c user.email=kit@test commit -q --amend -m base
@@ -256,7 +261,7 @@ want drift-ruim && setup_drift drift-ruim ruim
 want spec-tela-ruim && setup_ui_spec spec-tela-ruim tela-ruim
 want spec-tela-limpa && setup_ui_spec spec-tela-limpa
 UI_SKIP=""
-for c in tela-ruim tela-limpa; do
+for c in tela-ruim tela-limpa tela-direcao; do
   want "$c" || continue
   if ! setup_ui "$c" "${c#tela-}"; then
     echo "pulado $c: sem meio de captura nesta máquina ($(tail -n 1 "$W/$c.capture"))"
@@ -275,11 +280,13 @@ for c in spec-tela-ruim spec-tela-limpa; do
   want "$c" || continue
   run_review "$c" "Chame o subagent kit:spec-reviewer para revisar $UI_SPEC. Não revise você mesmo e não edite nada. Quando ele responder, repita a resposta dele literalmente, sem comentar." &
 done
-for c in tela-ruim tela-limpa; do
+for c in tela-ruim tela-limpa tela-direcao; do
   want "$c" || continue
   files="web/avisos.html, web/avisos.js, web/index.html"
-  [ "$c" = "tela-limpa" ] && files="$files, web/avisos.css"
-  run_review "$c" "Chame o subagent kit:ui-reviewer para revisar a tela de avisos. SPEC em $UI_SPEC e plano em $UI_PLAN. Arquivos de interface alterados: $files. Captura em .claude/state/ui/final (report.json e imagens). Não revise você mesmo e não edite nada. Quando ele responder, repita a resposta dele literalmente, sem comentar." &
+  [ "$c" = "tela-ruim" ] || files="$files, web/avisos.css"
+  direction=""
+  [ "$c" = "tela-direcao" ] && direction=" Rule de direção visual: .claude/rules/kit-design.md."
+  run_review "$c" "Chame o subagent kit:ui-reviewer para revisar a tela de avisos. SPEC em $UI_SPEC e plano em $UI_PLAN. Arquivos de interface alterados: $files. Captura em .claude/state/ui/final (report.json e imagens).$direction Não revise você mesmo e não edite nada. Quando ele responder, repita a resposta dele literalmente, sem comentar." &
 done
 for c in drift-limpo drift-ruim; do
   want "$c" || continue
@@ -348,6 +355,10 @@ fi
 if want tela-limpa; then
   echo "tela limpa"
   expect_clean "ui limpa" "$(review_text "$W/tela-limpa.jsonl" kit:ui-reviewer)"
+fi
+if want tela-direcao; then
+  echo "tela correta, com os títulos na família do texto contra a rule de direção"
+  expect_bad "ui fora da direção" "$(review_text "$W/tela-direcao.jsonl" kit:ui-reviewer)" M10
 fi
 if want drift-limpo; then
   echo "drift: implementação fiel à SPEC"

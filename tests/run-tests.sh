@@ -2230,7 +2230,11 @@ if [ -z "$FILTER" ]; then
   UR="$REPO/plugins/kit/agents/ui-reviewer.md"
   EXE_DIR="$REPO/plugins/kit/skills/execute"
   ui_bad=""
-  for id in B1 B2 B3 M1 M2 M3 M4 M5 M6 M7 M8 M9; do grep -qE "^- \*\*$id\*\* " "$UR" || ui_bad+="ui-reviewer:$id "; done
+  for id in B1 B2 B3 M1 M2 M3 M4 M5 M6 M7 M8 M9 M10 M11; do grep -qE "^- \*\*$id\*\* " "$UR" || ui_bad+="ui-reviewer:$id "; done
+  # A direcao registrada e contrato: M10 cobra a rule, M11 a amostra do redesenho; sem direcao, nenhum dos dois.
+  grep -qE '^- \*\*M10\*\* .*kit-design' "$UR" && grep -qE '^- \*\*M11\*\* .*amostra.*DESIGN\.md' "$UR" &&
+    grep -qF 'desvio dela é M10, não M4' "$UR" && grep -qF 'M10 e M11 não se aplicam' "$UR" || ui_bad+="ui-reviewer:direção "
+  grep -qxF '<!-- kit:design v1 -->' "$REPO/tests/reviewers/ui/direcao/.claude/rules/kit-design.md" || ui_bad+="fixture:direcao "
   tr -d '\r' <"$UR" | grep -qx 'tools: Read, Grep, Glob' || ui_bad+="ui-reviewer:tools "
   grep -qF '`reprovado`' "$UR" && grep -qF '`aprovado`' "$UR" && grep -qF '## Calibração' "$UR" && grep -qF 'report.json' "$UR" &&
     grep -qF 'revisão só pelo código (sem captura)' "$UR" || ui_bad+="ui-reviewer:saída "

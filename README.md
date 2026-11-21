@@ -260,7 +260,7 @@ Em projeto com tela, o kit trata interface como trata código: o que dá para me
 - **No plano.** Cada estado de tela vira uma verdade a provar, e a tarefa de tela aponta a tela ou o componente existente que serve de molde.
 - **Ao escrever a tela.** O `/kit:init` grava `.claude/rules/kit-ui.md`, que o Claude recebe sempre que mexe em arquivo de interface, dentro ou fora do `/kit:execute`: reuso antes de criar, token no lugar de valor solto, estados, tela pequena primeiro, acessibilidade (WCAG 2.2 AA) e a documentação da versão instalada da biblioteca de componentes.
 - **Captura em todos os tamanhos.** Um script sobe o app, abre cada tela num navegador headless e percorre de 320 a 1920px: larguras padrão, os tamanhos de `ui.viewports` e os pontos de quebra do CSS da própria página (um antes, um depois). Em cada largura ele mede rolagem horizontal e alvo de toque pequeno; em cada tamanho de `ui.viewports`, também controle sem nome acessível, contraste de texto, imagem sem texto alternativo e erro de console ou de requisição. Página com tema escuro tem o contraste medido também no escuro. O resultado sai em texto, com a faixa de larguras de cada problema (`rolagem-horizontal em 320–600px: table.pedidos (600px)`), e em imagens.
-- **Revisão.** No fim de cada wave com tela, o `/kit:execute` roda só a medição e corrige o que ela acusa. Na wave final, o `kit:ui-reviewer` abre as imagens de cada tela em cada tamanho, lê a medição e o código e julga por regras de id fixo: estado da SPEC que falta, layout quebrado, valor solto onde há token, tela que destoa das outras, hierarquia, retorno das ações. Gosto pessoal não é achado.
+- **Revisão.** No fim de cada wave com tela, o `/kit:execute` roda só a medição e corrige o que ela acusa. Na wave final, o `kit:ui-reviewer` abre as imagens de cada tela em cada tamanho, lê a medição e o código e julga por regras de id fixo: estado da SPEC que falta, layout quebrado, valor solto onde há token, tela que destoa das outras, hierarquia, retorno das ações, tela fora da direção visual registrada. Gosto pessoal não é achado: a direção escolhida é cobrada, a qualidade dela não.
 
 A captura precisa de `node` 16 ou mais novo e de um navegador Chromium instalado (Chrome, Edge, Chromium ou o que o Playwright baixa). Nada do stack do projeto é usado. Sem um dos dois, a revisão de interface segue só pelo código, e o `/kit:init` avisa.
 
@@ -306,7 +306,9 @@ A amostra carrega a fonte por CDN, com fonte de reserva: sem rede, a tipografia 
 
 **Pela `/kit:spec`.** Feature com tela num projeto sem padrão visual (sem tema, tokens nem biblioteca) e sem direção: a `/kit:spec` pergunta se define a direção agora (recomendado: amostras com a tela da feature e a entrevista continua) ou segue sem. Projeto que já tem padrão segue o padrão: quem abre um redesenho é você. Em redesenho, a SPEC aponta a rule, o `DESIGN.md` e a amostra em `Padrão visual:`, e o revisor de SPEC cobra isso. Redesenho do app todo que vira épico tem a fundação (tokens, fontes e componentes base) na fatia 1.
 
-Nesta versão o uso da direção pelo `/kit:plan`, pelo `/kit:execute` e pelo revisor de interface ainda não está ligado; chega nas próximas.
+**Plano, execução e revisão.** O `/kit:plan` cita a rule de direção em toda tarefa de tela e abre a wave 1 com a fundação visual quando a direção ainda não está aplicada; o `/kit:execute` passa a rule aos subagents de tela. Na wave final, o `kit:ui-reviewer` cobra a direção como contrato: tela com fonte, cor ou composição fora da rule sai com `M10`, e redesenho que não chega à estrutura da amostra escolhida, com `M11`. Ele lê o código da amostra; não a vê renderizada.
+
+Nesta versão o `/kit:init` e o `ui.sh status` ainda não conhecem a rule de direção; chega na próxima.
 
 ## LSP de TypeScript com teto de memória
 
