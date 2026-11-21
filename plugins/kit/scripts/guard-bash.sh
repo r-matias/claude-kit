@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # PreToolUse/Bash: nega comandos destrutivos, inclusive dentro de sh -c, bash -c, cmd /c,
 # powershell -Command, $() e crases.
+# Modo PowerShell (SHELL_MODE=pwsh): chamado pelo guard-pwsh.sh para a ferramenta PowerShell. Muda a
+# leitura de aspas e crase e acrescenta regras proprias; todo desvio fica atras de SHELL_MODE.
 # Compativel com bash 3.2. Qualquer erro inesperado bloqueia (exit 2).
 set -u
 KIT_HERE="${BASH_SOURCE[0]%/*}"
 [ "$KIT_HERE" != "${BASH_SOURCE[0]}" ] || KIT_HERE="."
+# O modo vem de quem carregou o script, nunca do ambiente.
+SHELL_MODE=bash
+if [ "${#BASH_SOURCE[@]}" -gt 1 ] && [ "${BASH_SOURCE[1]##*/}" = "guard-pwsh.sh" ]; then SHELL_MODE=pwsh; fi
 . "$KIT_HERE/lib.sh"
 kit_guard_fail_closed
 kit_require_jq_strict --allow-jq-install
@@ -51,6 +56,57 @@ flatten() {
   while [ "${f%"$NL"}" != "$f" ]; do f="${f%"$NL"}"; done
   FLAT_OUT="$f"
 }
+# PowerShell: barra invertida e caminho, nao escape. Crase e o escape (fora de aspas simples): sai e
+# o caractere seguinte fica; `n, `t e afins e crase no fim da linha viram espaco. Aspas simples sao
+# literais. As aspas saem, como no bash. Anda de caractere especial em caractere especial.
+PS_SPECIAL="[\`$SQ$DQ]"
+flatten_ps() {
+  local rest="$1" f="" pre c nx q=""
+  # O PowerShell aceita aspas tipograficas como aspas e travessoes como o - dos parametros.
+  for c in $'\xe2\x80\x98' $'\xe2\x80\x99' $'\xe2\x80\x9a' $'\xe2\x80\x9b'; do rest=${rest//"$c"/$SQ}; done
+  for c in $'\xe2\x80\x9c' $'\xe2\x80\x9d' $'\xe2\x80\x9e'; do rest=${rest//"$c"/$DQ}; done
+  for c in $'\xe2\x80\x93' $'\xe2\x80\x94' $'\xe2\x80\x95'; do rest=${rest//"$c"/-}; done
+  case "$rest" in
+    *'`'*)
+      while [ -n "$rest" ]; do
+        if [ "$q" = "$SQ" ]; then
+          pre="${rest%%"$SQ"*}"
+          f+="$pre"
+          [ "$pre" != "$rest" ] || break
+          rest="${rest:$((${#pre} + 1))}"
+          q=""
+          continue
+        fi
+        pre="${rest%%$PS_SPECIAL*}"
+        f+="$pre"
+        [ "$pre" != "$rest" ] || break
+        c="${rest:${#pre}:1}"
+        rest="${rest:$((${#pre} + 1))}"
+        case "$c" in
+          '`')
+            [ -n "$rest" ] || break
+            nx="${rest:0:1}"
+            rest="${rest:1}"
+            case "$nx" in
+              [0abefnrtv] | "$NL" | "$CR") f+=' ' ;;
+              *) f+="$nx" ;;
+            esac ;;
+          "$SQ") [ -n "$q" ] || q="$SQ" ;;
+          *) if [ "$q" = "$DQ" ]; then q=""; else q="$DQ"; fi ;;
+        esac
+      done ;;
+    *) f="$rest" ;;
+  esac
+  f=${f//"$BS"/$SL}
+  f=${f//"$DQ"/}
+  f=${f//"$SQ"/}
+  f=${f//"$TAB"/ }
+  f=${f//"$CR"/ }
+  f=${f//'${HOME}'/'$HOME'}
+  while [ "${f%"$NL"}" != "$f" ]; do f="${f%"$NL"}"; done
+  FLAT_OUT="$f"
+}
+if [ "$SHELL_MODE" = pwsh ]; then flatten() { flatten_ps "$@"; }; fi
 flatten "$CMD"
 FLAT="$FLAT_OUT"
 
@@ -71,10 +127,22 @@ FLAT_LC="$LC_OUT"
 # Regra nova acrescenta a sua aqui. Os redirecionamentos que nao escrevem em arquivo (2>&1,
 # >/dev/null) nao contam como ">".
 FAST="$FLAT_LC "
+# PowerShell: nomes de cmdlet e alias curtos (ri, rd, del) aparecem dentro de outras palavras, entao
+# casam como palavra inteira (o - faz parte do nome: format-table nao e format). & sozinho e o
+# operador de chamada.
+PS_FAST_RE='(^|[^a-z0-9_-])(remove-item|ri|rm|rd|rmdir|del|erase|format|format-volume|clear-disk|remove-partition|initialize-disk|iex|invoke-expression|iwr|irm|invoke-webrequest|invoke-restmethod|start-process|saps|start|git|cmd|powershell|pwsh|(ba|z|da|k|fi)?sh|find|mkfs|dd|curl|wget|python[0-9.]*|py|node|deno|bun|perl|ruby|php)([^a-z0-9_-]|$)'
+if [ "$SHELL_MODE" = pwsh ]; then
+  for c in '>&1' '>&2' '&&'; do FAST=${FAST//"$c"/ }; done
+  case "$FAST" in
+    *downloadstring* | *delete* | *drop* | *truncate* | *'$('* | *'&'*) ;;
+    *) [[ $FAST =~ $PS_FAST_RE ]] || exit 0 ;;
+  esac
+fi
 case "$FAST" in
   *'>'*)
     for c in '>&1 ' '>&2 ' '>/dev/null ' '> /dev/null '; do FAST=${FAST//"$c"/ }; done ;;
 esac
+[ "$SHELL_MODE" = pwsh ] ||
 case "$FAST" in
   *rm* | *find* | *git* | *sh* | *curl* | *wget* | *mkfs* | *dd* | *drop* | *truncate* | *chmod* | \
     *xargs* | *'$'* | *'`'* | *eval* | *source* | \
@@ -178,6 +246,25 @@ fi
 if has '(^|[^a-z0-9_-])dd[[:space:]].*of=/dev/' &&
   ! has 'of=/dev/(null|zero|stdout|stderr)([[:space:]]|$)'; then
   kit_deny_pretool "kit: dd escrevendo em dispositivo bloqueado."
+fi
+
+# Confirmacao adiada: o pedido sai depois da analise inteira, para que um trecho negado no mesmo
+# comando ganhe. Vale o primeiro. Uso: ask_later <motivo do ask> <motivo da negacao em bypassPermissions>
+ASK_MSG=""
+ASK_BYPASS=""
+ask_later() {
+  [ -z "$ASK_MSG" ] || return 0
+  ASK_MSG="$1"
+  ASK_BYPASS="$2"
+}
+
+# PowerShell: API .NET que apaga ([IO.Directory]::Delete(, [IO.File]::Delete(, DeleteDirectory( do
+# VisualBasic, $pasta.Delete(), $fso.DeleteFolder( do FileSystemObject). O alvo e uma expressao que
+# o guarda nao avalia: pede confirmacao, como o interpretador inline. ForEach-Object -MemberName
+# Delete (ou % Delete) chama o metodo sem parenteses.
+if [ "$SHELL_MODE" = pwsh ] && has '::delete(directory|file)?[[:space:]]*\(|\.delete(folder|file|directory)?[[:space:]]*\(|(^|[^a-z0-9_-])(foreach-object|foreach|%)[[:space:]]+(-m[a-z]*[[:space:]]+)?delete([^a-z0-9_]|$)'; then
+  ask_later "kit: PowerShell com API .NET que apaga arquivo ou pasta ([IO.Directory]::Delete, [IO.File]::Delete, .Delete()). O guarda nao confere o alvo; confirme so depois de ler o que o comando apaga." \
+    "kit: PowerShell com API .NET que apaga arquivo ou pasta bloqueado em bypassPermissions (nao ha como confirmar). Rode manualmente se for intencional."
 fi
 
 # Pasta corrente do trecho analisado, atualizada a cada cd. CUR_OK=0: cd para alvo nao resolvivel.
@@ -308,6 +395,10 @@ rm_target_unsafe() {
   case "$t" in
     '~'* | *'$'* | *'`'* | *%*%*) return 0 ;;
   esac
+  # PowerShell: vazio (-Path:(...)), @(...) e splatting (@p), caminho de provedor (Modulo\Provedor::C:\x).
+  if [ "$SHELL_MODE" = pwsh ]; then
+    case "$t" in '' | '@'* | *::*) return 0 ;; esac
+  fi
   [[ ${t%%/*} =~ ^[A-Za-z][A-Za-z0-9_]+: ]] && return 0
   case "$t" in
     [A-Za-z]: | [A-Za-z]:[!/]*) return 0 ;;
@@ -326,6 +417,51 @@ rm_target_unsafe() {
   r="$(kit_fold "$r")"
   case "$r" in "$PROJECT_CMP"/?*) return 1 ;; esac
   return 0
+}
+
+# No modo Bash, sempre 0. Na ferramenta PowerShell, rm e o Remove-Item (regras do check_win_rm, em
+# que -Force ou -ErrorAction nao ligam recursao); o check_rm do bash so entra com opcao no estilo
+# do bash (-rf, -fr, -Rv, --recursive), que pode vir de um bash -c partido em trechos.
+ps_rm_bash() {
+  local tok
+  [ "$SHELL_MODE" = pwsh ] || return 0
+  shift
+  for tok in "$@"; do
+    case "$tok" in
+      --recursive | --recursive=*) return 0 ;;
+      -[rRfFdivI][rRfFdivI]*)
+        case "$tok" in *[!rRfFdivI-]*) ;; *[rR]*) return 0 ;; esac ;;
+    esac
+  done
+  return 1
+}
+
+# No modo Bash, sempre 1. Na ferramenta PowerShell, 0 se a palavra e um operador ($a -or $b,
+# $_ -replace 'a','b'): o trecho e uma expressao, nao um comando em variavel com opcoes do rm.
+ps_operator() {
+  local w
+  [ "$SHELL_MODE" = pwsh ] || return 1
+  to_lower "${1:-}"
+  case "${LC_OUT#-}" in
+    [ic]eq | [ic]ne | [ic]gt | [ic]ge | [ic]lt | [ic]le | [ic]like | [ic]notlike | [ic]match | [ic]notmatch | \
+      [ic]contains | [ic]notcontains | [ic]in | [ic]notin | [ic]replace | [ic]split) [ "${LC_OUT:0:1}" = "-" ] && return 0 ;;
+  esac
+  case "$LC_OUT" in
+    -eq | -ne | -gt | -ge | -lt | -le | -like | -notlike | -match | -notmatch | -contains | -notcontains | \
+      -in | -notin | -replace | -split | -join | -and | -or | -xor | -not | -band | -bor | -bxor | -bnot | \
+      -shl | -shr | -is | -isnot | -as) return 0 ;;
+    # -f e o operador de formato e tambem a opcao do rm: operador so sem opcao recursiva depois.
+    -f)
+      shift
+      for w in "$@"; do
+        case "$w" in
+          --recursive | --recursive=*) return 1 ;;
+          -[rRfFdivI]*) case "$w" in *[!rRfFdivI-]*) ;; *[rR]*) return 1 ;; esac ;;
+        esac
+      done
+      return 0 ;;
+  esac
+  return 1
 }
 
 check_rm() {
@@ -379,16 +515,6 @@ do_cd() {
     *) [ "$CUR_OK" -eq 1 ] && CUR="$(kit_path_norm "$t" "$CUR")" ;;
   esac
   return 0
-}
-
-# Confirmacao adiada: o pedido sai depois da analise inteira, para que um trecho negado no mesmo
-# comando ganhe. Vale o primeiro. Uso: ask_later <motivo do ask> <motivo da negacao em bypassPermissions>
-ASK_MSG=""
-ASK_BYPASS=""
-ask_later() {
-  [ -z "$ASK_MSG" ] || return 0
-  ASK_MSG="$1"
-  ASK_BYPASS="$2"
 }
 
 # Descarta alteracoes nao commitadas do working tree, sem volta. Desfazer a propria edicao e legitimo,
@@ -1232,11 +1358,21 @@ check_win_rm() {
       -fi* | -in* | -ex* | -cr* | -st*) [ "$nm" = "$l" ] && skip=1 ;;
     esac
   done
+  # PowerShell: splatting (@p) pode trazer o Recurse dentro da hashtable.
+  if [ "$rec" -eq 0 ] && [ "$SHELL_MODE" = pwsh ]; then
+    for tok in ${targets[@]+"${targets[@]}"}; do
+      case "$tok" in '@'?*) rec=1 ;; esac
+    done
+  fi
   [ "$rec" -eq 1 ] || return 0
-  if [ "${#targets[@]}" -eq 0 ] && [ "$cmdname" != "rm" ]; then
+  # O rm do bash sem alvo nao apaga nada; na ferramenta PowerShell, rm e sempre Remove-Item.
+  if [ "${#targets[@]}" -eq 0 ] && { [ "$cmdname" != "rm" ] || [ "$SHELL_MODE" = pwsh ]; }; then
     kit_deny_pretool "kit: remocao recursiva sem alvo explicito ($cmdname) bloqueada (itens vindos do pipeline nao podem ser conferidos). Passe os caminhos explicitamente."
   fi
   for tok in ${targets[@]+"${targets[@]}"}; do
+    if [ -z "$tok" ] && [ "$SHELL_MODE" = pwsh ]; then
+      kit_deny_pretool "kit: remocao recursiva com alvo em expressao ($cmdname -Path:(...)) bloqueada (alvo nao resolvivel). Passe os caminhos explicitamente."
+    fi
     IFS=, read -r -a parts <<<"$tok"
     for l in ${parts[@]+"${parts[@]}"}; do
       [ -n "$l" ] || continue
@@ -1399,10 +1535,12 @@ check_other() {
     powershell | pwsh) shift; check_ps "$name" "$@" ;;
     rd | rmdir | del | erase | remove-item | ri) check_win_rm "$@" ;;
     # cmd e PowerShell nao distinguem maiusculas: Rm, Git e Cd chegam aqui.
-    rm) check_rm "$@"; check_win_rm "$@" ;;
+    # Na ferramenta PowerShell, rm (sem caminho nem .exe) e sempre Remove-Item: so as regras dele.
+    rm) ps_rm_bash "$@" && check_rm "$@"; check_win_rm "$@" ;;
     git) check_git "$@" ;;
     cd | pushd | popd) do_cd "$name" "${@:2}" ;;
-    set-location | sl | chdir | push-location | pop-location) CUR_OK=0 ;;
+    set-location | sl | chdir | push-location | pop-location)
+      if [ "$SHELL_MODE" = pwsh ]; then ps_cd "$@"; else CUR_OK=0; fi ;;
     format | format.com)
       shift
       for name in "$@"; do
@@ -1412,7 +1550,125 @@ check_other() {
       kit_deny_pretool "kit: ${1##*/} bloqueado (apaga disco ou particao). Rode manualmente se for intencional." ;;
     python | python[0-9]* | py | node | bun | deno | perl | ruby | php) shift; check_interp "$name" "$@" ;;
   esac
+  if [ "$SHELL_MODE" = pwsh ]; then
+    case "$name" in
+      start-process | saps | start) check_start "$@" ;;
+      # Texto literal passado ao iex e um comando; variavel fica fora (nao se sabe o conteudo).
+      iex | invoke-expression)
+        shift
+        if [ "$#" -gt 0 ]; then
+          to_lower "$1"
+          case "$LC_OUT" in
+            -c*:?*) set -- "${1#*:}" "${@:2}" ;;
+            -c*) shift ;;
+          esac
+        fi
+        [ "$#" -gt 0 ] && check_segment "$@" ;;
+    esac
+  fi
   return 0
+}
+
+# PowerShell: Set-Location com um alvo so (posicional, -Path ou -LiteralPath) segue como o cd; o
+# resto (Pop-Location, -StackName, mais de um alvo) torna os alvos relativos nao resolviveis.
+ps_cd() {
+  local tok l t="" n=0 val=0
+  to_lower "$1"
+  case "$LC_OUT" in pop-location | popd) CUR_OK=0; return 0 ;; esac
+  shift
+  for tok in "$@"; do
+    to_lower "$tok"
+    l="${LC_OUT%%:*}"
+    if [ "$val" -eq 1 ]; then val=0; t="$tok"; n=$((n + 1)); continue; fi
+    case "$l" in
+      -p | -pa | -pat | -path | -l* | -pspath | -lp)
+        if [ "$l" = "$LC_OUT" ]; then val=1; else t="${tok#*:}"; n=$((n + 1)); fi ;;
+      -passthru | -pas*) ;;
+      -*) CUR_OK=0; return 0 ;;
+      *) t="$tok"; n=$((n + 1)) ;;
+    esac
+  done
+  if [ "$n" -ne 1 ]; then CUR_OK=0; return 0; fi
+  # \pasta (/pasta depois da leitura) e relativo a raiz do drive corrente; drive de provedor (HKCU:,
+  # Env:) e caminho de provedor (FileSystem::C:\) saem do sistema de arquivos conhecido.
+  case "$t" in /* | *::*) CUR_OK=0; return 0 ;; esac
+  if [[ ${t%%/*} =~ ^[A-Za-z][A-Za-z0-9_]+: ]]; then CUR_OK=0; return 0; fi
+  do_cd cd "$t"
+}
+
+# PowerShell: Start-Process <programa> [-ArgumentList] <args>. O programa com os argumentos e analisado
+# como comando. Sem as aspas, a lista de argumentos se mistura com os parametros do proprio
+# Start-Process: depois de -ArgumentList (ou do segundo posicional), tudo e argumento, salvo um
+# -FilePath escrito por extenso. Virgula da lista vira separador. -WorkingDirectory em qualquer
+# ponto torna os alvos relativos nao resolviveis.
+check_start() {
+  local tok l nm file="" inargs=0 skip=0 p cur_ok="$CUR_OK"
+  # rest: tudo menos o programa (e o -FilePath), para a segunda leitura.
+  local -a args=() parts=() rest=()
+  shift
+  for tok in "$@"; do
+    to_lower "$tok"
+    case "${LC_OUT%%:*}" in -wo | -wor* ) CUR_OK=0 ;; esac
+  done
+  while [ "$#" -gt 0 ]; do
+    tok="$1"
+    shift
+    if [ "$skip" -eq 1 ]; then skip=0; rest+=("$tok"); continue; fi
+    if [ "$skip" -eq 2 ]; then skip=0; continue; fi
+    to_lower "$tok"
+    l="$LC_OUT"
+    nm="${l%%:*}"
+    if [ "$inargs" -eq 1 ] && [ "$nm" != "-filepath" ]; then
+      args+=("$tok")
+      rest+=("$tok")
+      continue
+    fi
+    case "$l" in
+      -?*)
+        case "$nm" in
+          -f | -fi* | -path | -pspath) ;;
+          *) rest+=("$tok") ;;
+        esac
+        case "$nm" in
+          -a | -ar* | -args)
+            inargs=1
+            [ "$nm" = "$l" ] || args+=("${tok#*:}") ;;
+          -f | -fi* | -path | -pspath)
+            if [ "$nm" = "$l" ]; then
+              [ "$#" -gt 0 ] && file="$1" && skip=2
+            else
+              file="${tok#*:}"
+            fi ;;
+          -wo* | -wi* | -c* | -r* | -v* | -e*) [ "$nm" = "$l" ] && skip=1 ;;
+        esac ;;
+      *)
+        if [ -z "$file" ]; then file="$tok"; else inargs=1; args+=("$tok"); rest+=("$tok"); fi ;;
+    esac
+  done
+  if [ -z "$file" ]; then
+    if [ "${#args[@]}" -eq 0 ]; then CUR_OK="$cur_ok"; return 0; fi
+    kit_deny_pretool "kit: Start-Process com argumentos e sem programa identificavel bloqueado (o guarda nao confere o que vai rodar). Passe o programa com -FilePath antes dos argumentos."
+  fi
+  local -a cmdline=("$file")
+  for tok in ${args[@]+"${args[@]}"}; do
+    IFS=, read -r -a parts <<<"$tok"
+    for p in ${parts[@]+"${parts[@]}"}; do
+      [ -n "$p" ] && cmdline+=("$p")
+    done
+  done
+  check_segment "${cmdline[@]}" # array nao vazio
+  # Sem as aspas, um segundo posicional como "-c Remove-Item ..." parece parametro do proprio
+  # Start-Process: mais uma leitura com tudo o que vem depois do programa.
+  cmdline=("$file")
+  for tok in ${rest[@]+"${rest[@]}"}; do
+    IFS=, read -r -a parts <<<"$tok"
+    for p in ${parts[@]+"${parts[@]}"}; do
+      [ -n "$p" ] && cmdline+=("$p")
+    done
+  done
+  check_segment "${cmdline[@]}" # array nao vazio
+  # -WorkingDirectory vale so para o processo filho.
+  CUR_OK="$cur_ok"
 }
 
 # Um comando simples (ja separado de ;, &&, |...). sh -c/bash -c analisa o resto como comando.
@@ -1431,6 +1687,61 @@ check_segment() {
   fi
   local -a c=("${w[@]:$CMD_I}")
   local j=1 found=0
+  if [ "$SHELL_MODE" = pwsh ]; then
+    # Atribuicao antes do comando ($null = git ..., [string]$o = ..., $a += ...), cast ([void]) e
+    # . de dot-source no inicio: o comando e a palavra seguinte.
+    while [ "${#c[@]}" -gt 1 ]; do
+      case "${c[0]}" in
+        '$'*[!=]=?* | '['*']$'*[!=]=?*) c[0]="${c[0]#*=}" ;;
+        '$'*= | '['*']$'*=) c=("${c[@]:1}") ;;
+        '$'* | '['*']$'*)
+          case "${c[1]}" in
+            = | += | -= | '*=' | /= | %= | '??=') c=("${c[@]:2}") ;;
+            *) break ;;
+          esac ;;
+        '['*']' | .) c=("${c[@]:1}") ;;
+        *) break ;;
+      esac
+    done
+    [ "${#c[@]}" -gt 0 ] || return 0
+    # Caminho com espaco entre aspas no lugar do comando (& 'C:\Program Files\Git\bin\bash.exe' -c ...)
+    # chega partido: o comando e a primeira palavra seguinte com nome de comando coberto.
+    case "${c[0]}" in
+      [A-Za-z]:/* | /*)
+        to_lower "${c[0]##*/}"
+        case "${LC_OUT%.exe}" in
+          *.*) ;;
+          *)
+            j=1
+            while [ "$j" -lt "${#c[@]}" ] && [ "$j" -le 8 ]; do
+              case "${c[$j]}" in
+                */*)
+                  to_lower "${c[$j]##*/}"
+                  case "${LC_OUT%.exe}" in
+                    sh | bash | zsh | dash | ksh | pwsh | powershell | cmd | rm | git | python* | py | node | deno | bun | perl | ruby | php)
+                      check_segment "${c[@]:$j}"
+                      break ;;
+                  esac ;;
+              esac
+              j=$((j + 1))
+            done
+            j=1 ;;
+        esac ;;
+    esac
+    to_lower "${c[0]}"
+    case "$LC_OUT" in
+      # Mudanca de pasta: cd.., cd\ (cd/ depois da leitura), troca de drive (D:) e os cmdlets.
+      cd..) ps_cd cd ..; return 0 ;;
+      cd/*) CUR_OK=0; return 0 ;;
+      [a-z]:) CUR_OK=0; return 0 ;;
+      cd | chdir | sl | set-location | pushd | push-location | popd | pop-location) ps_cd "${c[@]}"; return 0 ;;
+    esac
+    # Bash, bash.exe, SH: o Windows acha o programa sem distinguir maiusculas.
+    to_lower "${c[0]##*/}"
+    case "${LC_OUT%.exe}" in
+      sh | bash | zsh | dash | ksh) c[0]="${LC_OUT%.exe}" ;;
+    esac
+  fi
   [ "$WRITE_ONLY" -eq 1 ] || check_sql "${c[@]}"
   check_write_cmd "${c[@]}"
   if [ "$SECRET_HINT" -eq 1 ]; then check_read "${c[@]}"; fi
@@ -1443,9 +1754,10 @@ check_segment() {
   fi
   case "${c[0]}" in
     cd | pushd | popd) do_cd "${c[@]}" ;;
-    rm | */rm | rm.exe | */rm.exe) check_rm "${c[@]}"; check_win_rm "${c[@]}" ;;
+    rm) ps_rm_bash "${c[@]}" && check_rm "${c[@]}"; check_win_rm "${c[@]}" ;;
+    */rm | rm.exe | */rm.exe) check_rm "${c[@]}"; check_win_rm "${c[@]}" ;;
     find | */find | find.exe | */find.exe) check_find "${c[@]}" ;;
-    *'$'*) check_rm "${c[@]}" ;;
+    *'$'*) ps_operator ${c[@]+"${c[@]:1}"} || check_rm "${c[@]}" ;;
     git | */git | git.exe | */git.exe) check_git "${c[@]}" ;;
     sh | bash | zsh | dash | ksh | */sh | */bash | */zsh | */dash | */ksh)
       while [ "$j" -lt "${#c[@]}" ]; do
@@ -1503,6 +1815,29 @@ case "$FLAT" in
     OUTER="$(printf '%s' "$OUTER" | sed -E 's/`[^`]*`/$KITSUB/g; s/[$<>]\(/ $KITSUB /g; s/`/ $KITSUB /g')"
     [ "$OUTER" != "$FLAT" ] && analyze "$OUTER" ;;
 esac
+# PowerShell: (expr), @(expr) e $(expr) sao valores no meio do comando. Partidos em trechos, os
+# parametros depois deles (Remove-Item -Path (Join-Path ...) -Recurse) se perderiam: mais uma
+# leitura com cada um trocado por $KITSUB (alvo nao resolvivel).
+if [ "$SHELL_MODE" = pwsh ]; then
+  case "$FLAT" in
+    *'('*)
+      OUTER="$FLAT"
+      prev=""
+      n=0
+      while [ "$prev" != "$OUTER" ] && [ "$n" -lt 20 ]; do
+        prev="$OUTER"
+        OUTER="$(printf '%s' "$OUTER" | sed -E 's/[$@]?\([^()]*\)/$KITSUB/g')"
+        n=$((n + 1))
+      done
+      [ "$OUTER" != "$FLAT" ] && analyze "$OUTER"
+      # E mais uma com os parenteses tirados e o conteudo mantido: a lista de Start-Process
+      # -ArgumentList @('/c','rd ...') chega como argumentos.
+      OUTER="${FLAT//'@('/ }"
+      OUTER="${OUTER//'('/ }"
+      OUTER="${OUTER//')'/ }"
+      analyze "$OUTER" ;;
+  esac
+fi
 
 # Script de sed, perl ou awk, ou padrao de grep, entre aspas com ;, |, &, (), {}, crase ou > se
 # partiria em trechos e o arquivo ficaria longe do comando. Mais uma leitura, so de escrita e de

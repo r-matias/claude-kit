@@ -310,11 +310,12 @@ run_case() {
   mkdir -p "$ws/tmp"
 
   case "$script" in
-    guard-bash.sh)
-      local gcmd="$c_command"
+    guard-bash.sh | guard-pwsh.sh)
+      local gcmd="$c_command" gtool="Bash"
+      [ "$script" = "guard-pwsh.sh" ] && gtool="PowerShell"
       gcmd="${gcmd//__PROJ__/$(native_path "$base")}"
-      input="$(jq -cn --arg c "$gcmd" --arg d "$cwd" --arg m "$c_mode" \
-        '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: $c}, cwd: $d} + (if $m == "" then {} else {permission_mode: $m} end)')" ;;
+      input="$(jq -cn --arg c "$gcmd" --arg d "$cwd" --arg m "$c_mode" --arg t "$gtool" \
+        '{hook_event_name: "PreToolUse", tool_name: $t, tool_input: {command: $c}, cwd: $d} + (if $m == "" then {} else {permission_mode: $m} end)')" ;;
     guard-files.sh | format.sh | advise.sh)
       # raw_file vai como esta (relativo, com .., //); file e juntado ao caminho do projeto.
       if [ "$has_raw" = "true" ]; then
@@ -457,6 +458,7 @@ if [ -z "$FILTER" ] || [[ "sem jq" == *"$FILTER"* ]]; then
       fi
     }
     nojq_guard "guard-bash.sh sem jq bloqueia rm -rf / com a mensagem de instalação" guard-bash.sh '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' 2
+    nojq_guard "guard-pwsh.sh sem jq bloqueia Remove-Item -Recurse C:\ com a mensagem de instalação" guard-pwsh.sh '{"tool_name":"PowerShell","tool_input":{"command":"Remove-Item -Recurse C:\\"}}' 2
     nojq_guard "guard-files.sh sem jq bloqueia Edit em .env com a mensagem de instalação" guard-files.sh '{"tool_name":"Edit","tool_input":{"file_path":".env","old_string":"a","new_string":"b"}}' 2
     nojq_guard "guard-bash.sh sem jq libera o comando exato de instalação ($JQ_INSTALL)" guard-bash.sh "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\": \"$JQ_INSTALL\",\"description\":\"x\"}}" 0
     for c in "$JQ_INSTALL; rm -rf /" "$JQ_INSTALL && rm -rf ~" "echo $JQ_INSTALL" "$JQ_INSTALL\\\"; rm -rf /"; do
@@ -1942,7 +1944,7 @@ if [ -z "$FILTER" ] || [[ "guardas" == *"$FILTER"* ]]; then
 
   # Entrada vazia ou JSON truncado: os guardas bloqueiam (exit 2), nunca liberam.
   in_bad=""
-  for gs in guard-bash.sh guard-files.sh; do
+  for gs in guard-bash.sh guard-pwsh.sh guard-files.sh; do
     printf '' | "$TBASH" "$SCRIPTS/$gs" >/dev/null 2>&1; code=$?
     [ "$code" = "2" ] || in_bad+="$gs vazio=$code "
     printf '{"tool_name":"Bash","tool_input":{"command":"rm -rf /' | "$TBASH" "$SCRIPTS/$gs" >/dev/null 2>&1; code=$?
@@ -2354,7 +2356,7 @@ groups_for_file() {
   local hooks="semjq forma_shell"
   case "$1" in
     plugins/kit/scripts/lib.sh | tests/run-tests.sh | tests/sample/*) echo "*" ;;
-    plugins/kit/scripts/guard-bash.sh) echo "fx:guard-bash.json $hooks" ;;
+    plugins/kit/scripts/guard-bash.sh | plugins/kit/scripts/guard-pwsh.sh) echo "fx:guard-bash.json fx:guard-pwsh.json $hooks" ;;
     plugins/kit/scripts/guard-files.sh) echo "fx:guard-files*.json $hooks guardas" ;;
     plugins/kit/scripts/verify-gate.sh) echo "fx:verify-gate*.json $hooks guardas" ;;
     plugins/kit/scripts/notify.sh) echo "fx:notify.json fx:verify-gate-notify.json notify $hooks" ;;

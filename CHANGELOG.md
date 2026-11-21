@@ -4,6 +4,12 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.9.18
+
+### Entrou
+
+- **Guarda na ferramenta PowerShell.** Quem desmarca o grupo `powershell` no Windows nativo deixa de ficar sem proteção nessa ferramenta: o novo hook `guard-pwsh.sh` aplica a ela as regras destrutivas do `guard-bash`, lendo aspas e crase como o PowerShell lê (``Remove`-Item`` é `Remove-Item`; barra invertida é caminho). Nega remoção recursiva fora do projeto ou de alvo não resolvível (`Remove-Item -Recurse C:\x`, `ri -r $env:TEMP\x`, `Get-ChildItem | Remove-Item -Recurse`, `ForEach-Object { Remove-Item $_ -Recurse }`), `cmd /c rd /s`, `-EncodedCommand`, `iwr | iex`, `Format-Volume` e afins, git destrutivo e `bash -c` destrutivo; pede confirmação para interpretador inline destrutivo e para git que descarta alteração. Acrescenta `Start-Process` com os argumentos conferidos como comando, `iex` de texto literal e API .NET que apaga (`[IO.Directory]::Delete`, `.Delete()`), esta com pedido de confirmação. `Remove-Item -Recurse .\dist`, `git status` e o uso comum passam. Escrita e leitura de segredo pela ferramenta PowerShell ficam para a próxima versão; o grupo `powershell` continua negando a ferramenta inteira.
+
 ## 0.9.17
 
 ### Entrou
