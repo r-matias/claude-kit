@@ -4,6 +4,8 @@
 # comandos, mesmo depois de uma falha, e todas as falhas saem numa unica mensagem com exit 2. Na
 # passada seguinte a um bloqueio (stop_hook_active) verifica de novo: se ainda falhar, libera o
 # turno com a falha em systemMessage e sem notificacao de concluido.
+# Com subagent da sessao em execucao (background_tasks), o gate fica para o Stop seguinte ao ultimo:
+# a arvore ainda esta mudando, e build e testes repetidos disputam a maquina com eles.
 # Turno liberado (gate passou ou nada a verificar): notificacao de concluido, se notify.done.
 # Compativel com bash 3.2: sem arrays associativos nem mapfile; os mapas ficam em arquivos de $TMPD.
 set -u
@@ -33,6 +35,18 @@ if top_pfx="$(git -C "$CWD" rev-parse --show-toplevel --show-prefix 2>/dev/null 
 fi
 KIT_CEILING="$CWD"
 SID="$(kit_field '.session_id')"
+
+# So o par documentado (type subagent, status running) adia: shell e monitor podem nunca terminar, e
+# valor desconhecido roda o gate. A marca preserva o inicio do turno ate o gate rodar; sem conseguir
+# grava-la, roda agora.
+if [ -n "$SID" ] && [ "$(kit_field '.hook_event_name')" != "SubagentStop" ]; then
+  MARK="$(kit_gate_mark "$SID")"
+  if printf '%s' "$KIT_INPUT" | jq -e '[.background_tasks[]? | objects | select(.type == "subagent" and .status == "running")] | length > 0' >/dev/null 2>&1 &&
+    { : >"$MARK"; } 2>/dev/null; then
+    exit 0
+  fi
+  rm -f "$MARK"
+fi
 
 REPOS=()
 while IFS= read -r r; do [ -n "$r" ] && REPOS+=("$r"); done < <(kit_repos "$CWD" "$SID" refresh)

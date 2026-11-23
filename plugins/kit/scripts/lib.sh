@@ -65,6 +65,15 @@ kit_read_input() {
   KIT_INPUT="$(cat)"
 }
 
+# 0 se o arquivo contem o texto, sem criar processo: poupa o jq quando a chave nem aparece.
+# Uso: kit_file_has <arquivo> <texto>
+kit_file_has() {
+  local s=""
+  [ -f "$1" ] || return 1
+  IFS= read -r -d '' s <"$1"
+  [[ "$s" == *"$2"* ]]
+}
+
 # 0 se a entrada do hook e um objeto JSON. Guardas bloqueiam quando nao e.
 kit_input_ok() {
   printf '%s' "$KIT_INPUT" | jq -e 'type == "object"' >/dev/null 2>&1
@@ -300,9 +309,14 @@ kit_repos() {
   if [ -f "$cwd/.claude/kit.json" ]; then sig="$cwd|$(cksum <"$cwd/.claude/kit.json")"; else sig="$cwd|none"; fi
   if [ -n "$sid" ]; then
     cache="$tmp/kit-repos-${sid//[^A-Za-z0-9_-]/_}"
-    if [ -z "$refresh" ] && [ -f "$cache" ] && [ "$(head -n 1 "$cache")" = "$sig" ]; then
-      tail -n +2 "$cache"
-      return 0
+    if [ -z "$refresh" ] && [ -f "$cache" ]; then
+      {
+        IFS= read -r d
+        if [ "$d" = "$sig" ]; then
+          while IFS= read -r d; do printf '%s\n' "$d"; done
+          return 0
+        fi
+      } <"$cache"
     fi
   fi
 
@@ -947,17 +961,29 @@ kit_dependency_notes() {
   return 0
 }
 
+# Marca do gate adiado por subagent em execucao, por sessao, no $TMPDIR. Enquanto existe, o inicio do
+# turno (kit-turn-head e turn-start) nao e regravado: a mensagem de um subagent tambem dispara o
+# UserPromptSubmit, e o que foi commitado antes dela ficaria fora do gate. Uso: kit_gate_mark <session_id>
+kit_gate_mark() {
+  printf '%s/kit-gate-%s' "${TMPDIR:-${TMP:-/tmp}}" "${1//[^A-Za-z0-9_-]/_}"
+}
+
 # UserPromptSubmit: grava o HEAD de cada repositorio no inicio do turno em <gitdir>/kit-turn-head
 # ("session_id sha"). O verify-gate usa para enxergar o que foi commitado durante o turno.
 # Uso: kit_turn_head_mark <session_id> [repositorio...]
 kit_turn_head_mark() {
-  local sid="$1" repo gd head
+  local sid="$1" repo out gd head keep=0
   shift
   [ -n "$sid" ] || return 0
+  [ -f "$(kit_gate_mark "$sid")" ] && keep=1
   for repo in "$@"; do
-    gd="$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null | tr -d '\r')"
-    head="$(git -C "$repo" rev-parse --verify -q HEAD 2>/dev/null | tr -d '\r')"
-    [ -n "$gd" ] && [ -n "$head" ] || continue
+    # Sem commits, o rev-parse devolve "HEAD" no lugar do hash.
+    out="$(git -C "$repo" rev-parse --absolute-git-dir HEAD 2>/dev/null)"
+    out="${out//$'\r'/}"
+    gd="${out%%$'\n'*}"
+    head="${out#*$'\n'}"
+    case "$head" in '' | *[!0-9a-f]*) continue ;; esac
+    [ "$keep" -eq 1 ] && [ -n "$(kit_turn_mark "$repo" "$sid")" ] && continue
     printf '%s %s\n' "$sid" "$head" >"$gd/kit-turn-head" 2>/dev/null
   done
   return 0
@@ -1153,12 +1179,15 @@ kit_notify_send() {
 # UserPromptSubmit: marca o inicio do turno em <raiz>/.claude/state/turn-start (mtime = inicio,
 # conteudo = session_id) quando notify.done esta ligado. Uso: kit_notify_turn_start <cwd> <session_id>
 kit_notify_turn_start() {
-  local root
-  root="$(kit_notify_root "$1")"
-  [ -n "$root" ] || return 0
+  local root=""
+  IFS= read -r root < <(kit_kit_roots "$1")
+  [ -n "$root" ] && kit_file_has "$root/.claude/kit.json" '"notify"' || return 0
+  # notify que nao e objeto falha no jq e deixa KIT_NOTIFY_DONE vazio.
   kit_notify_load "$root"
   [ "$KIT_NOTIFY_DONE" = "true" ] || return 0
-  mkdir -p "$root/.claude/state" 2>/dev/null && printf '%s\n' "$2" >"$root/.claude/state/turn-start" 2>/dev/null
+  [ -n "$2" ] && [ -f "$(kit_gate_mark "$2")" ] && [ -f "$root/.claude/state/turn-start" ] && return 0
+  { [ -d "$root/.claude/state" ] || mkdir -p "$root/.claude/state" 2>/dev/null; } &&
+    printf '%s\n' "$2" >"$root/.claude/state/turn-start" 2>/dev/null
   return 0
 }
 

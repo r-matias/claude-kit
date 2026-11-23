@@ -4,6 +4,15 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.10.9
+
+### Mudou
+
+- **O gate espera os subagents.** Com subagent da sessão em execução, o `verify-gate` não roda a cada fim de turno; roda no primeiro Stop sem nenhum, sobre tudo o que mudou desde o pedido, inclusive commits feitos no meio. Antes, cada volta de subagent disparava typecheck, testes e lint sobre uma árvore ainda em edição, disputando memória com a compilação dos outros. Shell em segundo plano (servidor de desenvolvimento) não adia. A notificação de concluído também espera e conta o tempo desde o pedido.
+- **Subagent do `/kit:execute` roda só o `verify` da própria tarefa**, sem acrescentar suíte inteira, build, lint nem typecheck do projeto: o checkpoint da wave e o gate cobrem isso.
+- **Hook de cada prompt mais leve.** O `session-context.sh --plan-only` cria menos da metade dos processos, que é o que encarece com a máquina ocupada.
+- **Limite dos guardas e do `session-context` por prompt: 30 s** (era 10 s). Com a máquina sobrecarregada, o guarda estourava o tempo e bloqueava a chamada.
+
 ## 0.10.8
 
 ### Entrou

@@ -2120,6 +2120,52 @@ if [ -z "$FILTER" ] || [[ "guardas" == *"$FILTER"* ]]; then
   if [ "$c1" = "2" ] && [ "$c2" = "0" ]; then ok "verify-gate: commit dentro do turno é verificado; marca de outra sessão é ignorada"
   else ko "verify-gate: commit dentro do turno é verificado; marca de outra sessão é ignorada" "mesma=$c1 outra=$c2"; fi
 
+  # Subagent em execucao adia o gate; o commit feito antes da mensagem dele entra no gate seguinte.
+  G="$(mktemp -d "$TMP_ALL/adia.XXXXXX")"
+  mkdir -p "$G/.claude" "$G/src"
+  printf '%s\n' '{"commands":{"t":"echo x >>rodou.log; false"},"verify_on_stop":["t"],"source_globs":["src/**"],"notify":{"done":true}}' >"$G/.claude/kit.json"
+  printf 'x\n' >"$G/src/a.ts"
+  printf 'rodou.log\nkit-*\n.claude/state/\n' >"$G/.gitignore"
+  git_q init "$G"; git_q -C "$G" add -A; git_q -C "$G" commit -m init
+  ad_prompt() {
+    jq -cn --arg d "$(native_path "$G")" '{hook_event_name: "UserPromptSubmit", cwd: $d, session_id: "adia"}' |
+      TMPDIR="$G" "$TBASH" "$SCRIPTS/session-context.sh" --plan-only >/dev/null 2>&1
+  }
+  ad_gate() {
+    jq -cn --arg d "$(native_path "$G")" --arg e "${2:-Stop}" --argjson b "$1" \
+      '{hook_event_name: $e, cwd: $d, session_id: "adia", background_tasks: $b}' |
+      TMPDIR="$G" KIT_NOTIFY_DRY_RUN=1 "$TBASH" "$SCRIPTS/verify-gate.sh" >/dev/null 2>"$TMP_ALL/adia.err"
+  }
+  ad_run='[{"id":"1","type":"shell","status":"running"},{"id":"2","type":"subagent","status":"running","agent_type":"general-purpose"}]'
+  ad_prompt
+  touch -t 202001010000 "$G/.claude/state/turn-start"
+  h0="$(cat "$G/.git/kit-turn-head")"
+  printf 'y\n' >>"$G/src/a.ts"
+  git_q -C "$G" commit -am mudou
+  ad_gate "$ad_run"; c1=$?
+  ad_out="$(cat "$TMP_ALL/adia.err")"; ad_ran=0; [ -e "$G/rodou.log" ] && ad_ran=1
+  ad_prompt
+  h1="$(cat "$G/.git/kit-turn-head")"
+  ad_old=0; [ -n "$(find "$G/.claude/state/turn-start" -mtime +1 2>/dev/null)" ] && ad_old=1
+  ad_gate '[]'; c2=$?
+  ad_left=0; [ -e "$G/kit-gate-adia" ] && ad_left=1
+  if [ "$c1" = "0" ] && [ "$ad_ran" = "0" ] && [ -z "$ad_out" ]; then ok "verify-gate: subagent em execução adia o gate sem rodar comando nem notificar"
+  else ko "verify-gate: subagent em execução adia o gate sem rodar comando nem notificar" "exit=$c1 rodou=$ad_ran $ad_out"; fi
+  if [ "$h0" = "$h1" ] && [ "$ad_old" = "1" ] && [ "$c2" = "2" ] && [ "$ad_left" = "0" ]; then ok "verify-gate: gate adiado preserva o início do turno e verifica o commit no Stop seguinte"
+  else ko "verify-gate: gate adiado preserva o início do turno e verifica o commit no Stop seguinte" "antes='$h0' depois='$h1' turn-start=$ad_old exit=$c2 marca=$ad_left"; fi
+  ad_prompt
+  h2="$(cat "$G/.git/kit-turn-head")"
+  if [ "$h2" != "$h0" ]; then ok "verify-gate: depois do gate rodar, o prompt seguinte regrava o início do turno"
+  else ko "verify-gate: depois do gate rodar, o prompt seguinte regrava o início do turno" "$h2"; fi
+  printf 'z\n' >>"$G/src/a.ts"
+  ad_bad=""
+  for b in '[{"type":"shell","status":"running"}]' '[{"type":"monitor","status":"running"}]' '[{"type":"subagent","status":"completed"}]' '[{"type":"subagent"}]' '["x"]' 'null' '{}'; do
+    ad_gate "$b"; [ "$?" = "2" ] || ad_bad+="$b "
+  done
+  ad_gate "$ad_run" SubagentStop; [ "$?" = "2" ] || ad_bad+="SubagentStop "
+  if [ -z "$ad_bad" ]; then ok "verify-gate: shell, monitor, status desconhecido e SubagentStop não adiam o gate"
+  else ko "verify-gate: shell, monitor, status desconhecido e SubagentStop não adiam o gate" "$ad_bad"; fi
+
   # diff_deny: linha commitada dentro do turno conta; linha de antes do turno, nao.
   G="$(mktemp -d "$TMP_ALL/ddturno.XXXXXX")"
   mkdir -p "$G/.claude" "$G/src"
@@ -2272,7 +2318,7 @@ if [ -z "$FILTER" ]; then
 
   # Subagent general-purpose do execute recebe o bloco fixo de regras de leitura e Bash.
   SUB_RULES="$REPO/plugins/kit/skills/execute/subagent-rules.md"
-  sub_want='Leitura e busca: para ler arquivo use Read; para buscar, Grep/Glob. Bash só para git (log/blame/show/diff/status) e para os comandos do .claude/kit.json. Um comando por chamada de Bash: nunca encadeie com &&, ; ou |. Nunca cat/head/tail/sed/grep/find/ls via Bash, nem `cd <repo>;` no início (use git -C <repo>). Nunca entregue ao usuário comando com placeholder.'
+  sub_want='Leitura e busca: para ler arquivo use Read; para buscar, Grep/Glob. Bash só para git (log/blame/show/diff/status) e para os comandos do .claude/kit.json. Um comando por chamada de Bash: nunca encadeie com &&, ; ou |. Nunca cat/head/tail/sed/grep/find/ls via Bash, nem `cd <repo>;` no início (use git -C <repo>). Nunca entregue ao usuário comando com placeholder. Rode só o verify da sua tarefa; não acrescente suíte inteira, build completo, lint nem typecheck do projeto: o checkpoint e o gate de fim de turno cobrem isso, e outros subagents compilam ao mesmo tempo.'
   sub_bad=""
   [ "$(tr -d '\r' <"$SUB_RULES" 2>/dev/null)" = "$sub_want" ] || sub_bad+="subagent-rules.md "
   for f in "$REPO"/plugins/kit/skills/*/SKILL.md; do

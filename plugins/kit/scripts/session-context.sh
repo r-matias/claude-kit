@@ -5,7 +5,9 @@
 # marca de inicio do turno para a notificacao de concluido (notify.done).
 # Sem jq, git ou com Claude Code abaixo da versao minima, avisa no inicio da sessao com o comando de correcao.
 set -u
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+KIT_DIR="${BASH_SOURCE[0]%/*}"
+[ "$KIT_DIR" != "${BASH_SOURCE[0]}" ] || KIT_DIR="."
+. "$KIT_DIR/lib.sh"
 if [ "${1:-}" = "--plan-only" ]; then
   kit_require_jq
   NOTES=""
@@ -21,9 +23,13 @@ else
 fi
 kit_read_input
 
-CWD="$(kit_cwd)"
+# O --plan-only roda a cada prompt: um jq so para a entrada e nenhum processo que nao seja preciso.
+CWD=""
+SID=""
+kit_fields CWD '.cwd' SID '.session_id'
+[ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-$PWD}"
+CWD="${CWD//\\//}"
 ROOT="$(kit_session_root "$CWD")"
-SID="$(kit_field '.session_id')"
 [ "${1:-}" = "--plan-only" ] && kit_notify_turn_start "$CWD" "$SID"
 
 plans_line() {
@@ -40,15 +46,15 @@ command -v git >/dev/null 2>&1 && while IFS= read -r r; do [ -n "$r" ] && REPOS+
 
 if [ "${1:-}" = "--plan-only" ]; then
   kit_turn_head_mark "$SID" ${REPOS[@]+"${REPOS[@]}"}
-  [ -f "$ROOT/.claude/kit.json" ] || exit 0
+  kit_file_has "$ROOT/.claude/kit.json" '"inject_plan_on_prompt"' || exit 0
   [ "$(jq -r '.inject_plan_on_prompt // false' "$ROOT/.claude/kit.json" 2>/dev/null | tr -d '\r')" = "true" ] || exit 0
   line="$(plans_line)"
   [ -n "$line" ] && echo "Plano ativo do kit: $line"
   exit 0
 fi
 
-# Marcas por sessao no $TMPDIR (avisos do advise e cache de repositorios) com mais de um dia.
-find "${TMPDIR:-${TMP:-/tmp}}" -maxdepth 1 -type f \( -name 'kit-advise-*' -o -name 'kit-repos-*' \) -mtime +0 -exec rm -f {} + 2>/dev/null
+# Marcas por sessao no $TMPDIR (avisos do advise, cache de repositorios e gate adiado) com mais de um dia.
+find "${TMPDIR:-${TMP:-/tmp}}" -maxdepth 1 -type f \( -name 'kit-advise-*' -o -name 'kit-repos-*' -o -name 'kit-gate-*' \) -mtime +0 -exec rm -f {} + 2>/dev/null
 
 if [ "${#REPOS[@]}" -eq 0 ]; then
   [ -n "$NOTES" ] && printf '%s\n' "$NOTES"
