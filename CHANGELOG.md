@@ -4,6 +4,16 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.10.10
+
+### Mudou
+
+- **`/kit:plan` altera documentos só com Write e Edit.** PLAN.md, SPEC.md, DESIGN.md e docs não são mais editados por script no shell. No Windows, um `python -` com heredoc vazio ficava preso até o limite de tempo.
+
+### Corrigido
+
+- **Guarda de shell não nega mais comando em variável por causa de opção como `-Filter`.** `powershell -Command "... $p=Get-CimInstance ... -Filter ..."` era negado como `rm -rf`, porque o `r` do nome da opção contava como recursivo. `-rf`, `-r`, `-Recurse` e `--recursive` continuam negados.
+
 ## 0.10.9
 
 ### Mudou

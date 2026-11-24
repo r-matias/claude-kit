@@ -146,6 +146,8 @@
     { "name": "pwsh: & de variavel com -r negado", "command": "& $x -r C:\\x", "expect": "deny" },
     { "name": "pwsh: & de variavel com -f -r negado", "command": "& $x -f -r C:\\", "expect": "deny" },
     { "name": "pwsh: & de variavel com -f --recursive negado", "command": "& $x -f --recursive C:\\", "expect": "deny" },
+    { "name": "pwsh: & de variavel com -Recurse negado", "command": "& $x -Recurse -Force C:\\x", "expect": "deny" },
+    { "name": "pwsh: & de variavel com -Filter liberado", "command": "& $x -Filter \"a=$(1)\"; git status", "expect": "allow" },
     { "name": "pwsh: operador -f de formato liberado", "command": "'{0}' -f $a; git status", "expect": "allow" },
     { "name": "pwsh: operador -f depois de variavel liberado", "command": "$fmt -f $a, $b; git status", "expect": "allow" },
     { "name": "pwsh: -WorkingDirectory do Start-Process nao vale para o trecho seguinte", "command": "Start-Process node -WorkingDirectory C:\\ -ArgumentList app.js; Remove-Item -Recurse dist", "expect": "allow" },

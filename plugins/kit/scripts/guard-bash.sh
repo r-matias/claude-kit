@@ -533,6 +533,30 @@ check_rm() {
   return 0
 }
 
+# Comando em variavel: pode ser o rm. Opcao so de letras com letra que o rm nao tem (-Filter) e de
+# outro programa, porque o rm recusa a linha inteira. Comecando por r continua contando (-Recurse).
+check_rm_var() {
+  local -a w=("$1")
+  local tok
+  shift
+  while [ "$#" -gt 0 ]; do
+    tok="$1"
+    case "$tok" in
+      --) w+=("$@"); break ;;
+      -[rR]*) w+=("$tok") ;;
+      -[A-Za-z]*)
+        case "${tok#-}" in
+          *[!A-Za-z]*) w+=("$tok") ;;
+          *[!rRfFdDiIvVPWxX]*) ;;
+          *) w+=("$tok") ;;
+        esac ;;
+      *) w+=("$tok") ;;
+    esac
+    shift
+  done
+  check_rm "${w[@]}"
+}
+
 do_cd() {
   local -a w=("$@")
   local i=1 n=$# t=""
@@ -2061,7 +2085,7 @@ check_segment() {
     rm) ps_rm_bash "${c[@]}" && check_rm "${c[@]}"; check_win_rm "${c[@]}" ;;
     */rm | rm.exe | */rm.exe) check_rm "${c[@]}"; check_win_rm "${c[@]}" ;;
     find | */find | find.exe | */find.exe) check_find "${c[@]}" ;;
-    *'$'*) ps_operator ${c[@]+"${c[@]:1}"} || check_rm "${c[@]}" ;;
+    *'$'*) ps_operator ${c[@]+"${c[@]:1}"} || check_rm_var "${c[@]}" ;;
     git | */git | git.exe | */git.exe) check_git "${c[@]}" ;;
     sh | bash | zsh | dash | ksh | */sh | */bash | */zsh | */dash | */ksh)
       while [ "$j" -lt "${#c[@]}" ]; do
