@@ -4,6 +4,13 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.10.11
+
+### Mudou
+
+- **`/kit:plan` não cria tarefa que o agente não consegue executar.** Nenhuma tarefa nem passo da wave final manda rodar skill que só o usuário chama (`disable-model-invocation: true`, como `/kit:map --update`). Se a mudança torna falsa uma linha do mapa, a tarefa corrige essa linha. O `kit:plan-reviewer` aponta o contrário como `M10`.
+- **`/kit:execute` em plano antigo com esse passo** não o dá como feito: registra `Pendente do usuário: <comando>` abaixo da evidência e lista no resumo.
+
 ## 0.10.10
 
 ### Mudou

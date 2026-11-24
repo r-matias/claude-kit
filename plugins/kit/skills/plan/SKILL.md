@@ -11,6 +11,7 @@ allowed-tools: Read(${CLAUDE_PLUGIN_ROOT}/**)
 - PLAN.md, SPEC.md, DESIGN.md e docs são gravados e alterados só com Write e Edit, nunca por script no shell (heredoc, `python -`, `node -e`, `sed -i`).
 - Formato do PLAN.md: [template.md](template.md). Siga as seções e os campos na ordem; não invente seções.
 - Só tarefas, checkpoints e passos da wave final levam caixa `- [ ]`. Truths, artifacts, tests, behavior e decisões são bullets simples: os hooks contam as caixas para mostrar o progresso.
+- Nenhuma tarefa nem passo da wave final depende de skill que só o usuário chama (`disable-model-invocation: true`: `/kit:init`, `/kit:setup`, `/kit:map`, `/kit:epic`, `/kit:execute`, `/kit:drift` e as do projeto com esse campo): quem executa o plano não consegue chamá-la. Se a mudança torna falsa uma linha do mapa (`docs/codemap.md`, `.claude/rules/map-*.md`), a tarefa que a causa lista esse arquivo em `files` e corrige só essa linha, sem mexer no cabeçalho `kit:map`.
 - Cada tarefa cabe num diff revisável (ordem de grandeza: até ~5 arquivos, uma ideia).
 - Comandos de `verify` vêm de `.claude/kit.json` (`build`, `test`, `test_related`, `lint`, `typecheck`, `smoke`). O valor de uma chave é o comando ou um objeto `{ "run", "files" }`, cujo comando é o `run`. Chave ausente: use as que existem e anote a lacuna em Decisões.
 
