@@ -80,7 +80,7 @@ cat >"$TMPD/exclude" <<'EOF'
 \.(png|jpe?g|gif|bmp|ico|webp|svg|pdf|zip|gz|tgz|bz2|xz|7z|rar|jar|war|dll|exe|so|dylib|a|o|class|pyc|wasm|woff2?|ttf|otf|eot|mp[34]|mov|avi|db|sqlite3?|bin)$
 EOF
 
-MANIFEST_RE='^(package\.json|pyproject\.toml|setup\.py|requirements[^/]*\.txt|go\.mod|Cargo\.toml|pom\.xml|build\.gradle(\.kts)?|Gemfile|composer\.json|mix\.exs|deno\.jsonc?|[^/]*\.(csproj|fsproj|vbproj|sln))$'
+MANIFEST_RE='^(package\.json|pyproject\.toml|setup\.py|requirements[^/]*\.txt|go\.mod|Cargo\.toml|pom\.xml|build\.gradle(\.kts)?|Gemfile|composer\.json|mix\.exs|deno\.jsonc?|CMakeLists\.txt|vcpkg\.json|[^/]*\.(csproj|fsproj|vbproj|sln))$'
 
 # Globs (um por linha) viram ERE para grep -E -f. Glob sem "/" casa pelo nome do arquivo.
 globs_to_ere() {

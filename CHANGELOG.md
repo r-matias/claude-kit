@@ -4,6 +4,13 @@ O que mudou em cada versão, do ponto de vista de quem usa o kit. Depois de atua
 
 Versões anteriores à 0.9.3 estão nas tags do repositório.
 
+## 0.10.12
+
+### Novo
+
+- **`/kit:init` reconhece projeto C/C++ com CMake.** `CMakeLists.txt`, `CMakePresets.json` e `vcpkg.json` entram na detecção de stack, e o `stacks.md` ganhou a linha de C/C++: `build` e `test` pelos presets do `CMakePresets.json`, `clang-format` no `format` quando o projeto tem `.clang-format`, `source_globs`, `diff_deny` (`NOLINT`, `#pragma ... diagnostic ignored`, teste com `GTEST_SKIP` ou `DISABLED_`) e o aviso de teste junto com o código. O `build` usa a forma objeto com `files`, para só compilar quando o turno mexeu em fonte C/C++ ou CMake, e só entra no gate se a compilação incremental é rápida e a pasta de build já está configurada. O init não roda o configure.
+- **`/kit:map` usa `CMakeLists.txt` e `vcpkg.json` como manifesto.** Num projeto CMake, cada pasta com `CMakeLists.txt` próprio vira pacote na partição, e o manifesto aparece na unidade para o mapeador saber como ela é compilada.
+
 ## 0.10.11
 
 ### Mudou

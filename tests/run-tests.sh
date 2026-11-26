@@ -812,6 +812,25 @@ if [ -z "$FILTER" ] || [[ "map-partition" == *"$FILTER"* ]]; then
     ok "map-partition: monorepo com workspaces separa pacotes e lista manifestos"
   else ko "map-partition: monorepo com workspaces separa pacotes e lista manifestos" "$(jq -c '[.units[] | {unit, paths, manifests}]' <<<"$out" 2>&1 | head -c 600)"; fi
 
+  # C/C++ com CMake: CMakeLists.txt de cada pasta e vcpkg.json sao manifestos.
+  R="$(mktemp -d "$TMP_ALL/mp.XXXXXX")"
+  mkdir -p "$R/.claude"
+  printf '{"map":{"unit_max_files":3}}\n' >"$R/.claude/kit.json"
+  mp_files "$R" CMakeLists.txt vcpkg.json src/main.cpp \
+    src/game/CMakeLists.txt src/game/game.cpp src/game/game.hpp \
+    src/io/CMakeLists.txt src/io/io.cpp src/io/io.hpp
+  mp_commit "$R"
+  out="$("$TBASH" "$MP" --root "$R" 2>"$TMP_ALL/mp.err")"
+  if jq -e '
+      def owner($m): [.units[] | select(.manifests | index($m))];
+      (owner("src/game/CMakeLists.txt") | length == 1) and (owner("src/io/CMakeLists.txt") | length == 1)
+      and (owner("src/game/CMakeLists.txt")[0].paths == ["src/game/**"])
+      and (owner("src/io/CMakeLists.txt")[0].paths == ["src/io/**"])
+      and (owner("CMakeLists.txt") | length == 1) and (owner("CMakeLists.txt")[0].manifests | index("vcpkg.json"))
+      and .totals.files == 9' <<<"$out" >/dev/null 2>&1; then
+    ok "map-partition: CMakeLists.txt e vcpkg.json contam como manifesto"
+  else ko "map-partition: CMakeLists.txt e vcpkg.json contam como manifesto" "$(jq -c '[.units[] | {unit, paths, manifests}]' <<<"$out" 2>&1 | head -c 600) $(cat "$TMP_ALL/mp.err")"; fi
+
   # Multi-repo: pasta-mae sem git com repos no kit.json; unidades por repositorio, nome com prefixo.
   R="$(mktemp -d "$TMP_ALL/mp.XXXXXX")"
   mkdir -p "$R/.claude" "$R/app" "$R/web" "$R/fora"

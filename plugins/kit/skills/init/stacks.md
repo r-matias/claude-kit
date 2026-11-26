@@ -17,6 +17,15 @@ Valores de partida. Confirme sempre contra o que o projeto realmente usa (script
 | Java/Kotlin (Gradle) | `./gradlew -q assemble` | `./gradlew -q test` | — | `./gradlew -q check -x test` | — | spotless/ktlint se configurado |
 | Ruby | — | `bundle exec rspec` | `bundle exec rspec {files}` (só specs) | `{ "run": "bundle exec rubocop {files}", "files": ["**/*.rb"] }` | — | `**/*.rb` → `bundle exec rubocop -a {files}` |
 | PHP | — | `vendor/bin/phpunit` | — | `{ "run": "vendor/bin/phpstan analyse {files}", "files": ["**/*.php"] }` | — | `**/*.php` → `vendor/bin/php-cs-fixer fix {files}` |
+| C/C++ (CMake) | `{ "run": "cmake --build --preset <preset>", "files": [<globs C/C++ e CMake>] }` (ver abaixo) | `ctest --preset <preset de teste>` ou `ctest --test-dir <pasta de build>` | — | `clang-tidy` só se o projeto tem `.clang-tidy` e `compile_commands.json` | — | `**/*.{c,cc,cpp,cxx,h,hh,hpp,hxx}` → `clang-format -i {files}` (só com `.clang-format`) |
+
+### C/C++ com CMake
+
+- **Presets.** Com `CMakePresets.json`, os comandos usam os presets dele: `buildPresets` para o `build`, `testPresets` para o `test`. Escolha os da plataforma em que o projeto é desenvolvido (`windows-*` no Windows) e confira no CI (`.github/workflows/*`) qual o projeto usa. Mais de um candidato plausível (debug e release) vira pergunta da confirmação. Sem presets, use a pasta de build que o projeto ou o CI usa (`cmake --build build`).
+- **Pasta de build configurada.** `cmake --build` falha se o configure (`cmake --preset <preset>`) nunca rodou. Confira se a pasta de build do preset existe; sem ela, o `build` entra em `commands`, fica fora do `verify_on_stop` e o relatório diz em uma linha que o configure é a primeira coisa a rodar. O init não roda o configure: com vcpkg, ele baixa e compila as dependências e pode levar muitos minutos.
+- **Build pesado no gate.** O `build` usa a forma objeto com `files` (fontes C/C++, `**/CMakeLists.txt`, `**/*.cmake`), para só rodar quando o turno mexeu nesses arquivos: num projeto com scripts em outra linguagem (Lua, Python), editar só o script não dispara compilação. Entra no `verify_on_stop` só se a compilação incremental depois de editar um `.cpp` leva até uns 2 minutos; mais que isso, fica só em `commands` (os checkpoints do `/kit:execute` usam) e o relatório diz em uma linha.
+- **Testes desligados por padrão.** Projeto com `option(BUILD_TESTS ... OFF)` ou equivalente só tem `test` se houver preset ou pasta de build com os testes ligados; senão, `test` fica de fora e o relatório diz em uma linha.
+- **Solução do Visual Studio junto.** Repositório com `CMakeLists.txt` e `.sln`/`.vcxproj`: o CMake é o build proposto; a solução só entra se o projeto a usa como build principal (CI sem CMake).
 
 ### Lint: no `format` e no gate
 
@@ -38,6 +47,7 @@ Regra "código mudou sem teste": `when` com o código de produção, `require` c
 | Java/Kotlin | `src/main/**` | `src/test/**` |
 | Ruby | `app/**/*.rb`, `lib/**/*.rb` | `spec/**`, `test/**` |
 | PHP | `src/**/*.php`, `app/**/*.php` | `tests/**` |
+| C/C++ | `src/**/*.{c,cc,cpp,cxx,h,hh,hpp,hxx}` | `tests/**`, `test/**` |
 
 Mensagem sugerida: `Código mudou; se o comportamento mudou, o teste muda junto.`
 
@@ -55,6 +65,7 @@ Padrões ERE checados só nas linhas adicionadas no turno. Proponha só os das l
 | Java/Kotlin | `**/*.{java,kt}` | `@SuppressWarnings\|@Suppress\(` | `@(Disabled\|Ignore)([^A-Za-z0-9_]\|$)` |
 | Ruby | `**/*.rb` | `rubocop:disable` | `^[[:space:]]*(xit\|xdescribe\|fit\|fdescribe)[[:space:]]` |
 | PHP | `**/*.php` | `@phpstan-ignore\|@psalm-suppress` | `markTestSkipped` |
+| C/C++ | `**/*.{c,cc,cpp,cxx,h,hh,hpp,hxx}` | `NOLINT\|#[[:space:]]*pragma[[:space:]]+(GCC\|clang)[[:space:]]+diagnostic[[:space:]]+ignored\|#[[:space:]]*pragma[[:space:]]+warning[[:space:]]*\([[:space:]]*disable` | `GTEST_SKIP\(\|DISABLED_` (com `files` nas pastas de teste, como `tests/**`: `DISABLED_` também aparece em nome de constante) |
 
 Na tabela, `\|` é o `|` do padrão (escapado só por causa da tabela). No JSON, cada `\` vira `\\`: `"pattern": "@ts-ignore|@ts-nocheck|eslint-disable"`, `"pattern": "t\\.Skip\\("`.
 
@@ -93,6 +104,7 @@ Só em projeto com tela. `dev` é o comando que o projeto já usa para subir o a
 | Java | dependência entra por edição do pom/gradle; migração: `Bash(mvn flyway:migrate *)`, `Bash(./gradlew flywayMigrate *)` |
 | Ruby | `Bash(bundle add *)`, `Bash(bin/rails db:migrate *)` |
 | PHP | `Bash(composer require *)`, `Bash(php artisan migrate *)` |
+| C/C++ | `Bash(vcpkg install *)`, `Bash(vcpkg add *)`, `Bash(conan install *)` |
 
 ## protected_paths comuns
 
@@ -117,6 +129,7 @@ Só em projeto com tela. `dev` é o comando que o projeto já usa para subir o a
 | Java/Kotlin | `**/*.{java,kt}`, `pom.xml`, `**/*.gradle*` |
 | Ruby | `**/*.rb` |
 | PHP | `**/*.php` |
+| C/C++ | `**/*.{c,cc,cpp,cxx,h,hh,hpp,hxx}`, `**/CMakeLists.txt`, `**/*.cmake`, `CMakePresets.json`, `vcpkg.json` |
 
 ## allowedDomains (registry)
 

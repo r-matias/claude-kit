@@ -10,7 +10,7 @@ allowed-tools: Bash(git rev-parse *) Bash(git ls-files *) Bash(git init) Read(${
 !`git rev-parse --show-toplevel 2>/dev/null || echo "(não é repo git)"`
 !`git ls-files -co --exclude-standard -- .claude CLAUDE.md .mcp.json 2>/dev/null || echo "(não é repo git)"`
 !`git ls-files -oi --exclude-standard -- .claude CLAUDE.md .mcp.json 2>/dev/null || echo "(não é repo git)"`
-!`git ls-files "*.sln" "*.csproj" "*.fsproj" "package.json" "pyproject.toml" "requirements*.txt" "setup.py" "go.mod" "Cargo.toml" "pom.xml" "build.gradle" "build.gradle.kts" "Gemfile" "composer.json" "mix.exs" "deno.json" 2>/dev/null || echo "(não é repo git)"`
+!`git ls-files "*.sln" "*.csproj" "*.fsproj" "package.json" "pyproject.toml" "requirements*.txt" "setup.py" "go.mod" "Cargo.toml" "pom.xml" "build.gradle" "build.gradle.kts" "Gemfile" "composer.json" "mix.exs" "deno.json" "CMakeLists.txt" "CMakePresets.json" "*/CMakePresets.json" "vcpkg.json" "*/vcpkg.json" 2>/dev/null || echo "(não é repo git)"`
 
 ## Princípio
 O init faz tudo o que o kit consegue fazer, com **uma única confirmação** agrupada. O relatório final não manda o usuário fazer nada: nada de "rode X", "instale Y" ou "aplique Z". Se o kit consegue, ele faz depois do "sim"; se não consegue, vira um aviso de uma linha; se depende de escolha do usuário, vira pergunta dentro da confirmação.
@@ -59,7 +59,7 @@ Projeto já configurado pelo kit. Não refaça a entrevista; confira e proponha 
 - Templates em `${CLAUDE_PLUGIN_ROOT}/templates/`. Tabela de stacks em [stacks.md](stacks.md).
 
 ## Passos
-1. **Detectar stacks.** Use a lista de manifestos acima (inclui subpastas de monorepo). Para cada manifesto, leia o suficiente para saber runner de teste, linter, formatter e se há migrações de banco. Leia também Makefile, `justfile`, `Taskfile.yml` e CI (`.github/workflows/*`) se existirem: o CI costuma ter os comandos reais.
+1. **Detectar stacks.** Use a lista de manifestos acima (inclui subpastas de monorepo). Para cada manifesto, leia o suficiente para saber runner de teste, linter, formatter e se há migrações de banco. Leia também Makefile, `justfile`, `Taskfile.yml` e CI (`.github/workflows/*`) se existirem: o CI costuma ter os comandos reais. Projeto C/C++ com `CMakeLists.txt` na raiz: siga "C/C++ com CMake" em [stacks.md](stacks.md) (presets, pasta de build já configurada e build pesado no gate).
 2. **Monorepo.** Se houver pacotes com stacks diferentes em subpastas, a escolha entre um `kit.json` na raiz (comandos com `--prefix`/`cd`) ou um por pacote (os hooks usam o mais próximo do arquivo editado) vira pergunta da confirmação única, com a sua recomendação como primeira opção.
 3. **Propor `.claude/kit.json`** a partir de `templates/kit.example.json` e de [stacks.md](stacks.md). O exemplo é de uma pasta-mãe com dois repositórios: num repositório único, deixe `repos` e `map.primary` de fora:
    - `commands`: `build`, `test`, `test_related` (com `{files}` só se o runner aceitar caminhos), `lint`, `typecheck` e, se o projeto tiver um teste rápido do sistema rodando (script de smoke, health check), `smoke`. Chave sem comando real fica de fora. Se o smoke depende de um dado que só o usuário sabe (URL, porta), ele vira pergunta da confirmação. Comando que só vale para parte dos arquivos (o `lint` de uma linguagem, num repositório com duas) usa a forma objeto `{ "run": "<comando> {files}", "files": [<globs>] }`: no gate, só roda quando algum alterado casa `files`, e `{files}` recebe só esses.
